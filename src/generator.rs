@@ -1,6 +1,6 @@
+use crate::types::{L0Index, ProjectAnalysis, SubsystemInfo};
 use anyhow::{Context, Result};
 use std::fs;
-use crate::types::{L0Index, ProjectAnalysis, SubsystemInfo};
 
 pub fn generate_knowledge_base(
     analysis: &ProjectAnalysis,
@@ -21,10 +21,8 @@ pub fn generate_knowledge_base(
 
     fs::create_dir_all(&subsystems_dir)
         .with_context(|| format!("Не удалось создать {:?}", subsystems_dir))?;
-    fs::create_dir_all(&cli_dir)
-        .with_context(|| format!("Не удалось создать {:?}", cli_dir))?;
-    fs::create_dir_all(&adr_dir)
-        .with_context(|| format!("Не удалось создать {:?}", adr_dir))?;
+    fs::create_dir_all(&cli_dir).with_context(|| format!("Не удалось создать {:?}", cli_dir))?;
+    fs::create_dir_all(&adr_dir).with_context(|| format!("Не удалось создать {:?}", adr_dir))?;
 
     // 1. Создаем L0_index.json
     let today = chrono_like_date();
@@ -41,8 +39,7 @@ pub fn generate_knowledge_base(
 
     let l0_json = serde_json::to_string_pretty(&l0_index)?;
     let l0_path = base_dir.join("L0_index.json");
-    fs::write(&l0_path, l0_json)
-        .with_context(|| format!("Не удалось записать {:?}", l0_path))?;
+    fs::write(&l0_path, l0_json).with_context(|| format!("Не удалось записать {:?}", l0_path))?;
 
     // 2. Создаем карточки подсистем L1
     for sub in &subsystems {
@@ -105,7 +102,18 @@ fn chrono_like_date() -> String {
     }
     let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
     let days_in_months = [
-        31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     let mut month = 1;
     for &d in &days_in_months {

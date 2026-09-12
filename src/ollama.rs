@@ -1,7 +1,7 @@
+use crate::types::ProjectAnalysis;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use crate::types::ProjectAnalysis;
 
 #[derive(Serialize)]
 struct OllamaGenerateRequest<'a> {
@@ -63,8 +63,13 @@ pub fn enrich_subsystems_with_ai(
         .into_json()
         .with_context(|| "Ошибка декодирования ответа Ollama")?;
 
-    let parsed: Vec<SubsystemAiSummary> = serde_json::from_str(&body.response)
-        .with_context(|| format!("Не удалось распарсить JSON подсистем от Ollama: {}", body.response))?;
+    let parsed: Vec<SubsystemAiSummary> =
+        serde_json::from_str(&body.response).with_context(|| {
+            format!(
+                "Не удалось распарсить JSON подсистем от Ollama: {}",
+                body.response
+            )
+        })?;
 
     Ok(parsed)
 }

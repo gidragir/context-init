@@ -42,9 +42,24 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    println!("{}", "=======================================================".cyan().bold());
-    println!("{}", "🗺  CONTEXT-INIT: Инициализатор контекста L0-L2 (OpenViking)".cyan().bold());
-    println!("{}", "=======================================================".cyan().bold());
+    println!(
+        "{}",
+        "======================================================="
+            .cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "🗺  CONTEXT-INIT: Инициализатор контекста L0-L2 (OpenViking)"
+            .cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "======================================================="
+            .cyan()
+            .bold()
+    );
 
     // 1. Анализ структуры проекта
     print!("🔍 Анализирую проект в {:?}... ", args.path);
@@ -52,9 +67,15 @@ fn main() -> Result<()> {
     println!("{}", "OK".green().bold());
 
     println!("   • Имя проекта:    {}", analysis.name.yellow().bold());
-    println!("   • Тип проекта:    {}", analysis.project_type.display_name().magenta());
+    println!(
+        "   • Тип проекта:    {}",
+        analysis.project_type.display_name().magenta()
+    );
     println!("   • Описание:       {}", analysis.description);
-    println!("   • Найдено папок:  {}", format!("{} шт.", analysis.detected_modules.len()).blue());
+    println!(
+        "   • Найдено папок:  {}",
+        format!("{} шт.", analysis.detected_modules.len()).blue()
+    );
 
     // 2. Формирование подсистем (с ИИ или эвристически)
     let mut subsystems: Vec<SubsystemInfo> = Vec::new();
@@ -62,10 +83,16 @@ fn main() -> Result<()> {
     if args.ai {
         println!("\n🤖 Режим ИИ активирован: проверяю доступность Ollama...");
         if ollama::is_ollama_online(&args.ollama_url) {
-            println!("   ✓ Ollama доступна ({}), отправляю запрос к {}...", args.ollama_url, args.model);
+            println!(
+                "   ✓ Ollama доступна ({}), отправляю запрос к {}...",
+                args.ollama_url, args.model
+            );
             match ollama::enrich_subsystems_with_ai(&analysis, &args.ollama_url, &args.model) {
                 Ok(ai_subs) if !ai_subs.is_empty() => {
-                    println!("   ✓ ИИ успешно сгенерировал описание для {} подсистем.", ai_subs.len().to_string().green().bold());
+                    println!(
+                        "   ✓ ИИ успешно сгенерировал описание для {} подсистем.",
+                        ai_subs.len().to_string().green().bold()
+                    );
                     for sub in ai_subs {
                         subsystems.push(SubsystemInfo {
                             l1_path: format!("subsystems/{}.md", sub.id),
@@ -77,12 +104,18 @@ fn main() -> Result<()> {
                     }
                 }
                 Err(err) => {
-                    println!("   ⚠ Не удалось получить ответ от ИИ: {}. Перехожу на эвристику.", err);
+                    println!(
+                        "   ⚠ Не удалось получить ответ от ИИ: {}. Перехожу на эвристику.",
+                        err
+                    );
                 }
                 _ => {}
             }
         } else {
-            println!("   ⚠ Ollama недоступна на {}. Использую эвристическое сканирование.", args.ollama_url);
+            println!(
+                "   ⚠ Ollama недоступна на {}. Использую эвристическое сканирование.",
+                args.ollama_url
+            );
         }
     }
 
@@ -130,13 +163,30 @@ fn main() -> Result<()> {
 
     let target_knowledge_dir = analysis.root_dir.join(".agents").join("knowledge");
     println!("{}", "✨ УСПЕШНО!".green().bold());
-    println!("   База знаний инициализирована в: {}", target_knowledge_dir.display().to_string().cyan());
-    println!("   • L0 Индекс:       {}", target_knowledge_dir.join("L0_index.json").display());
-    println!("   • Карточки L1:     {} файла(ов) в subsystems/", subsystems.len().to_string().yellow());
-    println!("   • История ADR:     {}", target_knowledge_dir.join("adr/0001_initial_architecture.md").display());
+    println!(
+        "   База знаний инициализирована в: {}",
+        target_knowledge_dir.display().to_string().cyan()
+    );
+    println!(
+        "   • L0 Индекс:       {}",
+        target_knowledge_dir.join("L0_index.json").display()
+    );
+    println!(
+        "   • Карточки L1:     {} файла(ов) в subsystems/",
+        subsystems.len().to_string().yellow()
+    );
+    println!(
+        "   • История ADR:     {}",
+        target_knowledge_dir
+            .join("adr/0001_initial_architecture.md")
+            .display()
+    );
 
     println!("\n💡 Что делать дальше:");
-    println!("   1. Откройте {} и скорректируйте правила core_rules при необходимости.", "L0_index.json".cyan());
+    println!(
+        "   1. Откройте {} и скорректируйте правила core_rules при необходимости.",
+        "L0_index.json".cyan()
+    );
     println!("   2. Теперь любой AI-агент в этом проекте может читать компактный L0 контекст!");
 
     Ok(())

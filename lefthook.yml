@@ -1,0 +1,19 @@
+# =============================================================================
+# Lefthook Git Pre-Commit Configuration for context-init
+# Focus: Rust syntax check, formatting, binary release build & host sync (~/.local/bin)
+# =============================================================================
+pre-commit:
+  parallel: false
+  commands:
+    check-rust:
+      glob: "src/**/*.rs"
+      run: cargo check --quiet
+
+    fmt-rust:
+      glob: "src/**/*.rs"
+      run: cargo fmt
+      stage_fixed: true
+
+    sync-binary:
+      glob: "{src/**/*.rs,Cargo.toml}"
+      run: cargo build --release --quiet && cp target/release/context-init ~/.local/bin/context-init

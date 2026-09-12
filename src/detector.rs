@@ -1,11 +1,22 @@
+use crate::types::{ProjectAnalysis, ProjectType};
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
-use anyhow::{Context, Result};
-use crate::types::{ProjectAnalysis, ProjectType};
 
 const IGNORED_DIRS: &[&str] = &[
-    ".git", ".agents", ".gemini", "node_modules", "target", "dist", "build",
-    ".idea", ".vscode", ".cargo", "vendor", "__pycache__", ".venv",
+    ".git",
+    ".agents",
+    ".gemini",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".idea",
+    ".vscode",
+    ".cargo",
+    "vendor",
+    "__pycache__",
+    ".venv",
 ];
 
 pub fn analyze_project(root: &Path) -> Result<ProjectAnalysis> {
@@ -67,7 +78,13 @@ fn read_cargo_pkg_name(path: &Path) -> Option<String> {
         if trimmed.starts_with("name =") || trimmed.starts_with("name=") {
             let parts: Vec<&str> = trimmed.split('=').collect();
             if parts.len() >= 2 {
-                return Some(parts[1].trim().trim_matches('"').trim_matches('\'').to_string());
+                return Some(
+                    parts[1]
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .to_string(),
+                );
             }
         }
     }
@@ -77,7 +94,10 @@ fn read_cargo_pkg_name(path: &Path) -> Option<String> {
 fn read_package_json_name(path: &Path) -> Option<String> {
     let content = fs::read_to_string(path).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
-    parsed.get("name").and_then(|n| n.as_str()).map(|s| s.to_string())
+    parsed
+        .get("name")
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string())
 }
 
 fn extract_description(root: &Path, fallback_name: &str) -> String {
@@ -87,7 +107,11 @@ fn extract_description(root: &Path, fallback_name: &str) -> String {
             for line in content.lines() {
                 let trimmed = line.trim();
                 // Пропускаем заголовки и пустые строки, берем первое осмысленное предложение
-                if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with("![") && !trimmed.starts_with('[') {
+                if !trimmed.is_empty()
+                    && !trimmed.starts_with('#')
+                    && !trimmed.starts_with("![")
+                    && !trimmed.starts_with('[')
+                {
                     if trimmed.len() > 15 {
                         return trimmed.chars().take(200).collect();
                     }
