@@ -1,0 +1,226 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"project": "context-init",
+	"description": "CLI-утилита на Rust для автоматической инициализации и поддержания трехуровневой базы знаний (**OpenViking L0-L2**) для автономных ИИ-ассистентов (Antigravity, Hermes, Claude Code, Cursor, Aider).",
+	"root_path": "/data/projects/context-init",
+	"updated_at": "2026-10-10",
+	"project_type": "Rust (Cargo)",
+	"entrypoints": ["src/main.rs", "src/lib.rs", "Cargo.toml"],
+	"commands": {
+		"build": "rtk cargo build",
+		"test": "rtk cargo test",
+		"lint": "rtk cargo clippy",
+		"fmt": "rtk cargo fmt --check",
+		"run": "rtk cargo run"
+	},
+	"subsystems": [
+		{
+			"id": "src_core",
+			"name": "Main",
+			"summary": "Подсистема `src/core` с ключевыми точками входа: src/main.rs",
+			"l1_path": "subsystems/src_core.md",
+			"tags": ["src_core", "Rust (Cargo)"],
+			"entrypoints": ["src/lib.rs"],
+			"key_files": ["src/lib.rs"],
+			"files": [
+				{
+					"path": "src/lib.rs",
+					"is_entrypoint": true,
+					"lines": 6
+				}
+			],
+			"tokens": 27
+		},
+		{
+			"id": "src_detector",
+			"name": "Detector",
+			"summary": "Модуль и компоненты директории `src/detector` (1 файлов)",
+			"l1_path": "subsystems/src_detector.md",
+			"tags": ["src_detector", "Rust (Cargo)"],
+			"key_files": ["src/detector.rs"],
+			"files": [
+				{
+					"path": "src/detector.rs",
+					"is_entrypoint": false,
+					"lines": 1746
+				}
+			],
+			"key_symbols": [
+				"pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<ProjectAnalysis>",
+				"pub fn is_rtk_available() -> bool",
+				"pub fn prefix_with_rtk(cmd: &str) -> String",
+				"pub fn count_tokens(text: &str) -> usize",
+				"pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String>",
+				"pub fn extract_multiline_symbols(content: &str, ext: &str, deep: bool) -> Vec<String>",
+				"pub fn clean_symbol_line(line: &str) -> String",
+				"pub fn sanitize_symbol(raw: &str) -> Option<String>"
+			],
+			"tokens": 13162
+		},
+		{
+			"id": "src_generator",
+			"name": "Generator",
+			"summary": "Модуль и компоненты директории `src/generator` (1 файлов)",
+			"l1_path": "subsystems/src_generator.md",
+			"tags": ["src_generator", "Rust (Cargo)"],
+			"key_files": ["src/generator.rs"],
+			"files": [
+				{
+					"path": "src/generator.rs",
+					"is_entrypoint": false,
+					"lines": 568
+				}
+			],
+			"key_symbols": [
+				"pub fn generate_knowledge_base(analysis: &ProjectAnalysis, subsystems: &[SubsystemInfo], force: bool, with_agents_md: bool, ) -> Result<()>",
+				"pub fn audit_knowledge_base(analysis: &ProjectAnalysis) -> Result<DriftReport>",
+				"pub fn update_knowledge_base(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], with_agents_md: bool, ) -> Result<(usize, usize)>",
+				"pub fn sanitize_id(raw: &str) -> String"
+			],
+			"tokens": 5735
+		},
+		{
+			"id": "src_ollama",
+			"name": "Ollama",
+			"summary": "Модуль и компоненты директории `src/ollama` (1 файлов)",
+			"l1_path": "subsystems/src_ollama.md",
+			"tags": ["src_ollama", "Rust (Cargo)"],
+			"key_files": ["src/ollama.rs"],
+			"files": [
+				{
+					"path": "src/ollama.rs",
+					"is_entrypoint": false,
+					"lines": 119
+				}
+			],
+			"key_symbols": [
+				"pub struct SubsystemAiSummary",
+				"pub fn is_ollama_online(url: &str) -> bool",
+				"pub fn enrich_subsystems_with_ai(analysis: &ProjectAnalysis, ollama_url: &str, model: &str, ) -> Result<Vec<SubsystemAiSummary>>"
+			],
+			"tokens": 1183
+		},
+		{
+			"id": "src_types",
+			"name": "Types",
+			"summary": "Модуль и компоненты директории `src/types` (1 файлов)",
+			"l1_path": "subsystems/src_types.md",
+			"tags": ["src_types", "Rust (Cargo)"],
+			"key_files": ["src/types.rs"],
+			"files": [
+				{
+					"path": "src/types.rs",
+					"is_entrypoint": false,
+					"lines": 214
+				}
+			],
+			"key_symbols": [
+				"pub enum ProjectType",
+				"pub struct SubsystemFile",
+				"pub struct SubsystemInfo",
+				"pub struct ProjectCommands",
+				"pub struct L0Index",
+				"pub struct DiscoveredModule",
+				"pub struct ProjectAnalysis",
+				"pub struct DriftReport",
+				"pub struct McpCheckParams",
+				"pub struct McpCheckResult"
+			],
+			"tokens": 1974
+		},
+		{
+			"id": "src_mcp",
+			"name": "Mcp",
+			"summary": "Модуль и компоненты директории `src/mcp` (1 файлов)",
+			"l1_path": "subsystems/src_mcp.md",
+			"tags": ["src_mcp", "Rust (Cargo)"],
+			"key_files": ["src/mcp.rs"],
+			"files": [
+				{
+					"path": "src/mcp.rs",
+					"is_entrypoint": false,
+					"lines": 337
+				}
+			],
+			"key_symbols": [
+				"pub struct ContextInitServer",
+				"pub async fn run_mcp_server(path: &Path) -> anyhow :: Result<()>"
+			],
+			"tokens": 3098
+		},
+		{
+			"id": "src_service",
+			"name": "Service",
+			"summary": "Модуль и компоненты директории `src/service` (1 файлов)",
+			"l1_path": "subsystems/src_service.md",
+			"tags": ["src_service", "Rust (Cargo)"],
+			"key_files": ["src/service.rs"],
+			"files": [
+				{
+					"path": "src/service.rs",
+					"is_entrypoint": false,
+					"lines": 743
+				}
+			],
+			"key_symbols": [
+				"pub struct ServiceInitOptions<'a>",
+				"pub struct ServiceUpdateOptions<'a>",
+				"pub struct ContextService",
+				"pub fn build_subsystems(analysis: &ProjectAnalysis, ai: bool, ollama_url: &str, model: &str, _compact: bool, ) -> Result<Vec<SubsystemInfo>>",
+				"pub fn pack_builtin_to_string(root: &Path, subs: &[&SubsystemInfo], files: &[String], compress: bool, style: &str, ) -> String",
+				"pub fn compress_file_content(content: &str, ext: &str) -> String",
+				"pub fn compress_rust_ast(content: &str) -> Option<String>",
+				"pub fn format_rust_items(items: &[syn :: Item]) -> String",
+				"pub fn normalize_rust_tokens(s: &str) -> String",
+				"pub fn compress_code(content: &str) -> String"
+			],
+			"tokens": 5937
+		},
+		{
+			"id": "reports",
+			"name": "Reports",
+			"summary": "Модуль и компоненты директории `reports` (2 файлов)",
+			"l1_path": "subsystems/reports.md",
+			"tags": ["reports", "Rust (Cargo)"],
+			"key_files": [
+				"reports/benchmark_latest.json",
+				"reports/BENCHMARK_REPORT.md"
+			],
+			"files": [
+				{
+					"path": "reports/benchmark_latest.json",
+					"is_entrypoint": false,
+					"lines": 54
+				},
+				{
+					"path": "reports/BENCHMARK_REPORT.md",
+					"is_entrypoint": false,
+					"lines": 46
+				}
+			],
+			"tokens": 1261
+		},
+		{
+			"id": "tests",
+			"name": "Tests",
+			"summary": "Модуль и компоненты директории `tests` (1 файлов)",
+			"l1_path": "subsystems/tests.md",
+			"tags": ["tests", "Rust (Cargo)"],
+			"key_files": ["tests/regression_benchmark.rs"],
+			"files": [
+				{
+					"path": "tests/regression_benchmark.rs",
+					"is_entrypoint": false,
+					"lines": 499
+				}
+			],
+			"tokens": 4805
+		}
+	],
+	"core_rules": [
+		"Все внешние крейты и зависимости строго объявляются в Cargo.toml.",
+		"Код должен проходить `rtk cargo clippy --all-targets` и `rtk cargo fmt --check` без ошибок.",
+		"Использование `unsafe` запрещено без исчерпывающего комментария безопасности `// SAFETY:`.",
+		"Публичные структуры и функции должны сопровождаться docstring (`///`)."
+	]
+}
