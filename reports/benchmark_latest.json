@@ -1,0 +1,54 @@
+{
+  "timestamp": "2026-10-10",
+  "drift_metrics": {
+    "iterations": 10,
+    "avg_ms": 49.4769129,
+    "min_ms": 49.125913,
+    "max_ms": 50.931705,
+    "up_to_date_count": 9,
+    "has_drift": false
+  },
+  "compression_metrics": {
+    "file_path": "src/service.rs",
+    "uncompressed_bytes": 28412,
+    "uncompressed_tokens": 5937,
+    "compressed_bytes": 3313,
+    "compressed_tokens": 921,
+    "tokens_saved_percent": 84.48711470439616,
+    "compression_duration_ms": 7.290597
+  },
+  "mcp_latencies": [
+    {
+      "tool": "context_init",
+      "latency_ms": 0.445007,
+      "status": "OK"
+    },
+    {
+      "tool": "context_check",
+      "latency_ms": 0.163489,
+      "status": "OK (0 drift)"
+    },
+    {
+      "tool": "context_get_subsystems",
+      "latency_ms": 0.020272,
+      "status": "OK (1 subsystems)"
+    },
+    {
+      "tool": "context_pack",
+      "latency_ms": 0.672973,
+      "status": "OK (AST compressed)"
+    },
+    {
+      "tool": "context_update",
+      "latency_ms": 0.209805,
+      "status": "OK (reconciled)"
+    }
+  ],
+  "cross_project": {
+    "context_init_drift": false,
+    "ai_dotfiles_subsystems": 6,
+    "ai_dotfiles_drift": true,
+    "ai_dotfiles_pack_status": "OK (files=1, tokens~685)"
+  },
+  "overall_status": "PASSED (NO REGRESSIONS)"
+}
