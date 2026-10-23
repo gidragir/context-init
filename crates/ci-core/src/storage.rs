@@ -510,20 +510,64 @@ pub fn migrate_in_repo_knowledge_with_options(
     target_project_dir: &Path,
     remove_source: bool,
 ) -> Result<MigrationReport> {
-    let source_dir = repo_root.join(".agents").join("knowledge");
-    if !source_dir.is_dir() {
-        bail!(
-            "In-repo knowledge directory {:?} does not exist",
-            source_dir
-        );
-    }
+    let opts = MigrateOptions {
+        remove_source,
+        dry_run: false,
+    };
+    migrate_knowledge(repo_root, target_project_dir, &opts)
+}
 
-    let source_l0_path = source_dir.join("L0_index.json");
-    if !source_l0_path.is_file() {
-        bail!("In-repo L0_index.json not found at {:?}", source_l0_path);
-    }
+/// Options for [`migrate_knowledge`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MigrateOptions {
+    /// Delete the in-repo source after a verified copy.
+    pub remove_source: bool,
+    /// List what would be migrated; write and delete nothing.
+    pub dry_run: bool,
+}
 
-    let mut l0_index = L0Index::load_from_file(&source_l0_path)?;
+/// Finds the in-repo knowledge dir holding `L0_index.json`: `.agents/knowledge` itself
+/// or its first (alphabetical) subdirectory that has one.
+fn legacy_source_dir(repo_root: &Path) -> Result<PathBuf> {
+    let direct = repo_root.join(".agents").join("knowledge");
+    if direct.join("L0_index.json").is_file() {
+        return Ok(direct);
+    }
+    let mut nested: Vec<PathBuf> = fs::read_dir(&direct)
+        .with_context(|| format!("In-repo knowledge directory {:?} does not exist", direct))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join("L0_index.json").is_file())
+        .collect();
+    nested.sort();
+    nested
+        .into_iter()
+        .next()
+        .with_context(|| format!("In-repo L0_index.json not found under {:?}", direct))
+}
+
+fn list_files_recursive(root: &Path, current: &Path, out: &mut Vec<String>) -> Result<()> {
+    for entry in fs::read_dir(current).with_context(|| format!("Failed to read {:?}", current))? {
+        let path = entry?.path();
+        if path.is_dir() {
+            list_files_recursive(root, &path, out)?;
+        } else if path.is_file() {
+            out.push(normalize_path(path.strip_prefix(root).unwrap_or(&path)));
+        }
+    }
+    Ok(())
+}
+
+/// Migrates a legacy in-repo knowledge base into `target_project_dir` (D23), upgrading
+/// `L0_index.json` to `CURRENT_L0_SCHEMA_VERSION`. The source is removed only when
+/// requested and only after every source file was verified in the target.
+pub fn migrate_knowledge(
+    repo_root: &Path,
+    target_project_dir: &Path,
+    opts: &MigrateOptions,
+) -> Result<MigrationReport> {
+    let source_dir = legacy_source_dir(repo_root)?;
+    let mut l0_index = L0Index::load_from_file(&source_dir.join("L0_index.json"))?;
     let previous_schema_version = l0_index.schema_version;
     l0_index.upgrade_to_current();
     if l0_index.project_id.is_none() {
@@ -532,13 +576,28 @@ pub fn migrate_in_repo_knowledge_with_options(
         }
     }
 
+    let mut source_files = Vec::new();
+    list_files_recursive(&source_dir, &source_dir, &mut source_files)?;
+    source_files.sort();
+
+    if opts.dry_run {
+        return Ok(MigrationReport {
+            source_dir,
+            target_dir: target_project_dir.to_path_buf(),
+            previous_schema_version,
+            new_schema_version: l0_index.schema_version,
+            migrated_files: source_files,
+            subsystems_count: l0_index.subsystems.len(),
+            removed_source: false,
+        });
+    }
+
     fs::create_dir_all(target_project_dir).with_context(|| {
         format!(
             "Failed to create target central storage directory {:?}",
             target_project_dir
         )
     })?;
-
     let mut migrated_files = Vec::new();
     copy_dir_recursive(
         &source_dir,
@@ -546,24 +605,35 @@ pub fn migrate_in_repo_knowledge_with_options(
         target_project_dir,
         &mut migrated_files,
     )?;
-
-    // Overwrite target L0_index.json with upgraded schema_version = 2
-    let target_l0_path = target_project_dir.join("L0_index.json");
-    l0_index.save_to_file(&target_l0_path)?;
+    l0_index.save_to_file(&target_project_dir.join("L0_index.json"))?;
     migrated_files.sort();
     migrated_files.dedup();
 
     let mut removed_source = false;
-    if remove_source {
+    if opts.remove_source {
+        let missing: Vec<&String> = source_files
+            .iter()
+            .filter(|rel| !target_project_dir.join(rel.as_str()).is_file())
+            .collect();
+        if !missing.is_empty() {
+            bail!(
+                "Refusing to remove {:?}: {} file(s) missing in {:?} after copy: {:?}",
+                source_dir,
+                missing.len(),
+                target_project_dir,
+                missing
+            );
+        }
         fs::remove_dir_all(&source_dir)
             .with_context(|| format!("Failed to remove migrated source {:?}", source_dir))?;
         removed_source = true;
-
-        // Clean up `.agents` parent directory if it is now completely empty
-        let agents_dir = repo_root.join(".agents");
-        if let Ok(mut entries) = fs::read_dir(&agents_dir) {
-            if entries.next().is_none() {
-                let _ = fs::remove_dir(&agents_dir);
+        // Drop `.agents/knowledge` and `.agents` if the migration left them empty.
+        for dir in [
+            repo_root.join(".agents").join("knowledge"),
+            repo_root.join(".agents"),
+        ] {
+            if fs::read_dir(&dir).is_ok_and(|mut e| e.next().is_none()) {
+                let _ = fs::remove_dir(&dir);
             }
         }
     }
@@ -642,5 +712,84 @@ mod subsystem_id_tests {
         let ts = now_rfc3339();
         assert_eq!(ts.len(), 20, "{ts}");
         assert!(ts.ends_with('Z') && ts.as_bytes()[10] == b'T', "{ts}");
+    }
+}
+
+#[cfg(test)]
+mod migrate_tests {
+    use super::*;
+
+    fn sandbox(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "ci_migrate_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn seed(kd: &Path) {
+        fs::create_dir_all(kd.join("subsystems")).unwrap();
+        L0Index {
+            project: "demo".to_string(),
+            ..L0Index::default()
+        }
+        .save_to_file(&kd.join("L0_index.json"))
+        .unwrap();
+        fs::write(kd.join("subsystems/core.md"), "# Core\n").unwrap();
+    }
+
+    #[test]
+    fn migrate_dry_run_writes_nothing() {
+        let root = sandbox("dry");
+        seed(&root.join(".agents/knowledge"));
+        let target = root.join("central");
+        let opts = MigrateOptions {
+            remove_source: true,
+            dry_run: true,
+        };
+        let report = migrate_knowledge(&root, &target, &opts).unwrap();
+        assert!(!target.exists());
+        assert!(root.join(".agents/knowledge/L0_index.json").is_file());
+        assert!(report.migrated_files.contains(&"L0_index.json".to_string()));
+        assert!(report
+            .migrated_files
+            .contains(&"subsystems/core.md".to_string()));
+        assert!(!report.removed_source);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_nested_legacy_layout() {
+        let root = sandbox("nested");
+        seed(&root.join(".agents/knowledge/dotfiles"));
+        let target = root.join("central");
+        let report = migrate_knowledge(&root, &target, &MigrateOptions::default()).unwrap();
+        assert!(target.join("L0_index.json").is_file());
+        assert!(target.join("subsystems/core.md").is_file());
+        assert!(report.source_dir.ends_with("dotfiles"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_source_only_after_copy_verified() {
+        let root = sandbox("remove");
+        seed(&root.join(".agents/knowledge"));
+        let target = root.join("central");
+        let opts = MigrateOptions {
+            remove_source: true,
+            dry_run: false,
+        };
+        let report = migrate_knowledge(&root, &target, &opts).unwrap();
+        assert!(report.removed_source);
+        assert!(!root.join(".agents").exists());
+        for rel in &report.migrated_files {
+            assert!(target.join(rel).is_file(), "{rel} missing in target");
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 }

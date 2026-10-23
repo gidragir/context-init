@@ -24,9 +24,10 @@ pub use openviking::{
 };
 pub use storage::{
     compute_project_id, hash_project_id, migrate_in_repo_knowledge,
-    migrate_in_repo_knowledge_with_options, normalize_git_remote, normalize_line_endings,
-    normalize_path, normalize_path_str, DriftReport, L0Index, MigrationReport, ProjectCommands,
-    ProjectType, SubsystemFile, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION, LEGACY_L0_SCHEMA_VERSION,
+    migrate_in_repo_knowledge_with_options, migrate_knowledge, normalize_git_remote,
+    normalize_line_endings, normalize_path, normalize_path_str, DriftReport, L0Index,
+    MigrateOptions, MigrationReport, ProjectCommands, ProjectType, SubsystemFile, SubsystemInfo,
+    CURRENT_L0_SCHEMA_VERSION, LEGACY_L0_SCHEMA_VERSION,
 };
 pub use telemetry::{
     read_jsonl_file, render_telemetry_report, EfficiencySignal, FeedbackSignal, JsonlTelemetrySink,

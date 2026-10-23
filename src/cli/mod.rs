@@ -4,6 +4,7 @@ mod check;
 mod config;
 mod init_update;
 mod mcp;
+mod migrate;
 mod output;
 mod pack;
 
@@ -94,6 +95,8 @@ enum Commands {
     Mcp(mcp::McpArgs),
     /// Inspect, create and validate configuration
     Config(config::ConfigArgs),
+    /// Move a legacy in-repo knowledge base into central storage
+    Migrate(migrate::MigrateArgs),
 }
 
 /// Parses arguments and runs the selected command.
@@ -110,6 +113,7 @@ pub fn run() -> Result<ExitCode> {
         Some(Commands::Pack(args)) => pack::run(&cli.global, &args),
         Some(Commands::Mcp(args)) => mcp::run(&args),
         Some(Commands::Config(args)) => config::run(&cli.global, &args),
+        Some(Commands::Migrate(args)) => migrate::run(&cli.global, &args),
     }
 }
 

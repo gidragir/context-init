@@ -276,3 +276,65 @@ fn cli_config_path_lists_storage() {
         stdout(&out)
     );
 }
+
+/// Seeds a legacy in-repo knowledge base for the fixture project.
+fn seed_legacy(sb: &Sandbox) {
+    let analysis =
+        ci_core::analysis::detector::analyze_project(&sb.project(), false, false).unwrap();
+    let subs = ci_core::analysis::subsystems::build_deterministic(&analysis);
+    ci_core::analysis::generator::generate(
+        &analysis,
+        &subs,
+        &sb.project().join(".agents/knowledge"),
+        &ci_core::analysis::generator::GenerateOptions::default(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn cli_migrate_copies_and_keeps_source() {
+    let sb = Sandbox::new("mig_copy");
+    sb.write_fixture();
+    seed_legacy(&sb);
+    let out = sb.run(&["migrate", "."]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(central_indexes(&sb.data_home()).len(), 1);
+    assert!(sb
+        .project()
+        .join(".agents/knowledge/L0_index.json")
+        .is_file());
+}
+
+#[test]
+fn cli_migrate_dry_run_writes_nothing() {
+    let sb = Sandbox::new("mig_dry");
+    sb.write_fixture();
+    seed_legacy(&sb);
+    let out = sb.run(&["migrate", ".", "--dry-run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("L0_index.json"), "{}", stdout(&out));
+    assert!(central_indexes(&sb.data_home()).is_empty());
+}
+
+#[test]
+fn cli_migrate_remove_source_deletes_after_copy() {
+    let sb = Sandbox::new("mig_rm");
+    sb.write_fixture();
+    seed_legacy(&sb);
+    let out = sb.run(&["migrate", ".", "--remove-source"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(central_indexes(&sb.data_home()).len(), 1);
+    assert!(!sb.project().join(".agents/knowledge").exists());
+}
+
+#[test]
+fn cli_migrate_twice_requires_force() {
+    let sb = Sandbox::new("mig_twice");
+    sb.write_fixture();
+    seed_legacy(&sb);
+    assert!(sb.run(&["migrate", "."]).status.success());
+    let again = sb.run(&["migrate", "."]);
+    assert_eq!(again.status.code(), Some(1));
+    assert!(stderr(&again).contains("--force"), "{}", stderr(&again));
+    assert!(sb.run(&["migrate", ".", "--force"]).status.success());
+}
