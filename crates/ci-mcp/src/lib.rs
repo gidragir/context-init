@@ -356,6 +356,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn submit_rejects_unknown_package_id() {
+        let tmp = TempDirGuard::new("submit_unknown_pkg");
+        let kd = seed_in_repo_knowledge(tmp.path());
+        let before = fs::read_to_string(kd.join("L0_index.json")).unwrap();
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+
+        let out = server
+            .submit(Parameters(McpSubmitParams {
+                package_id: "pkg-forged-init-9".to_string(),
+                submission: json!({"subsystems": [{
+                    "id": "core", "name": "Core", "summary": "forged", "tags": []
+                }]}),
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                project: None,
+            }))
+            .await
+            .expect("submit tool call");
+        let out: SubmitResult = serde_json::from_str(&out).unwrap();
+        assert!(!out.valid);
+        assert!(
+            out.errors[0].contains("Unknown package_id"),
+            "{:?}",
+            out.errors
+        );
+        assert_eq!(
+            fs::read_to_string(kd.join("L0_index.json")).unwrap(),
+            before
+        );
+    }
+
+    #[tokio::test]
     async fn submit_rejects_traversal_ids() {
         let tmp = TempDirGuard::new("submit_traversal");
         let kd = seed_in_repo_knowledge(tmp.path());

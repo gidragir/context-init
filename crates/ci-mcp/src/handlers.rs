@@ -16,7 +16,7 @@ use ci_core::telemetry::{
     FeedbackSignal, JsonlTelemetrySink, TelemetryEvent, TelemetrySignal, TelemetrySink,
 };
 use ci_llm::providers::validate_agent_submission;
-use ci_llm::{AgentWorkPackage, RoleName};
+use ci_llm::AgentWorkPackage;
 
 use crate::pagination::paginate_content;
 use crate::tools::*;
@@ -528,27 +528,25 @@ impl ContextHandler {
         work_package: Option<&AgentWorkPackage>,
         submission: &serde_json::Value,
     ) -> Result<String> {
-        let role = if package_id.contains("-init-") {
-            RoleName::Init
-        } else if package_id.contains("-update-") {
-            RoleName::Update
-        } else if package_id.contains("-task-") {
-            RoleName::Task
-        } else if package_id.contains("-search-") {
-            RoleName::Search
-        } else {
-            RoleName::Init
+        let Some(pkg_ref) = work_package else {
+            let result = SubmitResult {
+                valid: false,
+                package_id: package_id.to_string(),
+                role: String::new(),
+                errors: vec![format!(
+                    "Unknown package_id '{package_id}': request a work package via context_init/context_update first"
+                )],
+                message: "Agent submission rejected: unknown work package.".to_string(),
+            };
+            let json_text = serde_json::to_string_pretty(&result)?;
+            return Ok(paginate_content(
+                &json_text,
+                None,
+                project.config.max_response_tokens,
+                false,
+            )
+            .rendered);
         };
-
-        let fallback_pkg = AgentWorkPackage {
-            package_id: package_id.to_string(),
-            role,
-            facts: serde_json::json!({}),
-            instruction: "Agent work submission".to_string(),
-            json_schema: ci_llm::default_role_json_schema(role),
-        };
-
-        let pkg_ref = work_package.unwrap_or(&fallback_pkg);
 
         match validate_agent_submission(pkg_ref, submission) {
             Ok(validated) => {
