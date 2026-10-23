@@ -2,6 +2,7 @@
 //! extension points, role routing (`RoleRouter`), and prompt templates (`PromptTemplateRegistry`) for `context-init` (D13–D17, D29).
 
 pub mod decorators;
+pub mod enrich;
 pub mod prompts;
 pub mod provider;
 pub mod providers;
