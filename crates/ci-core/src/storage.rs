@@ -1,0 +1,552 @@
+//! Central storage primitives, `project-id` calculation, `L0Index` v2 schema, and in-repo migration (D1, D2, D23, D28).
+
+pub use crate::config::StoragePaths;
+pub use crate::openviking::{
+    extract_l0_abstract, extract_l0_abstract_with_limit, CardFreshness, CardFrontmatter,
+    CardGeneratedBy, CardSource, OkfCard, L0_ABSTRACT_MAX_CHARS,
+};
+
+use anyhow::{bail, Context, Result};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// Current `L0_index.json` schema version for central storage (D23).
+pub const CURRENT_L0_SCHEMA_VERSION: u32 = 2;
+
+/// Legacy `L0_index.json` schema version (when `schema_version` field is absent in old `.agents/knowledge/L0_index.json`, D23).
+pub const LEGACY_L0_SCHEMA_VERSION: u32 = 1;
+
+/// Normalizes a path to use forward slashes (`/`) across all operating systems,
+/// stripping Windows verbatim prefixes (`\\?\`) and redundant `./` or trailing slashes.
+pub fn normalize_path(path: impl AsRef<Path>) -> String {
+    let raw = path.as_ref().to_string_lossy();
+    normalize_path_str(&raw)
+}
+
+/// Normalizes a raw path string to forward slashes (`/`).
+pub fn normalize_path_str(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let mut replaced = trimmed.replace('\\', "/");
+
+    // Strip Windows extended-length path prefix (`\\?\` -> `//?/`)
+    if let Some(stripped) = replaced.strip_prefix("//?/") {
+        replaced = stripped.to_string();
+    }
+
+    // Collapse multiple consecutive slashes into a single slash
+    while replaced.contains("//") {
+        replaced = replaced.replace("//", "/");
+    }
+
+    // Collapse redundant `/./` segments
+    while replaced.contains("/./") {
+        replaced = replaced.replace("/./", "/");
+    }
+
+    // Strip leading `./` unless the path is literally `"."`
+    while let Some(stripped) = replaced.strip_prefix("./") {
+        if stripped.is_empty() {
+            replaced = ".".to_string();
+            break;
+        }
+        replaced = stripped.to_string();
+    }
+
+    // Strip trailing `/.` unless the path is literally `"."`
+    while replaced.len() > 2 && replaced.ends_with("/.") {
+        replaced.truncate(replaced.len() - 2);
+    }
+
+    // Trim trailing `/` unless it is root `"/"` or drive root `"C:/"`
+    if replaced.len() > 1 && replaced.ends_with('/') {
+        let is_drive_root =
+            replaced.len() == 3 && replaced.as_bytes()[1] == b':' && replaced.as_bytes()[2] == b'/';
+        if !is_drive_root {
+            replaced = replaced.trim_end_matches('/').to_string();
+        }
+    }
+
+    replaced
+}
+
+/// Normalizes CRLF (`\r\n`) and lone CR (`\r`) line endings to LF (`\n`).
+pub fn normalize_line_endings(text: &str) -> String {
+    if !text.contains('\r') {
+        return text.to_string();
+    }
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// Normalizes a Git remote URL by stripping protocol schemes, credentials (`user:token@`),
+/// port numbers, trailing slashes, and `.git` suffixes (D1).
+pub fn normalize_git_remote(remote_url: &str) -> String {
+    let mut s = remote_url.trim().replace('\\', "/");
+    if s.is_empty() {
+        return String::new();
+    }
+
+    // Strip scheme (`https://`, `http://`, `ssh://`, `git://`, `file://`)
+    let mut had_scheme = false;
+    for scheme in ["https://", "http://", "ssh://", "git://", "file://"] {
+        if s.len() >= scheme.len() && s[..scheme.len()].eq_ignore_ascii_case(scheme) {
+            s = s[scheme.len()..].to_string();
+            had_scheme = true;
+            break;
+        }
+    }
+
+    // Strip credentials before `@` in the authority segment (before first `/` for URLs, or first `/` / `:` for SCP)
+    let authority_end = if had_scheme {
+        s.find('/').unwrap_or(s.len())
+    } else {
+        s.find(['/', ':']).unwrap_or(s.len())
+    };
+    if let Some(at_pos) = s[..authority_end].rfind('@') {
+        s = s[at_pos + 1..].to_string();
+    }
+
+    // Handle SCP-style `host:owner/repo` vs `host:port/owner/repo`
+    if let Some(colon_pos) = s.find(':') {
+        let slash_pos = s.find('/');
+        if slash_pos.is_none() || colon_pos < slash_pos.unwrap() {
+            let after_colon = &s[colon_pos + 1..];
+            if let Some(rel_slash) = after_colon.find('/') {
+                let between = &after_colon[..rel_slash];
+                if had_scheme && !between.is_empty() && between.chars().all(|c| c.is_ascii_digit())
+                {
+                    // `host:2222/owner/repo` -> strip `:2222`
+                    s = format!("{}{}", &s[..colon_pos], &after_colon[rel_slash..]);
+                } else {
+                    // `host:owner/repo` -> replace `:` with `/`
+                    s = format!("{}/{}", &s[..colon_pos], after_colon);
+                }
+            } else if had_scheme
+                && !after_colon.is_empty()
+                && after_colon.chars().all(|c| c.is_ascii_digit())
+            {
+                s = s[..colon_pos].to_string();
+            } else {
+                s = format!("{}/{}", &s[..colon_pos], after_colon);
+            }
+        }
+    }
+
+    s = s.trim_matches('/').to_string();
+
+    // Strip trailing `.git` (case-insensitive)
+    if s.len() > 4 && s[s.len() - 4..].eq_ignore_ascii_case(".git") {
+        s.truncate(s.len() - 4);
+    }
+
+    s = s.trim_matches('/').to_ascii_lowercase();
+
+    while s.contains("//") {
+        s = s.replace("//", "/");
+    }
+
+    s
+}
+
+/// Computes a deterministic, filesystem-safe `project-id` combining the normalized Git remote
+/// (without credentials or `.git`) and a short SHA-256 hash of the canonical project path (D1).
+pub fn compute_project_id(project_path: &Path, remote_url: Option<&str>) -> String {
+    let canonical = fs::canonicalize(project_path).unwrap_or_else(|_| project_path.to_path_buf());
+    let norm_path = normalize_path(&canonical);
+
+    let mut hasher = Sha256::new();
+    hasher.update(norm_path.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    let short_hash = &digest[..8];
+
+    let prefix_slug = remote_url
+        .map(normalize_git_remote)
+        .filter(|r| !r.is_empty())
+        .map(|r| sanitize_slug(&r))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let fallback_name = canonical
+                .file_name()
+                .or_else(|| project_path.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "project".to_string());
+            let s = sanitize_slug(&fallback_name.to_ascii_lowercase());
+            if s.is_empty() {
+                "project".to_string()
+            } else {
+                s
+            }
+        });
+
+    format!("{}-{}", prefix_slug, short_hash)
+}
+
+/// Anonymizes a `project-id` using SHA-256 hex digest for telemetry (D28).
+pub fn hash_project_id(project_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(project_id.trim().as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn sanitize_slug(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_sep = false;
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' {
+            out.push(ch);
+            last_sep = false;
+        } else if !last_sep && !out.is_empty() {
+            out.push('_');
+            last_sep = true;
+        }
+    }
+    out.trim_matches(|c| c == '_' || c == '-' || c == '.')
+        .to_string()
+}
+
+/// Project type classification detected by marker files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum ProjectType {
+    Rust,
+    TypeScript,
+    Python,
+    Go,
+    DevOps,
+    Generic,
+}
+
+impl ProjectType {
+    /// Human-readable display label for the project type.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Rust => "Rust (Cargo)",
+            Self::TypeScript => "TypeScript / JavaScript (Node/Bun/Deno)",
+            Self::Python => "Python (uv/pip/poetry)",
+            Self::Go => "Go (Go Modules)",
+            Self::DevOps => "Infrastructure / DevOps (Docker/K8s/Ansible)",
+            Self::Generic => "Generic / Multi-language",
+        }
+    }
+}
+
+/// File entry within a subsystem (`L0_index.json`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SubsystemFile {
+    pub path: String,
+    pub is_entrypoint: bool,
+    pub lines: usize,
+}
+
+/// Subsystem metadata stored in `L0_index.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SubsystemInfo {
+    pub id: String,
+    pub name: String,
+    pub summary: String,
+    pub l1_path: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entrypoints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<SubsystemFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_symbols: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_command: Option<String>,
+    #[serde(default)]
+    pub tokens: usize,
+}
+
+/// Discovered build, test, and lint commands for a project.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectCommands {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fmt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub custom: HashMap<String, String>,
+}
+
+fn default_legacy_schema_version() -> u32 {
+    LEGACY_L0_SCHEMA_VERSION
+}
+
+fn default_json_schema_uri() -> String {
+    "https://json-schema.org/draft/2020-12/schema".to_string()
+}
+
+/// Root L0 index structure stored in `L0_index.json` with `schema_version` support (D23).
+///
+/// When deserializing a legacy `.agents/knowledge/L0_index.json` that lacks `schema_version`,
+/// `schema_version` defaults to `LEGACY_L0_SCHEMA_VERSION` (`1`). New and migrated indexes use
+/// `CURRENT_L0_SCHEMA_VERSION` (`2`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct L0Index {
+    #[serde(default = "default_json_schema_uri", rename = "$schema")]
+    pub schema: String,
+    /// Schema format version (`2` for central storage v0.3+, `1` when reading legacy format without `schema_version`).
+    #[serde(default = "default_legacy_schema_version")]
+    pub schema_version: u32,
+    /// Optional computed `project-id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub project: String,
+    #[serde(default)]
+    pub description: String,
+    pub root_path: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub project_type: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entrypoints: Vec<String>,
+    #[serde(default)]
+    pub commands: ProjectCommands,
+    #[serde(default)]
+    pub subsystems: Vec<SubsystemInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub core_rules: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stow_packages: Vec<String>,
+}
+
+impl Default for L0Index {
+    fn default() -> Self {
+        Self {
+            schema: default_json_schema_uri(),
+            schema_version: CURRENT_L0_SCHEMA_VERSION,
+            project_id: None,
+            project: String::new(),
+            description: String::new(),
+            root_path: String::new(),
+            updated_at: String::new(),
+            project_type: String::new(),
+            entrypoints: Vec::new(),
+            commands: ProjectCommands::default(),
+            subsystems: Vec::new(),
+            core_rules: Vec::new(),
+            stow_packages: Vec::new(),
+        }
+    }
+}
+
+impl L0Index {
+    /// Parses `L0Index` from a JSON string (supports both v2 with `schema_version` and legacy v1 without `schema_version`).
+    pub fn from_json_str(json: &str) -> Result<Self> {
+        let normalized = normalize_line_endings(json);
+        let idx: Self =
+            serde_json::from_str(&normalized).context("Failed to deserialize L0_index.json")?;
+        Ok(idx)
+    }
+
+    /// Loads `L0Index` from a file on disk.
+    pub fn load_from_file(path: &Path) -> Result<Self> {
+        let raw = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read L0_index.json at {:?}", path))?;
+        Self::from_json_str(&raw)
+    }
+
+    /// Serializes `L0Index` to pretty JSON with a single trailing newline.
+    pub fn to_json_pretty(&self) -> Result<String> {
+        let json =
+            serde_json::to_string_pretty(self).context("Failed to serialize L0_index.json")?;
+        Ok(format!("{json}\n"))
+    }
+
+    /// Writes `L0Index` to `path`, creating parent directories if needed.
+    pub fn save_to_file(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {:?}", parent))?;
+        }
+        let content = self.to_json_pretty()?;
+        fs::write(path, content)
+            .with_context(|| format!("Failed to write L0_index.json to {:?}", path))
+    }
+
+    /// Returns `true` if this index was loaded from a legacy format (`schema_version < 2`).
+    pub fn is_legacy(&self) -> bool {
+        self.schema_version < CURRENT_L0_SCHEMA_VERSION
+    }
+
+    /// Upgrades the index to `CURRENT_L0_SCHEMA_VERSION` (`2`) and normalizes all embedded paths to `/`.
+    pub fn upgrade_to_current(&mut self) {
+        self.schema_version = CURRENT_L0_SCHEMA_VERSION;
+        if self.schema.is_empty() {
+            self.schema = default_json_schema_uri();
+        }
+        self.root_path = normalize_path(&self.root_path);
+        for ep in &mut self.entrypoints {
+            *ep = normalize_path(&*ep);
+        }
+        for sub in &mut self.subsystems {
+            sub.l1_path = normalize_path(&sub.l1_path);
+            for ep in &mut sub.entrypoints {
+                *ep = normalize_path(&*ep);
+            }
+            for kf in &mut sub.key_files {
+                *kf = normalize_path(&*kf);
+            }
+            for f in &mut sub.files {
+                f.path = normalize_path(&f.path);
+            }
+        }
+    }
+}
+
+/// Result of auditing knowledge base drift against the filesystem.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DriftReport {
+    pub missing_in_fs: Vec<String>,
+    pub untracked_in_knowledge: Vec<String>,
+    pub up_to_date_count: usize,
+}
+
+/// Summary report returned by `migrate_in_repo_knowledge` (D23).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MigrationReport {
+    /// Original in-repo `.agents/knowledge` directory path.
+    pub source_dir: PathBuf,
+    /// Target central storage directory path.
+    pub target_dir: PathBuf,
+    /// Schema version found in the source `L0_index.json` prior to migration.
+    pub previous_schema_version: u32,
+    /// Updated schema version written to the target `L0_index.json` (`2`).
+    pub new_schema_version: u32,
+    /// Relative paths (normalized with `/`) of all migrated files.
+    pub migrated_files: Vec<String>,
+    /// Number of subsystems in `L0_index.json`.
+    pub subsystems_count: usize,
+    /// Whether the old in-repo `.agents/knowledge` directory was removed after migration.
+    pub removed_source: bool,
+}
+
+/// Migrates an in-repo `.agents/knowledge` directory to the central project storage directory,
+/// upgrading `L0_index.json` to `CURRENT_L0_SCHEMA_VERSION` (`2`) and removing the old in-repo directory (D23).
+pub fn migrate_in_repo_knowledge(
+    repo_root: &Path,
+    target_project_dir: &Path,
+) -> Result<MigrationReport> {
+    migrate_in_repo_knowledge_with_options(repo_root, target_project_dir, true)
+}
+
+/// Migrates in-repo `.agents/knowledge` to `target_project_dir` with control over whether to remove the source directory.
+pub fn migrate_in_repo_knowledge_with_options(
+    repo_root: &Path,
+    target_project_dir: &Path,
+    remove_source: bool,
+) -> Result<MigrationReport> {
+    let source_dir = repo_root.join(".agents").join("knowledge");
+    if !source_dir.is_dir() {
+        bail!(
+            "In-repo knowledge directory {:?} does not exist",
+            source_dir
+        );
+    }
+
+    let source_l0_path = source_dir.join("L0_index.json");
+    if !source_l0_path.is_file() {
+        bail!("In-repo L0_index.json not found at {:?}", source_l0_path);
+    }
+
+    let mut l0_index = L0Index::load_from_file(&source_l0_path)?;
+    let previous_schema_version = l0_index.schema_version;
+    l0_index.upgrade_to_current();
+    if l0_index.project_id.is_none() {
+        if let Some(dir_name) = target_project_dir.file_name() {
+            l0_index.project_id = Some(dir_name.to_string_lossy().to_string());
+        }
+    }
+
+    fs::create_dir_all(target_project_dir).with_context(|| {
+        format!(
+            "Failed to create target central storage directory {:?}",
+            target_project_dir
+        )
+    })?;
+
+    let mut migrated_files = Vec::new();
+    copy_dir_recursive(
+        &source_dir,
+        &source_dir,
+        target_project_dir,
+        &mut migrated_files,
+    )?;
+
+    // Overwrite target L0_index.json with upgraded schema_version = 2
+    let target_l0_path = target_project_dir.join("L0_index.json");
+    l0_index.save_to_file(&target_l0_path)?;
+    migrated_files.sort();
+    migrated_files.dedup();
+
+    let mut removed_source = false;
+    if remove_source {
+        fs::remove_dir_all(&source_dir)
+            .with_context(|| format!("Failed to remove migrated source {:?}", source_dir))?;
+        removed_source = true;
+
+        // Clean up `.agents` parent directory if it is now completely empty
+        let agents_dir = repo_root.join(".agents");
+        if let Ok(mut entries) = fs::read_dir(&agents_dir) {
+            if entries.next().is_none() {
+                let _ = fs::remove_dir(&agents_dir);
+            }
+        }
+    }
+
+    Ok(MigrationReport {
+        source_dir,
+        target_dir: target_project_dir.to_path_buf(),
+        previous_schema_version,
+        new_schema_version: l0_index.schema_version,
+        migrated_files,
+        subsystems_count: l0_index.subsystems.len(),
+        removed_source,
+    })
+}
+
+fn copy_dir_recursive(
+    root_src: &Path,
+    current_src: &Path,
+    root_dst: &Path,
+    migrated_files: &mut Vec<String>,
+) -> Result<()> {
+    for entry in fs::read_dir(current_src)
+        .with_context(|| format!("Failed to read directory {:?}", current_src))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = path.strip_prefix(root_src).unwrap_or(&path);
+        let dst_path = root_dst.join(rel);
+
+        if path.is_dir() {
+            fs::create_dir_all(&dst_path)
+                .with_context(|| format!("Failed to create directory {:?}", dst_path))?;
+            copy_dir_recursive(root_src, &path, root_dst, migrated_files)?;
+        } else if path.is_file() {
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&path, &dst_path)
+                .with_context(|| format!("Failed to copy {:?} to {:?}", path, dst_path))?;
+            migrated_files.push(normalize_path(rel));
+        }
+    }
+    Ok(())
+}

@@ -457,15 +457,12 @@ fn update_or_create_root_agents_md(
     let section_header = "## 🗺 Архитектурная карта и навигация (OpenViking L0-L2)";
 
     let mut map_content = format!(
-        "\n\n{}\n\nПроект `{}` использует трехуровневую базу знаний в `.agents/knowledge/`:\n\n- **L0 Индекс (Mental Map):** [`.agents/knowledge/L0_index.md`](.agents/knowledge/L0_index.md) | [JSON](.agents/knowledge/L0_index.json)\n- **Справочник команд (L2):** [`.agents/knowledge/cli/commands.md`](.agents/knowledge/cli/commands.md)\n- **Архитектурные решения (ADR):** [`.agents/knowledge/adr/0001_initial_architecture.md`](.agents/knowledge/adr/0001_initial_architecture.md)\n\n### Подсистемы (L1):\n",
+        "\n\n{}\n\nПроект `{}` управляется трехуровневой базой знаний OpenViking (L0-L2).\nКатегорически запрещено читать файлы `.agents/knowledge/**` напрямую через инструменты чтения файлов (`view_file`, `cat` и др.). Вся навигация и исследование архитектуры выполняются исключительно через MCP-сервер `context-init` (MCP-First Protocol).\n\n### ⚡ MCP-First Protocol (context-init)\n\n1. **Обзор всех подсистем и структуры проекта (L0):**\n   Вызовите `context_get_subsystems`:\n   ```json\n   {{\"ServerName\": \"context-init\", \"ToolName\": \"context_get_subsystems\", \"Arguments\": {{}}}}\n   ```\n2. **Получение компактной L1-карточки конкретной подсистемы:**\n   Вызовите `context_get_subsystem` (передайте `subsystem_id`):\n   ```json\n   {{\"ServerName\": \"context-init\", \"ToolName\": \"context_get_subsystem\", \"Arguments\": {{\"subsystem_id\": \"<subsystem_id>\"}}}}\n   ```\n3. **AST-сжатый контекст кода подсистемы (без раздувания контекста):**\n   Вызовите `context_pack`:\n   ```json\n   {{\"ServerName\": \"context-init\", \"ToolName\": \"context_pack\", \"Arguments\": {{\"subsystem_id\": \"<subsystem_id>\", \"compress\": true}}}}\n   ```\n4. **Проверка архитектурного дрейфа перед сдачей задачи:**\n   Вызовите `context_check`:\n   ```json\n   {{\"ServerName\": \"context-init\", \"ToolName\": \"context_check\", \"Arguments\": {{}}}}\n   ```\n\n### 📦 Доступные подсистемы:\n",
         section_header, project_name
     );
 
     for s in subsystems {
-        map_content.push_str(&format!(
-            "- [{}](.agents/knowledge/{}) — {}\n",
-            s.name, s.l1_path, s.summary
-        ));
+        map_content.push_str(&format!("- `{}` ({}) — {}\n", s.id, s.name, s.summary));
     }
 
     if agents_path.exists() {
@@ -604,7 +601,7 @@ mod tests {
         };
 
         // 1. Test generate_knowledge_base
-        generate_knowledge_base(&analysis, &[sub.clone()], false, false)
+        generate_knowledge_base(&analysis, std::slice::from_ref(&sub), false, false)
             .expect("generate should succeed");
 
         let l0_path = temp_dir.join(".agents/knowledge/L0_index.json");
@@ -633,6 +630,42 @@ mod tests {
             !updated_content.ends_with("\n\n"),
             "L0_index.json should not end with multiple newlines"
         );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_agents_md_mcp_first_navigation() {
+        let temp_dir = std::env::temp_dir().join("test_agents_md_mcp");
+        let _ = fs::create_dir_all(&temp_dir);
+
+        let sub = SubsystemInfo {
+            id: "core".to_string(),
+            name: "Core".to_string(),
+            summary: "Core module".to_string(),
+            l1_path: "subsystems/core.md".to_string(),
+            files: Vec::new(),
+            entrypoints: Vec::new(),
+            key_files: Vec::new(),
+            key_symbols: Vec::new(),
+            tags: vec!["core".to_string()],
+            test_command: None,
+            tokens: 100,
+        };
+
+        update_or_create_root_agents_md(&temp_dir, "test-proj", &[sub]).expect("should succeed");
+
+        let content = fs::read_to_string(temp_dir.join("AGENTS.md")).expect("read AGENTS.md");
+        assert!(content.contains("MCP-First Protocol"));
+        assert!(content.contains("context_get_subsystems"));
+        assert!(content.contains("context_get_subsystem"));
+        assert!(content.contains("context_pack"));
+        assert!(content.contains("context_check"));
+        assert!(
+            !content.contains("[Core](.agents/knowledge/subsystems/core.md)"),
+            "AGENTS.md must not contain direct links to subsystem markdown files"
+        );
+        assert!(content.contains("- `core` (Core) — Core module"));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

@@ -6,14 +6,15 @@ pre-commit:
   parallel: false
   commands:
     check-rust:
-      glob: "src/**/*.rs"
-      run: cargo check --quiet
+      glob: "{src,crates}/**/*.rs"
+      run: cargo check --workspace --quiet
 
     fmt-rust:
-      glob: "src/**/*.rs"
-      run: cargo fmt
+      glob: "{src,crates}/**/*.rs"
+      run: cargo fmt --all
       stage_fixed: true
 
     sync-binary:
-      glob: "{src/**/*.rs,Cargo.toml}"
-      run: cargo build --release --quiet && cp target/release/context-init ~/.local/bin/context-init
+      glob: "{src/**/*.rs,crates/**/*.rs,Cargo.toml}"
+      # --remove-destination: replace the binary even while an MCP server is running it
+      run: cargo build --release --quiet && cp --remove-destination target/release/context-init ~/.local/bin/context-init

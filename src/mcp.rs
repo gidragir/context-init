@@ -6,8 +6,8 @@ use rmcp::{tool, tool_router, ServiceExt};
 
 use crate::service::{ContextService, ServiceInitOptions, ServiceUpdateOptions};
 use crate::types::{
-    McpCheckParams, McpCheckResult, McpGetSubsystemsParams, McpInitParams, McpPackParams,
-    McpUpdateParams, SubsystemInfo,
+    McpCheckParams, McpCheckResult, McpGetSubsystemParams, McpGetSubsystemsParams, McpInitParams,
+    McpPackParams, McpUpdateParams, SubsystemInfo,
 };
 
 /// MCP Server для context-init
@@ -24,10 +24,82 @@ impl ContextInitServer {
     }
 
     fn resolve_path(&self, requested: Option<&str>) -> PathBuf {
+        let find_up = |start: &Path| -> Option<PathBuf> {
+            let abs_start = if start.is_absolute() {
+                start.to_path_buf()
+            } else if let Ok(abs) = std::fs::canonicalize(start) {
+                abs
+            } else if let Ok(cur) = std::env::current_dir() {
+                cur.join(start)
+            } else {
+                start.to_path_buf()
+            };
+            let mut curr = Some(abs_start.as_path());
+            while let Some(dir) = curr {
+                if dir.join(".agents").join("knowledge").exists() {
+                    return Some(dir.to_path_buf());
+                }
+                curr = dir.parent();
+            }
+            None
+        };
+
         match requested {
-            Some(p) if !p.trim().is_empty() => PathBuf::from(p),
-            _ => (*self.default_path).clone(),
+            Some(p) if !p.trim().is_empty() && p.trim() != "." => {
+                let pb = PathBuf::from(p);
+                if pb.join(".agents").join("knowledge").exists() {
+                    pb
+                } else if let Some(up) = find_up(&pb) {
+                    up
+                } else {
+                    pb
+                }
+            }
+            _ => {
+                let cur = std::env::current_dir().unwrap_or_else(|_| (*self.default_path).clone());
+                if let Some(up) = find_up(&self.default_path) {
+                    up
+                } else if let Some(fb) = self.find_fallback_project(&self.default_path) {
+                    fb
+                } else if let Some(up) = find_up(&cur) {
+                    up
+                } else if let Some(fb) = self.find_fallback_project(&cur) {
+                    fb
+                } else if let Ok(pwd) = std::env::var("PWD") {
+                    if !pwd.trim().is_empty() {
+                        if let Some(up) = find_up(Path::new(&pwd)) {
+                            return up;
+                        }
+                    }
+                    (*self.default_path).clone()
+                } else {
+                    (*self.default_path).clone()
+                }
+            }
         }
+    }
+
+    fn find_fallback_project(&self, base: &Path) -> Option<PathBuf> {
+        let mut candidates: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+        let search_dirs = [base.join("projects"), base.to_path_buf()];
+
+        for pdir in &search_dirs {
+            if let Ok(entries) = std::fs::read_dir(pdir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let l0_file = path.join(".agents").join("knowledge").join("L0_index.json");
+                    if l0_file.exists() {
+                        let mtime = std::fs::metadata(&l0_file)
+                            .and_then(|m| m.modified())
+                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                        candidates.push((path, mtime));
+                    }
+                }
+            }
+        }
+
+        candidates.sort_by_key(|b| std::cmp::Reverse(b.1));
+        candidates.into_iter().next().map(|(p, _)| p)
     }
 }
 
@@ -92,6 +164,26 @@ impl ContextInitServer {
             Ok(subs) => Ok(Json(subs)),
             Err(e) => Err(rmcp::ErrorData::internal_error(
                 format!("Ошибка чтения подсистем: {:#}", e),
+                None,
+            )),
+        }
+    }
+
+    /// Получить компактную L1-карточку конкретной подсистемы
+    #[tool(
+        name = "context_get_subsystem",
+        description = "Возвращает компактную L1-карточку подсистемы (описание, точки входа, ключевые файлы, метрики токенов) по ее идентификатору, предотвращая необходимость чтения файлов напрямую."
+    )]
+    pub async fn get_subsystem(
+        &self,
+        params: Parameters<McpGetSubsystemParams>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let p = params.0;
+        let path = self.resolve_path(p.path.as_deref());
+        match ContextService::get_subsystem(&path, &p.subsystem_id) {
+            Ok(card) => Ok(card),
+            Err(e) => Err(rmcp::ErrorData::internal_error(
+                format!("Ошибка чтения подсистемы '{}': {:#}", p.subsystem_id, e),
                 None,
             )),
         }
@@ -275,6 +367,74 @@ mod tests {
         assert!(!subs_list.is_empty());
         let first_id = &subs_list[0].id;
 
+        // 3b. context_get_subsystem
+        let sub_card_res = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: first_id.clone(),
+                path: Some(temp_dir.to_string_lossy().to_string()),
+            }))
+            .await;
+        assert!(
+            sub_card_res.is_ok(),
+            "get_subsystem failed: {:?}",
+            sub_card_res.err()
+        );
+        let sub_card = sub_card_res.unwrap();
+        assert!(sub_card.contains("L1"));
+        assert!(sub_card.contains(first_id));
+
+        // Test path: None resolution (inherits server.default_path)
+        let sub_card_none = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: first_id.clone(),
+                path: None,
+            }))
+            .await;
+        assert!(
+            sub_card_none.is_ok(),
+            "get_subsystem with path: None failed: {:?}",
+            sub_card_none.err()
+        );
+
+        // Test with .md suffix
+        let sub_card_suffix = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: format!("{}.md", first_id),
+                path: None,
+            }))
+            .await;
+        assert!(
+            sub_card_suffix.is_ok(),
+            "get_subsystem with .md suffix failed: {:?}",
+            sub_card_suffix.err()
+        );
+
+        // Test with subsystems/ prefix
+        let sub_card_prefix = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: format!("subsystems/{}.md", first_id),
+                path: None,
+            }))
+            .await;
+        assert!(
+            sub_card_prefix.is_ok(),
+            "get_subsystem with subsystems/ prefix failed: {:?}",
+            sub_card_prefix.err()
+        );
+
+        // Test upward resolution: pass subdirectory `src_dir` as path
+        let sub_card_upward = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: first_id.clone(),
+                path: Some(src_dir.to_string_lossy().to_string()),
+            }))
+            .await;
+        assert!(
+            sub_card_upward.is_ok(),
+            "upward resolution failed: {:?}",
+            sub_card_upward.err()
+        );
+
         // 4. context_pack
         let pack_res = server
             .pack(Parameters(McpPackParams {
@@ -333,5 +493,27 @@ mod tests {
 
         // Cleanup
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_fallback_project_resolution() {
+        let fake_home = std::env::temp_dir().join("test_fake_home");
+        let fake_projects = fake_home.join("projects");
+        let proj_a = fake_projects.join("my_proj");
+        let _ = fs::create_dir_all(proj_a.join(".agents").join("knowledge"));
+        fs::write(
+            proj_a
+                .join(".agents")
+                .join("knowledge")
+                .join("L0_index.json"),
+            "{}",
+        )
+        .unwrap();
+
+        let server = ContextInitServer::new(fake_home.clone());
+        let resolved = server.resolve_path(None);
+        assert_eq!(resolved, proj_a);
+
+        let _ = fs::remove_dir_all(&fake_home);
     }
 }

@@ -212,3 +212,13 @@ pub struct McpGetSubsystemsParams {
     #[serde(default)]
     pub path: Option<String>,
 }
+
+/// Параметры MCP-инструмента context_get_subsystem
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpGetSubsystemParams {
+    /// Идентификатор подсистемы из L0_index (например: core, detector, generator)
+    pub subsystem_id: String,
+    /// Путь к проекту (по умолчанию ".")
+    #[serde(default)]
+    pub path: Option<String>,
+}

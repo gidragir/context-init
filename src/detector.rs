@@ -85,8 +85,14 @@ fn detect_type_and_name(root: &Path) -> (ProjectType, Option<String>, Vec<String
     }
 
     // 2. TypeScript / JavaScript
-    if root.join("package.json").exists() {
-        let (name, ws_members) = parse_package_json(&root.join("package.json"));
+    if root.join("package.json").exists() || root.join("pnpm-workspace.yaml").exists() {
+        let (name, mut ws_members) = parse_package_json(&root.join("package.json"));
+        let pnpm_ws = parse_pnpm_workspace_yaml(&root.join("pnpm-workspace.yaml"));
+        for w in pnpm_ws {
+            if !ws_members.contains(&w) {
+                ws_members.push(w);
+            }
+        }
         return (ProjectType::TypeScript, name, ws_members);
     }
 
@@ -123,12 +129,38 @@ fn parse_cargo_toml(path: &Path) -> (Option<String>, Vec<String>) {
         Err(_) => return (None, Vec::new()),
     };
 
+    if let Ok(parsed) = content.parse::<toml::Value>() {
+        let pkg_name = parsed
+            .get("package")
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str())
+            .map(|s| s.to_string());
+        let ws_members = parsed
+            .get("workspace")
+            .and_then(|w| w.get("members"))
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        return (pkg_name, ws_members);
+    }
+
     let mut pkg_name = None;
     let mut ws_members = Vec::new();
     let mut in_workspace_members = false;
+    let mut in_package_section = false;
 
     for line in content.lines() {
-        let trimmed = line.trim();
+        let line_no_comment = line.split('#').next().unwrap_or(line);
+        let trimmed = line_no_comment.trim();
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_package_section = trimmed == "[package]";
+        }
 
         if trimmed.starts_with("members = [") || trimmed == "members = [" {
             in_workspace_members = true;
@@ -163,7 +195,10 @@ fn parse_cargo_toml(path: &Path) -> (Option<String>, Vec<String>) {
             continue;
         }
 
-        if pkg_name.is_none() && (trimmed.starts_with("name =") || trimmed.starts_with("name=")) {
+        if in_package_section
+            && pkg_name.is_none()
+            && (trimmed.starts_with("name =") || trimmed.starts_with("name="))
+        {
             let parts: Vec<&str> = trimmed.split('=').collect();
             if parts.len() >= 2 {
                 pkg_name = Some(
@@ -214,6 +249,58 @@ fn parse_package_json(path: &Path) -> (Option<String>, Vec<String>) {
     }
 
     (name, ws)
+}
+
+fn parse_pnpm_workspace_yaml(path: &Path) -> Vec<String> {
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut members = Vec::new();
+    let mut in_packages = false;
+
+    for line in content.lines() {
+        // Убираем комментарии перед парсингом
+        let line_no_comment = if let Some(idx) = line.find('#') {
+            &line[..idx]
+        } else {
+            line
+        };
+        let trimmed = line_no_comment.trim();
+
+        if trimmed.starts_with("packages:") {
+            in_packages = true;
+            continue;
+        }
+
+        if in_packages {
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // Если не пустая строка и нет отступа — выход из секции packages
+            if !line.starts_with(' ') && !line.starts_with('\t') {
+                in_packages = false;
+                continue;
+            }
+
+            if trimmed.starts_with('-') {
+                let item = trimmed
+                    .trim_start_matches('-')
+                    .trim()
+                    .trim_matches('\'')
+                    .trim_matches('"')
+                    .trim();
+                // Игнорируем пустые элементы и отрицающие глобы вида '!**/test/**'
+                if !item.is_empty() && !item.starts_with('!') {
+                    members.push(item.to_string());
+                }
+            }
+        }
+    }
+
+    members
 }
 
 fn parse_pyproject_name(path: &Path) -> Option<String> {
@@ -503,8 +590,14 @@ fn discover_subsystems(
 
     // 1. Проверяем explicit workspace members (crates/*, packages/*, apps/*, etc.)
     for member in workspace_members {
-        if member.ends_with("/*") || member.ends_with("/**") {
-            let base_dir = member.trim_end_matches("/*").trim_end_matches("/**");
+        let trimmed_member = member.trim().trim_start_matches("./").trim_end_matches('/');
+        if trimmed_member.is_empty() || trimmed_member == "." {
+            continue;
+        }
+        if trimmed_member.ends_with("/*") || trimmed_member.ends_with("/**") {
+            let base_dir = trimmed_member
+                .trim_end_matches("/*")
+                .trim_end_matches("/**");
             let full_base = root.join(base_dir);
             if !is_ignored_path(&full_base, root) && full_base.is_dir() {
                 if let Ok(entries) = fs::read_dir(&full_base) {
@@ -523,7 +616,7 @@ fn discover_subsystems(
                 }
             }
         } else {
-            let full = root.join(member);
+            let full = root.join(trimmed_member);
             if full.is_dir() && !is_ignored_path(&full, root) && !dirs_to_inspect.contains(&full) {
                 dirs_to_inspect.push(full);
             }
@@ -532,7 +625,7 @@ fn discover_subsystems(
 
     // 2. Стандартные папки монорепозиториев и сервисов
     for common_parent in &[
-        "crates", "packages", "apps", "services", "modules", "internal", "cmd", "pkg",
+        "crates", "packages", "apps", "services", "modules", "plugins", "internal", "cmd", "pkg",
     ] {
         let parent_dir = root.join(common_parent);
         if parent_dir.is_dir() {
@@ -571,7 +664,7 @@ fn discover_subsystems(
     }
 
     // 4. Если в src/ нет поддиректорий, но есть несколько файлов
-    let mut flat_src_modules = Vec::new();
+    let mut flat_src_modules: Vec<DiscoveredModule> = Vec::new();
     if !has_src_subdirs && src_dir.is_dir() {
         if let Ok(entries) = fs::read_dir(&src_dir) {
             let mut code_files = Vec::new();
@@ -584,6 +677,7 @@ fn discover_subsystems(
                     }
                 }
             }
+            code_files.sort();
 
             if code_files.len() > 2 {
                 for file_path in code_files {
@@ -596,6 +690,7 @@ fn discover_subsystems(
                     } else {
                         stem.clone()
                     };
+                    let target_dir_path = format!("src/{}", mod_id);
                     let rel = file_path
                         .strip_prefix(root)
                         .unwrap_or(&file_path)
@@ -608,19 +703,36 @@ fn discover_subsystems(
                     ));
                     let lines = count_lines(&file_path);
                     let symbols = extract_symbols_from_single_file(&file_path, deep);
+                    let sub_file = SubsystemFile {
+                        path: rel.clone(),
+                        is_entrypoint: is_ep,
+                        lines,
+                    };
 
-                    flat_src_modules.push(DiscoveredModule {
-                        dir_path: format!("src/{}", mod_id),
-                        name: stem,
-                        files: vec![SubsystemFile {
-                            path: rel.clone(),
-                            is_entrypoint: is_ep,
-                            lines,
-                        }],
-                        entrypoints: if is_ep { vec![rel] } else { Vec::new() },
-                        symbols,
-                        test_cmd: None,
-                    });
+                    if let Some(existing) = flat_src_modules
+                        .iter_mut()
+                        .find(|m| m.dir_path == target_dir_path)
+                    {
+                        existing.name = mod_id;
+                        existing.files.push(sub_file);
+                        if is_ep && !existing.entrypoints.contains(&rel) {
+                            existing.entrypoints.push(rel);
+                        }
+                        for sym in symbols {
+                            if !existing.symbols.contains(&sym) {
+                                existing.symbols.push(sym);
+                            }
+                        }
+                    } else {
+                        flat_src_modules.push(DiscoveredModule {
+                            dir_path: target_dir_path,
+                            name: stem,
+                            files: vec![sub_file],
+                            entrypoints: if is_ep { vec![rel] } else { Vec::new() },
+                            symbols,
+                            test_cmd: None,
+                        });
+                    }
                 }
             } else if !dirs_to_inspect.contains(&src_dir) {
                 dirs_to_inspect.push(src_dir);
@@ -686,7 +798,10 @@ fn discover_subsystems(
         let test_cmd = match pt {
             ProjectType::Rust => {
                 if dir.join("Cargo.toml").exists() {
-                    let cmd = format!("cargo test -p {}", module_name);
+                    let pkg_name = parse_cargo_toml(&dir.join("Cargo.toml"))
+                        .0
+                        .unwrap_or_else(|| module_name.clone());
+                    let cmd = format!("cargo test -p {}", pkg_name);
                     Some(if with_rtk { prefix_with_rtk(&cmd) } else { cmd })
                 } else {
                     None
@@ -1534,6 +1649,35 @@ version = "0.1.0"
     }
 
     #[test]
+    fn test_parse_pnpm_workspace_yaml() {
+        let pnpm_sample = r#"# PNPM Workspace Configuration
+packages:
+  # Internal plugins
+  - 'plugins/*' # inline comment
+  - "packages/*"
+  - apps/web
+  - '!**/tests/**'
+# Column 0 comment
+  - modules/legacy
+
+catalog:
+  typescript: 7.0.2
+"#;
+        let temp_dir = std::env::temp_dir().join("test_pnpm_ws");
+        let _ = fs::create_dir_all(&temp_dir);
+        let file_path = temp_dir.join("pnpm-workspace.yaml");
+        fs::write(&file_path, pnpm_sample).unwrap();
+
+        let members = parse_pnpm_workspace_yaml(&file_path);
+        assert_eq!(
+            members,
+            vec!["plugins/*", "packages/*", "apps/web", "modules/legacy"]
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
     fn test_clean_symbol_line() {
         assert_eq!(
             clean_symbol_line("pub fn process_data(input: &str) -> Result<()> {"),
@@ -1836,6 +1980,138 @@ impl MyService {
                 );
             }
         }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_workspace_root_dot_member_does_not_create_empty_subsystem() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_ws_dot_member_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let crate_dir = temp_dir.join("crates").join("ci-core").join("src");
+        let root_src = temp_dir.join("src");
+        let _ = fs::create_dir_all(&crate_dir);
+        let _ = fs::create_dir_all(&root_src);
+
+        let _ = fs::write(
+            temp_dir.join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"crates/ci-core\", \".\"]\n\n[package]\nname = \"context-init\"\nversion = \"0.3.0\"\n",
+        );
+        let _ = fs::write(
+            temp_dir.join("crates").join("ci-core").join("Cargo.toml"),
+            "[package]\nname = \"ci-core\"\nversion = \"0.3.0\"\n",
+        );
+        let _ = fs::write(crate_dir.join("lib.rs"), "pub fn core_fn() {}");
+        let _ = fs::write(root_src.join("main.rs"), "fn main() {}");
+
+        let analysis = analyze_project(&temp_dir, false, false).expect("Analysis should succeed");
+        assert!(
+            analysis
+                .detected_modules
+                .iter()
+                .all(|m| !m.name.is_empty() && !m.dir_path.is_empty() && m.dir_path != "."),
+            "No module should have an empty name or '.' dir_path: {:?}",
+            analysis.detected_modules
+        );
+        assert!(
+            analysis
+                .detected_modules
+                .iter()
+                .any(|m| m.dir_path == "crates/ci-core"),
+            "crates/ci-core must be discovered"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_flat_src_merges_main_and_lib_into_single_core_module() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_flat_src_core_merge_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root_src = temp_dir.join("src");
+        let _ = fs::create_dir_all(&root_src);
+
+        let _ = fs::write(
+            temp_dir.join("Cargo.toml"),
+            "[package]\nname = \"dual-target\"\nversion = \"0.3.0\"\n",
+        );
+        let _ = fs::write(
+            root_src.join("main.rs"),
+            "pub fn run_cli() {}\nfn main() {}",
+        );
+        let _ = fs::write(root_src.join("lib.rs"), "pub fn run_lib() {}");
+        let _ = fs::write(root_src.join("detector.rs"), "pub fn detect() {}");
+        let _ = fs::write(root_src.join("service.rs"), "pub fn serve() {}");
+
+        let analysis = analyze_project(&temp_dir, false, false).expect("Analysis should succeed");
+        let core_modules: Vec<_> = analysis
+            .detected_modules
+            .iter()
+            .filter(|m| m.dir_path == "src/core")
+            .collect();
+
+        assert_eq!(
+            core_modules.len(),
+            1,
+            "main.rs and lib.rs must be merged into a single src/core module, got: {:?}",
+            core_modules
+        );
+        let core = core_modules[0];
+        assert_eq!(core.name, "core");
+        assert_eq!(core.files.len(), 2);
+        assert!(core.files.iter().any(|f| f.path == "src/lib.rs"));
+        assert!(core.files.iter().any(|f| f.path == "src/main.rs"));
+        assert!(core.entrypoints.contains(&"src/lib.rs".to_string()));
+        assert!(core.entrypoints.contains(&"src/main.rs".to_string()));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_parse_cargo_toml_workspace_inheritance_and_sections() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_parse_cargo_ws_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let subcrate_dir = temp_dir.join("crates").join("ci-core");
+        let _ = fs::create_dir_all(subcrate_dir.join("src"));
+
+        let root_toml = temp_dir.join("Cargo.toml");
+        let _ = fs::write(
+            &root_toml,
+            "[workspace]\nresolver = \"2\"\nmembers = [\n    \"crates/ci-core\", # core crate\n    \".\",\n]\n\n[workspace.package]\nversion = \"0.3.0\"\nedition = \"2021\"\n\n[workspace.metadata.custom]\nname = \"should-not-match-metadata-name\"\n\n[package]\nname = \"context-init\"\nversion.workspace = true\nedition.workspace = true\n",
+        );
+
+        let subcrate_toml = subcrate_dir.join("Cargo.toml");
+        let _ = fs::write(
+            &subcrate_toml,
+            "[package]\nname = \"ci-core\"\nversion.workspace = true\nedition.workspace = true\n",
+        );
+        let _ = fs::write(
+            subcrate_dir.join("src").join("lib.rs"),
+            "pub const V: &str = \"0.3.0\";",
+        );
+
+        let (root_name, members) = parse_cargo_toml(&root_toml);
+        assert_eq!(root_name.as_deref(), Some("context-init"));
+        assert_eq!(members, vec!["crates/ci-core".to_string(), ".".to_string()]);
+
+        let (sub_name, sub_members) = parse_cargo_toml(&subcrate_toml);
+        assert_eq!(sub_name.as_deref(), Some("ci-core"));
+        assert!(sub_members.is_empty());
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

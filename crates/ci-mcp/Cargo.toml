@@ -1,0 +1,19 @@
+[package]
+name = "ci-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Model Context Protocol (MCP) server and tool handlers for context-init"
+
+[dependencies]
+ci-core.workspace = true
+ci-llm.workspace = true
+anyhow.workspace = true
+quote.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+syn.workspace = true
+tiktoken-rs.workspace = true
+tokio.workspace = true

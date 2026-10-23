@@ -1,21 +1,84 @@
-[package]
-name = "context-init"
-version = "0.2.0"
+[workspace]
+resolver = "2"
+members = [
+    "crates/ci-core",
+    "crates/ci-llm",
+    "crates/ci-mcp",
+    ".",
+]
+
+[workspace.package]
+version = "0.3.0"
 edition = "2021"
-description = "CLI tool to initialize OpenViking hierarchical L0-L2 context for AI in any project"
 authors = ["gidragir"]
 
-[dependencies]
+[workspace.dependencies]
+ci-core = { path = "crates/ci-core", version = "0.3.0" }
+ci-llm = { path = "crates/ci-llm", version = "0.3.0" }
+ci-mcp = { path = "crates/ci-mcp", version = "0.3.0" }
+anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
+colored = "2.1"
+dirs-next = "2.0"
+quote = "1.0"
+rmcp = { version = "3.5", features = ["server", "macros", "transport-io"] }
+schemars = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-ureq = { version = "2.10", features = ["json"] }
-colored = "2.1"
-anyhow = "1.0"
+sha2 = "0.10"
 syn = { version = "2.0", features = ["full", "parsing"] }
-quote = "1.0"
 tiktoken-rs = "0.5"
-rmcp = { version = "3.5", features = ["server", "macros", "transport-io"] }
 tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "io-std"] }
-schemars = "1.0"
+toml = "0.8"
+ureq = { version = "2.10", features = ["json"] }
 
+[package]
+name = "context-init"
+version.workspace = true
+edition.workspace = true
+description = "CLI tool to initialize OpenViking hierarchical L0-L2 context for AI in any project"
+authors.workspace = true
+
+[dependencies]
+ci-core.workspace = true
+ci-llm.workspace = true
+ci-mcp.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+colored.workspace = true
+dirs-next.workspace = true
+quote.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+syn.workspace = true
+tiktoken-rs.workspace = true
+tokio.workspace = true
+toml.workspace = true
+ureq.workspace = true
+
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.test]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+
+[profile.dist]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

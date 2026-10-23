@@ -103,6 +103,19 @@ impl ContextService {
             return Ok(canonical);
         }
 
+        // 5. Поиск вверх по дереву каталогов
+        let mut curr = canonical.parent();
+        while let Some(parent) = curr {
+            let direct = parent.join(".agents").join("knowledge");
+            if direct.join("L0_index.json").exists() {
+                return Ok(direct);
+            }
+            if parent.join("L0_index.json").exists() {
+                return Ok(parent.to_path_buf());
+            }
+            curr = parent.parent();
+        }
+
         anyhow::bail!(
             "База знаний не найдена по пути {:?}. Сначала выполните инициализацию.",
             direct.join("L0_index.json")
@@ -125,6 +138,102 @@ impl ContextService {
     pub fn get_subsystems(path: &Path) -> Result<Vec<SubsystemInfo>> {
         let index = Self::get_l0_index(path)?;
         Ok(index.subsystems)
+    }
+
+    /// Получить компактную L1-карточку конкретной подсистемы
+    pub fn get_subsystem(path: &Path, subsystem_id: &str) -> Result<String> {
+        let canonical = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => path.to_path_buf(),
+        };
+        let kdir = Self::find_knowledge_dir(&canonical)?;
+        let index = Self::get_l0_index(&canonical)?;
+
+        let clean_input = subsystem_id
+            .trim()
+            .trim_start_matches("subsystems/")
+            .trim_start_matches("subsystems\\")
+            .trim_end_matches(".md");
+
+        let matched = index.subsystems.iter().find(|s| {
+            s.id.eq_ignore_ascii_case(subsystem_id)
+                || s.name.eq_ignore_ascii_case(subsystem_id)
+                || s.id
+                    .eq_ignore_ascii_case(&generator::sanitize_id(subsystem_id))
+                || s.id.eq_ignore_ascii_case(clean_input)
+                || s.name.eq_ignore_ascii_case(clean_input)
+                || s.id
+                    .eq_ignore_ascii_case(&generator::sanitize_id(clean_input))
+        });
+
+        if let Some(sub) = matched {
+            // 1. Попробовать прочитать L1 файл по l1_path
+            let l1_file = kdir.join(&sub.l1_path);
+            if l1_file.exists() {
+                if let Ok(content) = std::fs::read_to_string(&l1_file) {
+                    return Ok(content);
+                }
+            }
+
+            // 2. Попробовать прочитать subsystems/<id>.md
+            let alt_l1 = kdir.join("subsystems").join(format!("{}.md", sub.id));
+            if alt_l1.exists() {
+                if let Ok(content) = std::fs::read_to_string(&alt_l1) {
+                    return Ok(content);
+                }
+            }
+
+            // 3. Синтезировать компактную карточку из L0_index
+            let mut card = format!(
+                "# Подсистема: {} (L1)\n\n> **Идентификатор:** `{}`\n> **Теги:** {} | **Объем:** ~{} токенов BPE\n\n## 🎯 Назначение и роль\n{}\n\n",
+                sub.name,
+                sub.id,
+                sub.tags.join(", "),
+                sub.tokens,
+                sub.summary
+            );
+
+            if !sub.entrypoints.is_empty() {
+                card.push_str("## 🚪 Точки входа\n");
+                for ep in &sub.entrypoints {
+                    card.push_str(&format!("- `{}`\n", ep));
+                }
+                card.push('\n');
+            }
+
+            if !sub.key_files.is_empty() {
+                card.push_str("## 📁 Ключевые файлы\n");
+                for kf in &sub.key_files {
+                    card.push_str(&format!("- `{}`\n", kf));
+                }
+                card.push('\n');
+            }
+
+            if let Some(cmd) = &sub.test_command {
+                card.push_str(&format!(
+                    "## 🧪 Запуск и тестирование\n```bash\n{}\n```\n",
+                    cmd
+                ));
+            }
+
+            Ok(card)
+        } else {
+            // Проверить прямое наличие subsystems/<clean_id>.md
+            let clean_id = generator::sanitize_id(clean_input);
+            let direct_l1 = kdir.join("subsystems").join(format!("{}.md", clean_id));
+            if direct_l1.exists() {
+                if let Ok(content) = std::fs::read_to_string(&direct_l1) {
+                    return Ok(content);
+                }
+            }
+
+            let available: Vec<String> = index.subsystems.iter().map(|s| s.id.clone()).collect();
+            anyhow::bail!(
+                "Подсистема '{}' не найдена в L0_index.json. Доступные подсистемы: {}",
+                subsystem_id,
+                available.join(", ")
+            )
+        }
     }
 
     /// Упаковать файлы подсистемы в сжатый AI-контекст и вернуть его в виде строки

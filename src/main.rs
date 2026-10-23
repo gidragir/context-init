@@ -1,13 +1,7 @@
-mod detector;
-mod generator;
-mod mcp;
-mod ollama;
-mod service;
-mod types;
-
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::*;
+use context_init::{generator, mcp, service, types};
 use std::path::PathBuf;
 use types::{ProjectAnalysis, SubsystemInfo};
 
@@ -15,7 +9,7 @@ use types::{ProjectAnalysis, SubsystemInfo};
 #[command(
     name = "context-init",
     author = "gidragir",
-    version = "0.2.0",
+    version,
     about = "🚀 Инициализация и поддержание трехуровневой базы знаний (L0-L2 OpenViking) для ИИ",
     long_about = "Сканирует проект, выявляет структуру монорепозиториев, точки входа, команды сборки/тестов и генерирует высокоэффективный навигационный контекст для ИИ-ассистентов."
 )]
@@ -180,31 +174,8 @@ fn print_banner(subtitle: &str) {
     );
 }
 
-struct InitOptions<'a> {
-    pub path: &'a std::path::Path,
-    pub ai: bool,
-    pub ollama_url: &'a str,
-    pub model: &'a str,
-    pub force: bool,
-    pub dry_run: bool,
-    pub deep: bool,
-    pub with_agents_md: bool,
-    pub with_rtk: bool,
-    pub no_rtk: bool,
-    pub compact: bool,
-}
-
-struct UpdateOptions<'a> {
-    pub path: &'a std::path::Path,
-    pub ai: bool,
-    pub ollama_url: &'a str,
-    pub model: &'a str,
-    pub deep: bool,
-    pub with_agents_md: bool,
-    pub with_rtk: bool,
-    pub no_rtk: bool,
-    pub compact: bool,
-}
+type InitOptions<'a> = service::ServiceInitOptions<'a>;
+type UpdateOptions<'a> = service::ServiceUpdateOptions<'a>;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -304,32 +275,24 @@ fn main() -> Result<()> {
 }
 
 fn run_init(opts: InitOptions) -> Result<()> {
-    let use_rtk = if opts.no_rtk {
-        false
-    } else {
-        opts.with_rtk || detector::is_rtk_available()
-    };
-
     if !opts.compact {
         print_banner("Инициализатор контекста L0-L2");
         print!("🔍 Анализирую проект в {:?}... ", opts.path);
     }
-    let analysis = detector::analyze_project(opts.path, opts.deep, use_rtk)?;
-    if !opts.compact {
+
+    let is_dry_run = opts.dry_run;
+    let with_agents_md = opts.with_agents_md;
+    let is_compact = opts.compact;
+
+    let (analysis, subsystems) = service::ContextService::init_knowledge_base(opts)?;
+
+    if !is_compact && !is_dry_run {
         println!("{}", "OK".green().bold());
         print_analysis_summary(&analysis);
     }
 
-    let subsystems = build_subsystems(
-        &analysis,
-        opts.ai,
-        opts.ollama_url,
-        opts.model,
-        opts.compact,
-    )?;
-
-    if opts.dry_run {
-        if opts.compact {
+    if is_dry_run {
+        if is_compact {
             println!(
                 "OK: initialized {} subsystems in .agents/knowledge/",
                 subsystems.len()
@@ -351,19 +314,14 @@ fn run_init(opts: InitOptions) -> Result<()> {
         }
         println!("   • cli/commands.md: актуальные команды сборки/тестирования");
         println!("   • adr/0001_initial_architecture.md: начальный архитектурный срез");
-        if opts.with_agents_md {
+        if with_agents_md {
             println!("   • AGENTS.md: карта навигации в корне");
         }
         println!("\n✨ Файлы не были изменены (--dry-run).");
         return Ok(());
     }
 
-    if !opts.compact {
-        println!("\n📦 Генерирую файловую структуру L0-L2 в .agents/knowledge/...");
-    }
-    generator::generate_knowledge_base(&analysis, &subsystems, opts.force, opts.with_agents_md)?;
-
-    if opts.compact {
+    if is_compact {
         println!(
             "OK: initialized {} subsystems in .agents/knowledge/",
             subsystems.len()
@@ -399,7 +357,7 @@ fn run_init(opts: InitOptions) -> Result<()> {
             .join("adr/0001_initial_architecture.md")
             .display()
     );
-    if opts.with_agents_md {
+    if with_agents_md {
         println!(
             "   • Корневой агент:  {}",
             analysis.root_dir.join("AGENTS.md").display()
@@ -418,21 +376,11 @@ fn run_check(path: &std::path::Path, compact: bool, exit_code: bool) -> Result<(
 }
 
 fn check_drift(path: &std::path::Path, compact: bool) -> Result<bool> {
-    let analysis = detector::analyze_project(path, false, false)?;
-    let report = generator::audit_knowledge_base(&analysis)?;
-    let has_drift = !report.missing_in_fs.is_empty() || !report.untracked_in_knowledge.is_empty();
+    let result = service::ContextService::audit_drift(path)?;
+    let has_drift = result.has_drift;
 
     if compact {
-        if !has_drift {
-            println!("OK: {} subsystems up-to-date", report.up_to_date_count);
-        } else {
-            println!(
-                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}]",
-                report.up_to_date_count,
-                report.missing_in_fs.join(", "),
-                report.untracked_in_knowledge.join(", ")
-            );
-        }
+        println!("{}", result.message);
         return Ok(has_drift);
     }
 
@@ -444,25 +392,25 @@ fn check_drift(path: &std::path::Path, compact: bool) -> Result<bool> {
     println!("\n📊 Результаты проверки актуальности базы знаний:");
     println!(
         "   • Актуальных подсистем: {}",
-        report.up_to_date_count.to_string().green().bold()
+        result.up_to_date_count.to_string().green().bold()
     );
 
-    if !report.missing_in_fs.is_empty() {
+    if !result.missing_in_fs.is_empty() {
         println!(
             "   ⚠  Удалены на диске, но остались в базе знаний ({} шт.):",
-            report.missing_in_fs.len().to_string().red()
+            result.missing_in_fs.len().to_string().red()
         );
-        for m in &report.missing_in_fs {
+        for m in &result.missing_in_fs {
             println!("      - {}", m.red());
         }
     }
 
-    if !report.untracked_in_knowledge.is_empty() {
+    if !result.untracked_in_knowledge.is_empty() {
         println!(
             "   ⚠  Новые модули на диске, отсутствующие в базе знаний ({} шт.):",
-            report.untracked_in_knowledge.len().to_string().yellow()
+            result.untracked_in_knowledge.len().to_string().yellow()
         );
-        for u in &report.untracked_in_knowledge {
+        for u in &result.untracked_in_knowledge {
             println!("      - {}", u.yellow());
         }
         println!(
@@ -483,40 +431,20 @@ fn check_drift(path: &std::path::Path, compact: bool) -> Result<bool> {
 }
 
 fn run_update(opts: UpdateOptions) -> Result<()> {
-    let use_rtk = if opts.no_rtk {
-        false
-    } else {
-        opts.with_rtk || detector::is_rtk_available()
-    };
-
     if !opts.compact {
         print_banner("Инкрементальное обновление базы знаний (Update)");
         print!("🔍 Анализирую проект в {:?}... ", opts.path);
     }
-    let analysis = detector::analyze_project(opts.path, opts.deep, use_rtk)?;
-    if !opts.compact {
-        println!("{}", "OK".green().bold());
-    }
 
-    let subsystems = build_subsystems(
-        &analysis,
-        opts.ai,
-        opts.ollama_url,
-        opts.model,
-        opts.compact,
-    )?;
+    let is_compact = opts.compact;
+    let (added, updated) = service::ContextService::update_knowledge_base(opts)?;
 
-    let (added, updated) =
-        generator::update_knowledge_base(&analysis, &subsystems, opts.with_agents_md)?;
-
-    if opts.compact {
-        println!(
-            "OK: updated {} subsystems in .agents/knowledge/",
-            subsystems.len()
-        );
+    if is_compact {
+        println!("OK: updated subsystems in .agents/knowledge/");
         return Ok(());
     }
 
+    println!("{}", "OK".green().bold());
     println!("{}", "✨ ОБНОВЛЕНИЕ ЗАВЕРШЕНО!".green().bold());
     println!(
         "   • Добавлено новых подсистем: {}",
@@ -561,176 +489,6 @@ fn print_analysis_summary(analysis: &ProjectAnalysis) {
     }
 }
 
-fn build_subsystems(
-    analysis: &ProjectAnalysis,
-    ai: bool,
-    ollama_url: &str,
-    model: &str,
-    compact: bool,
-) -> Result<Vec<SubsystemInfo>> {
-    let mut subsystems: Vec<SubsystemInfo> = Vec::new();
-
-    if ai {
-        if !compact {
-            println!(
-                "\n🤖 Режим ИИ активирован: опрашиваю Ollama ({}, модель {})...",
-                ollama_url, model
-            );
-        }
-        if ollama::is_ollama_online(ollama_url) {
-            match ollama::enrich_subsystems_with_ai(analysis, ollama_url, model) {
-                Ok(ai_subs) if !ai_subs.is_empty() => {
-                    if !compact {
-                        println!(
-                            "   ✓ Получено описание для {} подсистем от ИИ.",
-                            ai_subs.len().to_string().green().bold()
-                        );
-                    }
-                    for sub in ai_subs {
-                        let matching_mod = analysis.detected_modules.iter().find(|m| {
-                            let clean = generator::sanitize_id(&m.dir_path);
-                            clean == sub.id
-                                || clean == format!("src_{}", sub.id)
-                                || m.name == sub.name
-                                || m.name == sub.id
-                                || (sub.id == "core" && (m.name == "main" || m.name == "core"))
-                        });
-
-                        let entrypoints = matching_mod
-                            .map(|m| m.entrypoints.clone())
-                            .unwrap_or_default();
-                        let key_files = matching_mod
-                            .map(|m| m.files.iter().map(|f| f.path.clone()).collect())
-                            .unwrap_or_default();
-                        let files = matching_mod.map(|m| m.files.clone()).unwrap_or_default();
-                        let key_symbols =
-                            matching_mod.map(|m| m.symbols.clone()).unwrap_or_default();
-                        let test_cmd = matching_mod.and_then(|m| m.test_cmd.clone());
-
-                        subsystems.push(SubsystemInfo {
-                            l1_path: format!("subsystems/{}.md", sub.id),
-                            id: sub.id,
-                            name: sub.name,
-                            summary: sub.summary,
-                            tags: sub.tags,
-                            entrypoints,
-                            key_files,
-                            files,
-                            key_symbols,
-                            test_command: test_cmd,
-                            tokens: 0,
-                        });
-                    }
-                }
-                Err(err) if !compact => {
-                    println!(
-                        "   ⚠ Запрос к Ollama завершился с ошибкой: {}. Переход на эвристический анализ.",
-                        err
-                    );
-                }
-                _ => {}
-            }
-        } else if !compact {
-            println!(
-                "   ⚠ Ollama недоступна на {}. Использую эвристический анализ.",
-                ollama_url
-            );
-        }
-    }
-
-    if subsystems.is_empty() {
-        if analysis.detected_modules.is_empty() {
-            // Плоский проект
-            subsystems.push(SubsystemInfo {
-                id: "core".to_string(),
-                name: "Core Logic".to_string(),
-                summary: format!("Основная логика и компоненты проекта {}", analysis.name),
-                l1_path: "subsystems/core.md".to_string(),
-                tags: vec!["core".to_string(), "main".to_string()],
-                entrypoints: analysis.root_entrypoints.clone(),
-                key_files: analysis.root_entrypoints.clone(),
-                files: Vec::new(),
-                key_symbols: Vec::new(),
-                test_command: analysis.commands.test.clone(),
-                tokens: 0,
-            });
-        } else {
-            for m in &analysis.detected_modules {
-                let clean_id = generator::sanitize_id(&m.dir_path);
-                let capitalized = m
-                    .name
-                    .replace(['_', '-'], " ")
-                    .split_whitespace()
-                    .map(|w| {
-                        let mut c = w.chars();
-                        match c.next() {
-                            None => String::new(),
-                            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-
-                let summary = if !m.entrypoints.is_empty() {
-                    format!(
-                        "Подсистема `{}` с ключевыми точками входа: {}",
-                        m.dir_path,
-                        m.entrypoints.join(", ")
-                    )
-                } else {
-                    format!(
-                        "Модуль и компоненты директории `{}` ({} файлов)",
-                        m.dir_path,
-                        m.files.len()
-                    )
-                };
-
-                let key_files = m.files.iter().map(|f| f.path.clone()).collect();
-
-                subsystems.push(SubsystemInfo {
-                    id: clean_id.clone(),
-                    name: capitalized,
-                    summary,
-                    l1_path: format!("subsystems/{}.md", clean_id),
-                    tags: vec![clean_id, analysis.project_type.display_name().to_string()],
-                    entrypoints: m.entrypoints.clone(),
-                    key_files,
-                    files: m.files.clone(),
-                    key_symbols: m.symbols.clone(),
-                    test_command: m.test_cmd.clone(),
-                    tokens: 0,
-                });
-            }
-        }
-    }
-
-    for sub in &mut subsystems {
-        compute_subsystem_tokens(&analysis.root_dir, sub);
-    }
-
-    Ok(subsystems)
-}
-
-fn compute_subsystem_tokens(root_dir: &std::path::Path, sub: &mut SubsystemInfo) {
-    let mut total_tokens = 0;
-    if !sub.files.is_empty() {
-        for f in &sub.files {
-            let path = root_dir.join(&f.path);
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                total_tokens += detector::count_tokens(&content);
-            }
-        }
-    } else {
-        for path_str in &sub.key_files {
-            let path = root_dir.join(path_str);
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                total_tokens += detector::count_tokens(&content);
-            }
-        }
-    }
-    sub.tokens = total_tokens;
-}
-
 fn run_pack(
     subsystem_id: &str,
     path: &std::path::Path,
@@ -742,81 +500,41 @@ fn run_pack(
     let canonical = std::fs::canonicalize(path)
         .with_context(|| format!("Не удалось получить канонический путь для {:?}", path))?;
 
-    let kdir = service::ContextService::find_knowledge_dir(&canonical)?;
-    let l0_json_path = kdir.join("L0_index.json");
-    if !l0_json_path.exists() {
-        anyhow::bail!(
-            "База знаний не найдена по пути {:?}. Сначала выполните `context-init init`.",
-            l0_json_path
-        );
-    }
+    let (content, tokens, files_count) = service::ContextService::pack_subsystem_to_string(
+        &canonical,
+        subsystem_id,
+        compress,
+        style,
+    )?;
 
-    let content = std::fs::read_to_string(&l0_json_path)
-        .with_context(|| format!("Не удалось прочитать {:?}", l0_json_path))?;
-    let index: types::L0Index = serde_json::from_str(&content)
-        .with_context(|| format!("Ошибка десериализации L0_index.json в {:?}", l0_json_path))?;
+    if use_repomix && is_command_in_path("repomix") {
+        let _kdir = service::ContextService::find_knowledge_dir(&canonical)?;
+        let index = service::ContextService::get_l0_index(&canonical)?;
+        let matched_subs: Vec<&SubsystemInfo> = if subsystem_id.eq_ignore_ascii_case("all") {
+            index.subsystems.iter().collect()
+        } else {
+            index
+                .subsystems
+                .iter()
+                .filter(|s| {
+                    s.id.eq_ignore_ascii_case(subsystem_id)
+                        || s.name.eq_ignore_ascii_case(subsystem_id)
+                        || s.id
+                            .eq_ignore_ascii_case(&generator::sanitize_id(subsystem_id))
+                })
+                .collect()
+        };
 
-    let matched_subs: Vec<&SubsystemInfo> = if subsystem_id.eq_ignore_ascii_case("all") {
-        index.subsystems.iter().collect()
-    } else {
-        index
-            .subsystems
-            .iter()
-            .filter(|s| {
-                s.id.eq_ignore_ascii_case(subsystem_id)
-                    || s.name.eq_ignore_ascii_case(subsystem_id)
-                    || s.id
-                        .eq_ignore_ascii_case(&generator::sanitize_id(subsystem_id))
-            })
-            .collect()
-    };
-
-    if matched_subs.is_empty() {
-        let available: Vec<String> = index.subsystems.iter().map(|s| s.id.clone()).collect();
-        anyhow::bail!(
-            "Подсистема '{}' не найдена в L0_index.json. Доступные подсистемы: {}",
-            subsystem_id,
-            available.join(", ")
-        );
-    }
-
-    let mut files_to_pack = Vec::new();
-    for sub in &matched_subs {
-        if !sub.files.is_empty() {
+        let mut files_to_pack = Vec::new();
+        for sub in &matched_subs {
             for f in &sub.files {
                 if !files_to_pack.contains(&f.path) && canonical.join(&f.path).exists() {
                     files_to_pack.push(f.path.clone());
                 }
             }
-        } else if !sub.key_files.is_empty() {
-            for kf in &sub.key_files {
-                if !files_to_pack.contains(kf) && canonical.join(kf).exists() {
-                    files_to_pack.push(kf.clone());
-                }
-            }
-        } else {
-            let l1_file = kdir.join(&sub.l1_path);
-            if l1_file.exists() {
-                let rel = l1_file
-                    .strip_prefix(&canonical)
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| sub.l1_path.clone());
-                if !files_to_pack.contains(&rel) {
-                    files_to_pack.push(rel);
-                }
-            }
         }
-    }
 
-    if files_to_pack.is_empty() {
-        anyhow::bail!(
-            "Для подсистемы '{}' не найдено существующих файлов на диске.",
-            subsystem_id
-        );
-    }
-
-    if use_repomix {
-        if is_command_in_path("repomix") {
+        if !files_to_pack.is_empty() {
             let mut cmd = std::process::Command::new("repomix");
             let patterns = files_to_pack.join(",");
             cmd.arg("--include").arg(&patterns);
@@ -833,9 +551,8 @@ fn run_pack(
             }
             cmd.current_dir(&canonical);
 
-            let status = cmd.status();
-            match status {
-                Ok(s) if s.success() => {
+            if let Ok(s) = cmd.status() {
+                if s.success() {
                     if let Some(out_p) = output {
                         if out_p.to_string_lossy() != "-" {
                             eprintln!(
@@ -851,31 +568,26 @@ fn run_pack(
                     }
                     return Ok(());
                 }
-                _ => {
-                    eprintln!(
-                        "{}",
-                        "⚠ repomix завершился с ошибкой, переключаюсь на встроенный AST-пакер..."
-                            .yellow()
-                    );
-                }
             }
-        } else {
-            eprintln!(
-                "{}",
-                "⚠ Утилита repomix не найдена в $PATH, переключаюсь на встроенный AST-пакер..."
-                    .yellow()
-            );
         }
     }
 
-    pack_builtin(
-        &canonical,
-        &matched_subs,
-        &files_to_pack,
-        output,
-        compress,
-        style,
-    )?;
+    if let Some(out_p) = output {
+        std::fs::write(out_p, &content)
+            .with_context(|| format!("Не удалось записать в {:?}", out_p))?;
+        eprintln!(
+            "{}",
+            format!(
+                "✨ Контекст подсистемы упакован в {:?} (~{} токенов BPE, {} файлов)",
+                out_p, tokens, files_count
+            )
+            .green()
+            .bold()
+        );
+    } else {
+        use std::io::Write;
+        std::io::stdout().write_all(content.as_bytes())?;
+    }
 
     Ok(())
 }
@@ -892,379 +604,10 @@ fn is_command_in_path(cmd: &str) -> bool {
     false
 }
 
-fn pack_builtin(
-    root: &std::path::Path,
-    subs: &[&SubsystemInfo],
-    files: &[String],
-    output: Option<&std::path::Path>,
-    compress: bool,
-    style: &str,
-) -> Result<()> {
-    let mut buffer = String::new();
-
-    if style.eq_ignore_ascii_case("markdown") {
-        buffer.push_str("# 📦 AI Context Pack: ");
-        let names: Vec<&str> = subs.iter().map(|s| s.name.as_str()).collect();
-        buffer.push_str(&names.join(", "));
-        buffer.push_str("\n\n> Сгенерировано context-init (встроенный AST-пакер)\n\n");
-
-        for file_rel in files {
-            let full_p = root.join(file_rel);
-            if let Ok(content) = std::fs::read_to_string(&full_p) {
-                let ext = full_p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                let processed = if compress {
-                    compress_file_content(&content, ext)
-                } else {
-                    content
-                };
-                buffer.push_str(&format!(
-                    "## File: `{}`\n```{}\n{}\n```\n\n",
-                    file_rel, ext, processed
-                ));
-            }
-        }
-    } else {
-        buffer.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        buffer.push_str("<context_pack generated_by=\"context-init\">\n");
-        for sub in subs {
-            buffer.push_str(&format!(
-                "  <subsystem id=\"{}\" name=\"{}\">\n    <summary>{}</summary>\n  </subsystem>\n",
-                sub.id, sub.name, sub.summary
-            ));
-        }
-        buffer.push_str("  <files>\n");
-
-        for file_rel in files {
-            let full_p = root.join(file_rel);
-            if let Ok(content) = std::fs::read_to_string(&full_p) {
-                let ext = full_p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                let processed = if compress {
-                    compress_file_content(&content, ext)
-                } else {
-                    content
-                };
-                buffer.push_str(&format!(
-                    "    <file path=\"{}\">\n<![CDATA[\n{}\n]]>\n    </file>\n",
-                    file_rel, processed
-                ));
-            }
-        }
-        buffer.push_str("  </files>\n</context_pack>\n");
-    }
-
-    let tokens = detector::count_tokens(&buffer);
-
-    if let Some(out_p) = output {
-        std::fs::write(out_p, &buffer)
-            .with_context(|| format!("Не удалось записать в {:?}", out_p))?;
-        eprintln!(
-            "{}",
-            format!(
-                "✨ Контекст подсистемы упакован в {:?} (~{} токенов BPE, {} файлов)",
-                out_p,
-                tokens,
-                files.len()
-            )
-            .green()
-            .bold()
-        );
-    } else {
-        use std::io::Write;
-        std::io::stdout().write_all(buffer.as_bytes())?;
-    }
-
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn pack_fallback(
-    root: &std::path::Path,
-    subs: &[&SubsystemInfo],
-    files: &[String],
-    output: Option<&std::path::Path>,
-    compress: bool,
-    style: &str,
-) -> Result<()> {
-    pack_builtin(root, subs, files, output, compress, style)
-}
-
-fn compress_file_content(content: &str, ext: &str) -> String {
-    if ext.eq_ignore_ascii_case("rs") {
-        if let Some(compressed) = compress_rust_ast(content) {
-            return compressed;
-        }
-    }
-    compress_code(content)
-}
-
-fn compress_rust_ast(content: &str) -> Option<String> {
-    let parsed = syn::parse_file(content).ok()?;
-    let mut file_attrs = Vec::new();
-    for attr in &parsed.attrs {
-        file_attrs.push(normalize_rust_tokens(&quote::quote!(#attr).to_string()));
-    }
-    let body = format_rust_items(&parsed.items);
-    if file_attrs.is_empty() {
-        Some(body)
-    } else {
-        Some(format!("{}\n\n{}", file_attrs.join("\n"), body))
-    }
-}
-
-fn format_rust_items(items: &[syn::Item]) -> String {
-    let mut formatted_items = Vec::new();
-    for item in items {
-        match item {
-            syn::Item::Fn(f) => {
-                let attrs = &f.attrs;
-                let vis = &f.vis;
-                let sig = &f.sig;
-                let sig_str = quote::quote!(#vis #sig).to_string();
-                let clean_sig = normalize_rust_tokens(&sig_str);
-                let attr_strs: Vec<String> = attrs
-                    .iter()
-                    .map(|a| normalize_rust_tokens(&quote::quote!(#a).to_string()))
-                    .collect();
-                if attr_strs.is_empty() {
-                    formatted_items.push(format!("{} {{\n    ⋮----\n}}", clean_sig));
-                } else {
-                    formatted_items.push(format!(
-                        "{}\n{} {{\n    ⋮----\n}}",
-                        attr_strs.join("\n"),
-                        clean_sig
-                    ));
-                }
-            }
-            syn::Item::Impl(imp) => {
-                let attrs = &imp.attrs;
-                let defaultness = &imp.defaultness;
-                let unsafety = &imp.unsafety;
-                let generics = &imp.generics;
-                let (impl_generics, _, where_clause) = generics.split_for_impl();
-                let self_ty = &imp.self_ty;
-                let attr_strs: Vec<String> = attrs
-                    .iter()
-                    .map(|a| normalize_rust_tokens(&quote::quote!(#a).to_string()))
-                    .collect();
-                let header_raw = if let Some((bang, path, for_tok)) = &imp.trait_ {
-                    quote::quote!(#defaultness #unsafety impl #impl_generics #bang #path #for_tok #self_ty #where_clause).to_string()
-                } else {
-                    quote::quote!(#defaultness #unsafety impl #impl_generics #self_ty #where_clause)
-                        .to_string()
-                };
-                let clean_header_core = normalize_rust_tokens(&header_raw);
-                let clean_header = if attr_strs.is_empty() {
-                    clean_header_core
-                } else {
-                    format!("{}\n{}", attr_strs.join("\n"), clean_header_core)
-                };
-                let mut item_strs = Vec::new();
-                for it in &imp.items {
-                    if let syn::ImplItem::Fn(m) = it {
-                        let m_attrs: Vec<String> = m
-                            .attrs
-                            .iter()
-                            .map(|a| {
-                                format!(
-                                    "    {}",
-                                    normalize_rust_tokens(&quote::quote!(#a).to_string())
-                                )
-                            })
-                            .collect();
-                        let vis = &m.vis;
-                        let defaultness = &m.defaultness;
-                        let sig = &m.sig;
-                        let sig_str = quote::quote!(#vis #defaultness #sig).to_string();
-                        let clean_sig = normalize_rust_tokens(&sig_str);
-                        if m_attrs.is_empty() {
-                            item_strs.push(format!("    {} {{\n        ⋮----\n    }}", clean_sig));
-                        } else {
-                            item_strs.push(format!(
-                                "{}\n    {} {{\n        ⋮----\n    }}",
-                                m_attrs.join("\n"),
-                                clean_sig
-                            ));
-                        }
-                    } else {
-                        let other_str = quote::quote!(#it).to_string();
-                        item_strs.push(format!("    {}", normalize_rust_tokens(&other_str)));
-                    }
-                }
-                if item_strs.is_empty() {
-                    formatted_items.push(format!("{} {{}}", clean_header));
-                } else {
-                    formatted_items.push(format!(
-                        "{} {{\n{}\n}}",
-                        clean_header,
-                        item_strs.join("\n\n")
-                    ));
-                }
-            }
-            syn::Item::Trait(t) => {
-                let attrs = &t.attrs;
-                let vis = &t.vis;
-                let ident = &t.ident;
-                let generics = &t.generics;
-                let (impl_generics, _, where_clause) = generics.split_for_impl();
-                let attr_strs: Vec<String> = attrs
-                    .iter()
-                    .map(|a| normalize_rust_tokens(&quote::quote!(#a).to_string()))
-                    .collect();
-                let header_raw =
-                    quote::quote!(#vis trait #ident #impl_generics #where_clause).to_string();
-                let clean_header_core = normalize_rust_tokens(&header_raw);
-                let clean_header = if attr_strs.is_empty() {
-                    clean_header_core
-                } else {
-                    format!("{}\n{}", attr_strs.join("\n"), clean_header_core)
-                };
-                let mut trait_items = Vec::new();
-                for it in &t.items {
-                    if let syn::TraitItem::Fn(tf) = it {
-                        let tf_attrs: Vec<String> = tf
-                            .attrs
-                            .iter()
-                            .map(|a| {
-                                format!(
-                                    "    {}",
-                                    normalize_rust_tokens(&quote::quote!(#a).to_string())
-                                )
-                            })
-                            .collect();
-                        let sig = &tf.sig;
-                        let sig_str = quote::quote!(#sig).to_string();
-                        let clean_sig = normalize_rust_tokens(&sig_str);
-                        let body = if tf.default.is_some() {
-                            format!("    {} {{\n        ⋮----\n    }}", clean_sig)
-                        } else {
-                            format!("    {};", clean_sig)
-                        };
-                        if tf_attrs.is_empty() {
-                            trait_items.push(body);
-                        } else {
-                            trait_items.push(format!("{}\n{}", tf_attrs.join("\n"), body));
-                        }
-                    } else {
-                        let other_str = quote::quote!(#it).to_string();
-                        trait_items.push(format!("    {}", normalize_rust_tokens(&other_str)));
-                    }
-                }
-                if trait_items.is_empty() {
-                    formatted_items.push(format!("{} {{}}", clean_header));
-                } else {
-                    formatted_items.push(format!(
-                        "{} {{\n{}\n}}",
-                        clean_header,
-                        trait_items.join("\n\n")
-                    ));
-                }
-            }
-            syn::Item::Mod(m) => {
-                let attrs = &m.attrs;
-                let vis = &m.vis;
-                let ident = &m.ident;
-                let attr_strs: Vec<String> = attrs
-                    .iter()
-                    .map(|a| normalize_rust_tokens(&quote::quote!(#a).to_string()))
-                    .collect();
-                let mod_header_raw = quote::quote!(#vis mod #ident).to_string();
-                let clean_header_core = normalize_rust_tokens(&mod_header_raw);
-                let clean_header = if attr_strs.is_empty() {
-                    clean_header_core
-                } else {
-                    format!("{}\n{}", attr_strs.join("\n"), clean_header_core)
-                };
-                if let Some((_, inner_items)) = &m.content {
-                    let inner = format_rust_items(inner_items);
-                    let indented: Vec<String> = inner
-                        .lines()
-                        .map(|l| {
-                            if l.is_empty() {
-                                String::new()
-                            } else {
-                                format!("    {}", l)
-                            }
-                        })
-                        .collect();
-                    formatted_items.push(format!(
-                        "{} {{\n{}\n}}",
-                        clean_header,
-                        indented.join("\n")
-                    ));
-                } else {
-                    formatted_items.push(format!("{};", clean_header));
-                }
-            }
-            other => {
-                let s = quote::quote!(#other).to_string();
-                formatted_items.push(normalize_rust_tokens(&s));
-            }
-        }
-    }
-    formatted_items.join("\n\n")
-}
-
-fn normalize_rust_tokens(s: &str) -> String {
-    let s = s
-        .replace("# ! [ ", "#![")
-        .replace("# ! [", "#![")
-        .replace("#![ ", "#![")
-        .replace("# ! ", "#!")
-        .replace("# !", "#!")
-        .replace("# [ ", "#[")
-        .replace("# [", "#[")
-        .replace("#[ ", "#[")
-        .replace(" < ", "<")
-        .replace("< ", "<")
-        .replace(" >", ">")
-        .replace(" > ", "> ")
-        .replace(" ( ", "(")
-        .replace("( ", "(")
-        .replace(" )", ")")
-        .replace(" : ", ": ")
-        .replace(" , ", ", ")
-        .replace(" ;", ";")
-        .replace(" :: ", "::")
-        .replace("( &", "(&")
-        .replace("(& ", "(&")
-        .replace("& mut ", "&mut ")
-        .replace("& '", "&'")
-        .replace("& ", "&");
-
-    let words: Vec<&str> = s.split_whitespace().collect();
-    let joined = words.join(" ");
-    joined
-        .replace(" (", "(")
-        .replace(":: ", "::")
-        .replace(" ::", "::")
-        .replace(":(", ": (")
-        .replace("->(", "-> (")
-        .replace("+(", "+ (")
-}
-
-fn compress_code(content: &str) -> String {
-    let mut result = Vec::new();
-    let mut prev_was_empty = false;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            if !prev_was_empty {
-                result.push("");
-                prev_was_empty = true;
-            }
-        } else {
-            prev_was_empty = false;
-            result.push(line.trim_end());
-        }
-    }
-
-    result.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use service::{compress_code, compress_file_content, pack_builtin_to_string};
 
     #[test]
     fn test_compress_code() {
@@ -1360,14 +703,16 @@ mod tests {
         let out_xml = temp_dir.join("pack.xml");
         let out_md = temp_dir.join("pack.md");
 
-        pack_fallback(&temp_dir, &[&sub], &files, Some(&out_xml), true, "xml").unwrap();
+        let xml_str = pack_builtin_to_string(&temp_dir, &[&sub], &files, true, "xml");
+        std::fs::write(&out_xml, &xml_str).unwrap();
         assert!(out_xml.exists());
         let xml_content = std::fs::read_to_string(&out_xml).unwrap();
         assert!(xml_content.contains("<context_pack"));
         assert!(xml_content.contains("lib.rs"));
         assert!(xml_content.contains("⋮----"));
 
-        pack_fallback(&temp_dir, &[&sub], &files, Some(&out_md), true, "markdown").unwrap();
+        let md_str = pack_builtin_to_string(&temp_dir, &[&sub], &files, true, "markdown");
+        std::fs::write(&out_md, &md_str).unwrap();
         assert!(out_md.exists());
         let md_content = std::fs::read_to_string(&out_md).unwrap();
         assert!(md_content.contains("# 📦 AI Context Pack:"));
@@ -1402,12 +747,14 @@ mod tests {
         let out_xml = temp_dir.join("pack_nc.xml");
         let out_md = temp_dir.join("pack_nc.md");
 
-        pack_builtin(&temp_dir, &[&sub], &files, Some(&out_xml), false, "xml").unwrap();
+        let xml_str = pack_builtin_to_string(&temp_dir, &[&sub], &files, false, "xml");
+        std::fs::write(&out_xml, &xml_str).unwrap();
         let xml_content = std::fs::read_to_string(&out_xml).unwrap();
         assert!(xml_content.contains("pub fn add(a: i32, b: i32) -> i32 { a + b }"));
         assert!(!xml_content.contains("⋮----"));
 
-        pack_builtin(&temp_dir, &[&sub], &files, Some(&out_md), false, "markdown").unwrap();
+        let md_str = pack_builtin_to_string(&temp_dir, &[&sub], &files, false, "markdown");
+        std::fs::write(&out_md, &md_str).unwrap();
         let md_content = std::fs::read_to_string(&out_md).unwrap();
         assert!(md_content.contains("pub fn add(a: i32, b: i32) -> i32 { a + b }"));
         assert!(!md_content.contains("⋮----"));
@@ -1448,13 +795,13 @@ mod tests {
         let out_comp = temp_dir.join("pack_comp.xml");
 
         // With no-compress: content is 100% identical including extra blank lines and trailing whitespace
-        pack_builtin(&temp_dir, &[&sub], &files, Some(&out_nc), false, "xml").unwrap();
-        let nc_str = std::fs::read_to_string(&out_nc).unwrap();
+        let nc_str = pack_builtin_to_string(&temp_dir, &[&sub], &files, false, "xml");
+        std::fs::write(&out_nc, &nc_str).unwrap();
         assert!(nc_str.contains("    result = a + b    \n\n\n    return result"));
 
         // With compress: trailing whitespace and excessive empty lines collapsed, but python indentation strictly kept
-        pack_builtin(&temp_dir, &[&sub], &files, Some(&out_comp), true, "xml").unwrap();
-        let comp_str = std::fs::read_to_string(&out_comp).unwrap();
+        let comp_str = pack_builtin_to_string(&temp_dir, &[&sub], &files, true, "xml");
+        std::fs::write(&out_comp, &comp_str).unwrap();
         assert!(comp_str.contains("    result = a + b\n\n    return result"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1650,5 +997,16 @@ mod tests {
         assert!(has_drift_missing);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_cli_version_matches_cargo_pkg_version_and_workspace_crates() {
+        use clap::CommandFactory;
+        let cmd = Cli::command();
+        assert_eq!(cmd.get_version(), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.3.0");
+        assert_eq!(ci_core::VERSION, env!("CARGO_PKG_VERSION"));
+        assert_eq!(ci_llm::VERSION, env!("CARGO_PKG_VERSION"));
+        assert_eq!(ci_mcp::VERSION, env!("CARGO_PKG_VERSION"));
     }
 }

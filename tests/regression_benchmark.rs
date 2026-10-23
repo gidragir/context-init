@@ -282,9 +282,58 @@ async fn test_regression_benchmark_and_generate_report() {
 
     let _ = fs::remove_dir_all(&temp_workspace);
 
-    // 4. Cross-Project Compatibility: test on ai-dotfiles
-    println!("📊 4/4 Testing Cross-Project Compatibility (ai-dotfiles)...");
-    let ai_dotfiles_path = PathBuf::from("/home/gidragir/projects/ai-dotfiles");
+    // 4. Cross-Project Compatibility: test on synthetic monorepo fixture (or local if present)
+    println!("📊 4/4 Testing Cross-Project Compatibility (synthetic multi-package fixture)...");
+    let ai_dotfiles_env = std::env::var("CONTEXT_INIT_BENCHMARK_EXTERNAL_REPO")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/home/gidragir/projects/ai-dotfiles"));
+
+    let (test_repo, is_synthetic) = if ai_dotfiles_env.exists() {
+        (ai_dotfiles_env, false)
+    } else {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let synth_dir = std::env::temp_dir().join(format!("synth_bench_{}", nanos));
+        let synth_pkg1 = synth_dir.join("services").join("gateway");
+        let synth_pkg2 = synth_dir.join("libs").join("common");
+        fs::create_dir_all(&synth_pkg1).unwrap();
+        fs::create_dir_all(&synth_pkg2).unwrap();
+        fs::write(
+            synth_dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"services/*\", \"libs/*\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            synth_pkg1.join("Cargo.toml"),
+            "[package]\nname = \"gateway\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(synth_pkg1.join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(
+            synth_pkg2.join("Cargo.toml"),
+            "[package]\nname = \"common\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(synth_pkg2.join("lib.rs"), "pub fn util() {}\n").unwrap();
+
+        let _ = ContextService::init_knowledge_base(context_init::service::ServiceInitOptions {
+            path: &synth_dir,
+            ai: false,
+            ollama_url: "http://127.0.0.1:11434",
+            model: "qwen2.5:14b-ctx64k",
+            force: true,
+            dry_run: false,
+            deep: false,
+            with_agents_md: true,
+            with_rtk: false,
+            no_rtk: true,
+            compact: true,
+        });
+        (synth_dir, true)
+    };
+
     let mut cross_project = CrossProjectMetrics {
         context_init_drift: last_check_res.has_drift,
         ai_dotfiles_subsystems: 0,
@@ -292,35 +341,45 @@ async fn test_regression_benchmark_and_generate_report() {
         ai_dotfiles_pack_status: "UNTESTED".to_string(),
     };
 
-    if ai_dotfiles_path.exists() {
-        let ai_check = ContextService::audit_drift(&ai_dotfiles_path)
-            .expect("Drift audit on ai-dotfiles must succeed without crashing");
-        let ai_subs = ContextService::get_subsystems(&ai_dotfiles_path)
-            .expect("get_subsystems on ai-dotfiles must succeed");
+    if test_repo.exists() {
+        let ai_check = ContextService::audit_drift(&test_repo)
+            .expect("Drift audit on benchmark fixture must succeed without crashing");
+        let ai_subs = ContextService::get_subsystems(&test_repo)
+            .expect("get_subsystems on benchmark fixture must succeed");
         cross_project.ai_dotfiles_subsystems = ai_subs.len();
         cross_project.ai_dotfiles_drift = ai_check.has_drift;
 
-        // Test pack on wm_niri
+        let target_sub = if is_synthetic {
+            ai_subs
+                .first()
+                .map(|s| s.id.clone())
+                .unwrap_or_else(|| "gateway".to_string())
+        } else {
+            "wm_niri".to_string()
+        };
+
         let pack_ai =
-            ContextService::pack_subsystem_to_string(&ai_dotfiles_path, "wm_niri", true, "xml");
+            ContextService::pack_subsystem_to_string(&test_repo, &target_sub, true, "xml");
         if let Ok((content, tokens, files)) = pack_ai {
-            assert!(content.contains("wm_niri"));
+            assert!(!content.is_empty());
             cross_project.ai_dotfiles_pack_status =
                 format!("OK (files={}, tokens~{})", files, tokens);
             println!(
-                "   ✓ ai-dotfiles pack wm_niri: {} files, ~{} tokens",
-                files, tokens
+                "   ✓ fixture pack {}: {} files, ~{} tokens",
+                target_sub, files, tokens
             );
         } else {
             cross_project.ai_dotfiles_pack_status = format!("ERR: {:?}", pack_ai.err());
         }
         println!(
-            "   ✓ ai-dotfiles audit: {} subsystems, drift={}",
+            "   ✓ fixture audit: {} subsystems, drift={}",
             ai_subs.len(),
             ai_check.has_drift
         );
-    } else {
-        println!("   ⚠ /home/gidragir/projects/ai-dotfiles not found, skipping cross-check.");
+
+        if is_synthetic {
+            let _ = fs::remove_dir_all(&test_repo);
+        }
     }
 
     // 5. Generate and Save Reports
@@ -479,7 +538,7 @@ fn render_markdown_report(report: &BenchmarkReport) -> String {
             tool.tool, tool.latency_ms, tool.status
         ));
     }
-    md.push_str("\n");
+    md.push('\n');
 
     md.push_str("## 🌐 4. Межпроектная совместимость (Flat vs Nested Knowledge)\n\n");
     md.push_str("| Проект | Тип базы знаний | Подсистем | Статус pack |\n");

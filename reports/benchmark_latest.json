@@ -1,51 +1,51 @@
 {
-  "timestamp": "2026-10-10",
+  "timestamp": "2026-10-23",
   "drift_metrics": {
     "iterations": 10,
-    "avg_ms": 49.4769129,
-    "min_ms": 49.125913,
-    "max_ms": 50.931705,
+    "avg_ms": 28.402673200000002,
+    "min_ms": 26.255382,
+    "max_ms": 43.995607,
     "up_to_date_count": 9,
-    "has_drift": false
+    "has_drift": true
   },
   "compression_metrics": {
     "file_path": "src/service.rs",
-    "uncompressed_bytes": 28412,
-    "uncompressed_tokens": 5937,
-    "compressed_bytes": 3313,
-    "compressed_tokens": 921,
-    "tokens_saved_percent": 84.48711470439616,
-    "compression_duration_ms": 7.290597
+    "uncompressed_bytes": 32850,
+    "uncompressed_tokens": 6919,
+    "compressed_bytes": 3530,
+    "compressed_tokens": 979,
+    "tokens_saved_percent": 85.85055643879174,
+    "compression_duration_ms": 2.281717
   },
   "mcp_latencies": [
     {
       "tool": "context_init",
-      "latency_ms": 0.445007,
+      "latency_ms": 0.165762,
       "status": "OK"
     },
     {
       "tool": "context_check",
-      "latency_ms": 0.163489,
+      "latency_ms": 0.07080499999999999,
       "status": "OK (0 drift)"
     },
     {
       "tool": "context_get_subsystems",
-      "latency_ms": 0.020272,
+      "latency_ms": 0.006585,
       "status": "OK (1 subsystems)"
     },
     {
       "tool": "context_pack",
-      "latency_ms": 0.672973,
+      "latency_ms": 0.094956,
       "status": "OK (AST compressed)"
     },
     {
       "tool": "context_update",
-      "latency_ms": 0.209805,
+      "latency_ms": 0.08366799999999999,
       "status": "OK (reconciled)"
     }
   ],
   "cross_project": {
-    "context_init_drift": false,
+    "context_init_drift": true,
     "ai_dotfiles_subsystems": 6,
     "ai_dotfiles_drift": true,
     "ai_dotfiles_pack_status": "OK (files=1, tokens~685)"
