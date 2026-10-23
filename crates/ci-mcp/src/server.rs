@@ -2,7 +2,10 @@
 
 use anyhow::Result;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::{tool, tool_router, ServiceExt};
+#[allow(deprecated)] // MCP roots: deprecated by SEP-2577, still sent by current clients (D21)
+use rmcp::model::Root;
+use rmcp::service::{NotificationContext, Peer, RoleServer};
+use rmcp::{tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -206,7 +209,7 @@ fn normalize_existing_path(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-#[tool_router(server_handler)]
+#[tool_router]
 impl ContextInitServer {
     /// Check knowledge base freshness against disk files and Git status.
     #[tool(
@@ -411,6 +414,72 @@ impl ContextInitServer {
         ContextHandler::search(&resolved, &p.query, p.cursor.as_deref())
             .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
     }
+}
+
+#[tool_handler(router = Self::tool_router())]
+impl ServerHandler for ContextInitServer {
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        self.refresh_roots(&context.peer).await;
+    }
+
+    async fn on_roots_list_changed(&self, context: NotificationContext<RoleServer>) {
+        self.refresh_roots(&context.peer).await;
+    }
+}
+
+impl ContextInitServer {
+    /// Fetches `roots/list` from the client (if it declared the `roots` capability) and
+    /// stores the result as cascade step 2 (D21). Failures are logged and ignored.
+    #[allow(deprecated)]
+    pub async fn refresh_roots(&self, peer: &Peer<RoleServer>) {
+        let supports_roots = peer
+            .peer_info()
+            .is_some_and(|info| info.capabilities.roots.is_some());
+        if !supports_roots {
+            return;
+        }
+        match peer.list_roots().await {
+            Ok(result) => self.set_roots(roots_to_paths(&result.roots)).await,
+            Err(e) => eprintln!("context-init: roots/list failed: {e}"),
+        }
+    }
+}
+
+/// Converts MCP roots to filesystem paths, keeping only `file://` URIs.
+#[allow(deprecated)]
+pub fn roots_to_paths(roots: &[Root]) -> Vec<PathBuf> {
+    roots
+        .iter()
+        .filter_map(|r| r.uri.strip_prefix("file://"))
+        .map(|rest| {
+            let decoded = percent_decode(rest);
+            // `file:///C:/x` → `C:/x` on Windows
+            if cfg!(windows) {
+                PathBuf::from(decoded.trim_start_matches('/'))
+            } else {
+                PathBuf::from(decoded)
+            }
+        })
+        .collect()
+}
+
+fn percent_decode(s: &str) -> String {
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 3 <= bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push(hi << 4 | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Runs the MCP server listening on stdio transport (D21).

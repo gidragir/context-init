@@ -355,6 +355,46 @@ mod tests {
         serde_json::from_str(&out).expect("parse SubmitResult JSON")
     }
 
+    #[allow(deprecated)]
+    fn root(uri: &str) -> rmcp::model::Root {
+        serde_json::from_value(json!({ "uri": uri })).unwrap()
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn roots_to_paths_parses_file_uris() {
+        let paths = crate::server::roots_to_paths(&[
+            root("file:///tmp/a%20b"),
+            root("https://example.com/repo"),
+            root("file:///srv/%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82"),
+        ]);
+        #[cfg(not(windows))]
+        assert_eq!(
+            paths,
+            vec![PathBuf::from("/tmp/a b"), PathBuf::from("/srv/проект")]
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            crate::server::roots_to_paths(&[root("file:///C:/x")]),
+            vec![PathBuf::from("C:/x")]
+        );
+    }
+
+    #[tokio::test]
+    async fn resolution_uses_roots_after_refresh() {
+        let tmp = TempDirGuard::new("roots_cascade");
+        let other = TempDirGuard::new("roots_default");
+        fs::write(tmp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        let server = ContextInitServer::new(Some(other.path().to_path_buf()));
+        server.set_roots(vec![tmp.path().to_path_buf()]).await;
+        let resolved = server.resolve_project_root(None, None).await;
+        assert_eq!(resolved, fs::canonicalize(tmp.path()).unwrap());
+        let explicit = server
+            .resolve_project_root(Some(&other.path().to_string_lossy()), None)
+            .await;
+        assert_eq!(explicit, fs::canonicalize(other.path()).unwrap());
+    }
+
     #[tokio::test]
     async fn submit_rejects_unknown_package_id() {
         let tmp = TempDirGuard::new("submit_unknown_pkg");
