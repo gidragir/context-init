@@ -344,6 +344,7 @@ fn cli_migrate_twice_requires_force() {
     let again = sb.run(&["migrate", "."]);
     assert_eq!(again.status.code(), Some(1));
     assert!(stderr(&again).contains("--force"), "{}", stderr(&again));
+    assert!(stderr(&again).contains("replace"), "{}", stderr(&again));
     assert!(sb.run(&["migrate", ".", "--force"]).status.success());
 }
 
@@ -570,4 +571,25 @@ fn cli_feedback_disabled_reports_not_recorded() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(stdout(&out).contains("not recorded"), "{}", stdout(&out));
     assert!(!sb.data_home().join("context-init/telemetry").exists());
+}
+
+#[test]
+fn cli_init_on_legacy_carries_over_hand_written_files() {
+    let sb = Sandbox::new("carry");
+    sb.write_fixture();
+    seed_legacy(&sb);
+    let legacy_adr = sb
+        .project()
+        .join(".agents/knowledge/adr/0002_custom_decision.md");
+    fs::write(&legacy_adr, "# ADR 0002: hand-written\n").unwrap();
+
+    let out = sb.run(&["init", ".", "--compact"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let index = central_indexes(&sb.data_home()).remove(0);
+    let central = index.parent().unwrap();
+    assert_eq!(
+        fs::read_to_string(central.join("adr/0002_custom_decision.md")).unwrap(),
+        "# ADR 0002: hand-written\n"
+    );
+    assert!(stderr(&out).contains("Copied 1 file"), "{}", stderr(&out));
 }

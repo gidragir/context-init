@@ -33,7 +33,8 @@ pub fn run(global: &GlobalArgs, args: &MigrateArgs) -> Result<ExitCode> {
         .project_knowledge_dir(&project.project_id);
     if target.join("L0_index.json").is_file() && !args.force && !args.dry_run {
         bail!(
-            "central knowledge base already exists at {}; pass --force to overwrite it",
+            "central knowledge base already exists at {} (e.g. from `init`), so the in-repo copy is \
+             not read anymore. Pass --force only to replace the central one with the in-repo copy.",
             target.display()
         );
     }

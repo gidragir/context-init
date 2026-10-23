@@ -99,6 +99,9 @@ pub fn run_init(global: &GlobalArgs, args: &InitArgs) -> Result<ExitCode> {
     if let Some(msg) = cli_outcome_message(&out.enrich) {
         output::notice(&msg);
     }
+    if let Some(notice) = pipeline::carry_over_notice(&out) {
+        output::notice(&notice);
+    }
     if let Some(hint) = pipeline::legacy_hint(&project, true) {
         output::notice(&hint);
     }

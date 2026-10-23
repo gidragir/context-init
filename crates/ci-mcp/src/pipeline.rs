@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use ci_core::analysis::generator::{self, GenerateOptions};
 use ci_core::analysis::subsystems::build_deterministic;
 use ci_core::analysis::{detector, ProjectAnalysis};
-use ci_core::storage::SubsystemInfo;
+use ci_core::storage::{copy_missing_files, SubsystemInfo};
 use ci_llm::enrich::{enrich_subsystems, EnrichOutcome};
 use ci_llm::{PromptTemplateRegistry, RoleName, RoleRouter};
 
@@ -40,6 +40,8 @@ pub struct PipelineOutcome {
     pub added: usize,
     /// Existing subsystems refreshed (`update` only).
     pub updated: usize,
+    /// Files carried over from a legacy in-repo knowledge base (`init` only).
+    pub carried_over: Vec<String>,
 }
 
 /// Builds a fresh knowledge base in central storage (D1, D23).
@@ -58,9 +60,16 @@ pub fn run_init(
         with_agents_md: opts.with_agents_md,
     };
     generator::generate(&analysis, &subsystems, &knowledge_dir, &gen_opts)?;
+    // Keep what the generator does not produce (hand-written ADRs, notes) from a legacy KB.
+    let carried_over = if !project.is_central && !opts.dry_run && project.knowledge_dir.is_dir() {
+        copy_missing_files(&project.knowledge_dir, &knowledge_dir)?
+    } else {
+        Vec::new()
+    };
     Ok(PipelineOutcome {
         added: subsystems.len(),
         updated: 0,
+        carried_over,
         analysis,
         subsystems,
         knowledge_dir,
@@ -85,6 +94,18 @@ pub fn run_update(
         enrich,
         added,
         updated,
+        carried_over: Vec::new(),
+    })
+}
+
+/// Notice for files `init` carried over from a legacy knowledge base.
+pub fn carry_over_notice(out: &PipelineOutcome) -> Option<String> {
+    (!out.carried_over.is_empty()).then(|| {
+        format!(
+            "Copied {} file(s) that init does not generate (e.g. hand-written ADRs) from the in-repo knowledge base: {}",
+            out.carried_over.len(),
+            out.carried_over.join(", ")
+        )
     })
 }
 

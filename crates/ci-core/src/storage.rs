@@ -570,6 +570,29 @@ fn list_files_recursive(root: &Path, current: &Path, out: &mut Vec<String>) -> R
     Ok(())
 }
 
+/// Copies every file under `src` that does not exist under `dst` (never overwrites).
+/// Returns the copied relative paths. Used by `init` to keep hand-written files (e.g. ADRs)
+/// of a legacy knowledge base that the generator does not produce.
+pub fn copy_missing_files(src: &Path, dst: &Path) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    list_files_recursive(src, src, &mut files)?;
+    files.sort();
+    let mut copied = Vec::new();
+    for rel in files {
+        let target = dst.join(&rel);
+        if target.exists() {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("Failed to create {:?}", parent))?;
+        }
+        fs::copy(src.join(&rel), &target)
+            .with_context(|| format!("Failed to copy {} into {:?}", rel, dst))?;
+        copied.push(rel);
+    }
+    Ok(copied)
+}
+
 /// Migrates a legacy in-repo knowledge base into `target_project_dir` (D23), upgrading
 /// `L0_index.json` to `CURRENT_L0_SCHEMA_VERSION`. The source is removed only when
 /// requested and only after every source file was verified in the target.

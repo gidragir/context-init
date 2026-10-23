@@ -655,6 +655,9 @@ impl ContextHandler {
             out.knowledge_dir.display(),
             out.subsystems.len()
         );
+        if let Some(notice) = pipeline::carry_over_notice(&out) {
+            text.push_str(&format!("\n{notice}"));
+        }
         if let Some(hint) = pipeline::legacy_hint(project, true) {
             text.push_str(&format!("\n{hint}"));
         }
