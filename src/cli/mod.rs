@@ -8,6 +8,7 @@ mod migrate;
 mod output;
 mod pack;
 mod setup;
+mod telemetry;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -100,6 +101,8 @@ enum Commands {
     Migrate(migrate::MigrateArgs),
     /// Register the MCP server (and a short agent rule) with an AI harness
     Setup(setup::SetupArgs),
+    /// Opt-in usage telemetry: digest and submission
+    Telemetry(telemetry::TelemetryArgs),
 }
 
 /// Parses arguments and runs the selected command.
@@ -118,6 +121,7 @@ pub fn run() -> Result<ExitCode> {
         Some(Commands::Config(args)) => config::run(&cli.global, &args),
         Some(Commands::Migrate(args)) => migrate::run(&cli.global, &args),
         Some(Commands::Setup(args)) => setup::run(&args),
+        Some(Commands::Telemetry(args)) => telemetry::run(&cli.global, &args),
     }
 }
 

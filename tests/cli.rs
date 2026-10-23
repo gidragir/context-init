@@ -415,3 +415,130 @@ fn cli_setup_write_twice_no_second_backup() {
         .unwrap()
         .contains("# mine"));
 }
+
+impl Sandbox {
+    fn run_with_path(&self, args: &[&str], path: &str) -> Output {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_context-init"));
+        cmd.args(args)
+            .current_dir(self.project())
+            .env("HOME", self.home())
+            .env("XDG_CONFIG_HOME", self.home().join(".config"))
+            .env("XDG_DATA_HOME", self.data_home())
+            .env("NO_COLOR", "1")
+            .env("PATH", path);
+        for (k, _) in std::env::vars() {
+            if k.starts_with("CONTEXT_INIT_") {
+                cmd.env_remove(k);
+            }
+        }
+        cmd.output().expect("run context-init")
+    }
+
+    fn enable_telemetry(&self) {
+        let dir = self.home().join(".config/context-init");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("config.toml"), "[telemetry]\nenabled = true\n").unwrap();
+    }
+
+    fn seed_events(&self) {
+        use ci_core::telemetry::{
+            FeedbackSignal, JsonlTelemetrySink, TelemetryEvent, TelemetrySignal, TelemetrySink,
+        };
+        let sink = JsonlTelemetrySink::new(self.data_home(), true);
+        for verdict in ["helpful", "stale"] {
+            let signal = TelemetrySignal::Feedback(FeedbackSignal {
+                tool: "context_pack".to_string(),
+                verdict: verdict.to_string(),
+                note: None,
+            });
+            sink.record(&TelemetryEvent::new("demo-project", signal))
+                .unwrap();
+        }
+    }
+
+    /// A directory holding a fake `gh` that logs its arguments.
+    fn fake_gh_dir(&self) -> PathBuf {
+        let bin = self.dir.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let log = self.dir.join("gh.log");
+        let script = format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 0\n", log.display());
+        let gh = bin.join("gh");
+        fs::write(&gh, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        bin
+    }
+}
+
+#[test]
+fn cli_telemetry_disabled_prints_hint() {
+    let sb = Sandbox::new("tele_off");
+    let out = sb.run(&["telemetry", "report"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("[telemetry]") && stdout(&out).contains("enabled = true"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn cli_telemetry_report_renders_front_matter() {
+    let sb = Sandbox::new("tele_report");
+    sb.enable_telemetry();
+    sb.seed_events();
+    let out = sb.run(&["telemetry", "report"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).starts_with("---"), "{}", stdout(&out));
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_telemetry_submit_uses_gh_when_available() {
+    let sb = Sandbox::new("tele_gh");
+    sb.enable_telemetry();
+    sb.seed_events();
+    let bin = sb.fake_gh_dir();
+    let out = sb.run_with_path(
+        &["telemetry", "report", "--submit", "--yes"],
+        &bin.to_string_lossy(),
+    );
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let log = fs::read_to_string(sb.dir.join("gh.log")).unwrap();
+    assert!(log.contains("issue create"), "{log}");
+    assert!(log.contains("--label telemetry"), "{log}");
+    assert!(log.contains("gidragir/context-init"), "{log}");
+}
+
+#[test]
+fn cli_telemetry_submit_without_gh_prints_url() {
+    let sb = Sandbox::new("tele_url");
+    sb.enable_telemetry();
+    sb.seed_events();
+    let empty = sb.dir.join("empty-bin");
+    fs::create_dir_all(&empty).unwrap();
+    let out = sb.run_with_path(
+        &["telemetry", "report", "--submit", "--yes"],
+        &empty.to_string_lossy(),
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out)
+            .contains("https://github.com/gidragir/context-init/issues/new?labels=telemetry"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn cli_telemetry_submit_non_tty_without_yes_aborts() {
+    let sb = Sandbox::new("tele_notty");
+    sb.enable_telemetry();
+    sb.seed_events();
+    let out = sb.run(&["telemetry", "report", "--submit"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("--yes"), "{}", stderr(&out));
+}
