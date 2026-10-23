@@ -542,3 +542,24 @@ fn cli_telemetry_submit_non_tty_without_yes_aborts() {
     assert!(!out.status.success());
     assert!(stderr(&out).contains("--yes"), "{}", stderr(&out));
 }
+
+#[test]
+fn cli_feedback_records_when_enabled() {
+    let sb = Sandbox::new("fb_on");
+    sb.enable_telemetry();
+    let out = sb.run(&["feedback", "context_pack", "helpful", "--note", "great"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("recorded"), "{}", stdout(&out));
+    let dir = sb.data_home().join("context-init/telemetry");
+    let jsonl: Vec<_> = fs::read_dir(&dir).unwrap().flatten().collect();
+    assert_eq!(jsonl.len(), 1);
+}
+
+#[test]
+fn cli_feedback_disabled_reports_not_recorded() {
+    let sb = Sandbox::new("fb_off");
+    let out = sb.run(&["feedback", "context_pack", "stale"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("not recorded"), "{}", stdout(&out));
+    assert!(!sb.data_home().join("context-init/telemetry").exists());
+}

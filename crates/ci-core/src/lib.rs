@@ -30,9 +30,9 @@ pub use storage::{
     CURRENT_L0_SCHEMA_VERSION, LEGACY_L0_SCHEMA_VERSION,
 };
 pub use telemetry::{
-    read_jsonl_file, render_telemetry_report, EfficiencySignal, FeedbackSignal, JsonlTelemetrySink,
-    LlmSignal, OperationalSignal, SessionPatternSignal, TelemetryEvent, TelemetrySignal,
-    TelemetrySink, TELEMETRY_SCHEMA_VERSION,
+    read_jsonl_file, record_feedback, render_telemetry_report, EfficiencySignal, FeedbackSignal,
+    JsonlTelemetrySink, LlmSignal, OperationalSignal, SessionPatternSignal, TelemetryEvent,
+    TelemetrySignal, TelemetrySink, TELEMETRY_SCHEMA_VERSION,
 };
 
 /// Current crate version synchronized with the workspace package metadata.

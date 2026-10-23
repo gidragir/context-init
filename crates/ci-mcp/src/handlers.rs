@@ -15,7 +15,7 @@ use ci_core::storage::{
     compute_project_id, now_rfc3339, subsystem_card_path, L0Index, SubsystemInfo,
 };
 use ci_core::telemetry::{
-    FeedbackSignal, JsonlTelemetrySink, TelemetryEvent, TelemetrySignal, TelemetrySink,
+    record_feedback, FeedbackSignal, TelemetryEvent, TelemetrySignal, TelemetrySink,
 };
 use ci_llm::enrich::{cli_outcome_message, EnrichOutcome};
 use ci_llm::providers::validate_agent_submission;
@@ -563,16 +563,19 @@ impl ContextHandler {
             note: note.map(|n| n.to_string()),
         };
 
-        let event = TelemetryEvent::new(&project.project_id, TelemetrySignal::Feedback(signal));
-
-        let recorded = if let Some(sink) = telemetry_sink {
-            sink.record(&event).is_ok()
-        } else {
-            let sink = JsonlTelemetrySink::new(
-                &project.storage_paths.data_dir,
-                project.config.telemetry.enabled,
-            );
-            sink.record(&event).is_ok()
+        let recorded = match telemetry_sink {
+            Some(sink) => {
+                let event =
+                    TelemetryEvent::new(&project.project_id, TelemetrySignal::Feedback(signal));
+                sink.is_enabled() && sink.record(&event).is_ok()
+            }
+            None => record_feedback(
+                &project.config,
+                &project.storage_paths,
+                &project.project_id,
+                signal,
+            )
+            .unwrap_or(false),
         };
 
         let result = FeedbackResult {

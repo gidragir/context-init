@@ -168,6 +168,25 @@ pub trait TelemetrySink: Send + Sync {
     fn record(&self, event: &TelemetryEvent) -> Result<()>;
 }
 
+/// Records an explicit feedback signal (CLI `feedback`, MCP `context_feedback`, D29).
+/// Returns `Ok(false)` without writing when telemetry is disabled (opt-in, D28).
+pub fn record_feedback(
+    cfg: &crate::config::Config,
+    storage: &crate::config::StoragePaths,
+    project_id: &str,
+    signal: FeedbackSignal,
+) -> Result<bool> {
+    if !cfg.telemetry.enabled {
+        return Ok(false);
+    }
+    let sink = JsonlTelemetrySink::with_exact_dir(&storage.telemetry_dir, true);
+    sink.record(&TelemetryEvent::new(
+        project_id,
+        TelemetrySignal::Feedback(signal),
+    ))?;
+    Ok(true)
+}
+
 /// JSONL file telemetry sink writing to `<data_dir>/context-init/telemetry/YYYY-MM.jsonl`
 /// only when `enabled == true` (D28, D30).
 #[derive(Debug, Clone)]
@@ -610,4 +629,47 @@ fn current_utc_date() -> String {
     }
     let day = remaining_days + 1;
     format!("{:04}-{:02}-{:02}", year, month, day)
+}
+
+#[cfg(test)]
+mod record_feedback_tests {
+    use super::*;
+    use crate::config::{Config, StoragePaths};
+
+    #[test]
+    fn record_feedback_respects_enabled_flag() {
+        let data = std::env::temp_dir().join(format!(
+            "ci_feedback_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let storage = StoragePaths::resolve_with_env(None, Some(&data), |k: &str| {
+            (k == "XDG_DATA_HOME").then(|| data.join("xdg").to_string_lossy().into_owned())
+        });
+        let signal = || FeedbackSignal {
+            tool: "context_pack".to_string(),
+            verdict: "helpful".to_string(),
+            note: None,
+        };
+
+        let mut cfg = Config::default();
+        assert!(!record_feedback(&cfg, &storage, "raw-project", signal()).unwrap());
+        assert!(!storage.telemetry_dir.exists());
+
+        cfg.telemetry.enabled = true;
+        assert!(record_feedback(&cfg, &storage, "raw-project", signal()).unwrap());
+        let events = JsonlTelemetrySink::with_exact_dir(&storage.telemetry_dir, true)
+            .read_all_events()
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        let line = serde_json::to_string(&events[0]).unwrap();
+        assert!(
+            !line.contains("raw-project"),
+            "project id must be hashed: {line}"
+        );
+        let _ = fs::remove_dir_all(&data);
+    }
 }

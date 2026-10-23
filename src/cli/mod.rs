@@ -2,6 +2,7 @@
 
 mod check;
 mod config;
+mod feedback;
 mod init_update;
 mod mcp;
 mod migrate;
@@ -103,6 +104,8 @@ enum Commands {
     Setup(setup::SetupArgs),
     /// Opt-in usage telemetry: digest and submission
     Telemetry(telemetry::TelemetryArgs),
+    /// Rate a context-init tool (recorded only when telemetry is enabled)
+    Feedback(feedback::FeedbackArgs),
 }
 
 /// Parses arguments and runs the selected command.
@@ -122,6 +125,7 @@ pub fn run() -> Result<ExitCode> {
         Some(Commands::Migrate(args)) => migrate::run(&cli.global, &args),
         Some(Commands::Setup(args)) => setup::run(&args),
         Some(Commands::Telemetry(args)) => telemetry::run(&cli.global, &args),
+        Some(Commands::Feedback(args)) => feedback::run(&cli.global, &args),
     }
 }
 
