@@ -133,9 +133,11 @@ impl PlannedWrite {
             fs::create_dir_all(parent).with_context(|| format!("Failed to create {:?}", parent))?;
         }
         let backup = match &self.old {
-            Some(old) => {
+            Some(_) => {
                 let b = PathBuf::from(format!("{}.bak.{stamp}", self.path.display()));
-                fs::write(&b, old).with_context(|| format!("Failed to write backup {:?}", b))?;
+                // `copy` keeps the original's permission bits (configs may hold secrets).
+                fs::copy(&self.path, &b)
+                    .with_context(|| format!("Failed to write backup {:?}", b))?;
                 Some(b)
             }
             None => None,
@@ -264,6 +266,30 @@ mod tests {
         assert!(again.is_noop());
         assert_eq!(again.apply("20261023-120001").unwrap(), None);
         assert!(!dir.join("sub/mcp.json.bak.20261023-120001").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_keeps_original_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "ci_setup_perm_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        fs::write(&path, "secret = 1\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let w = PlannedWrite::new(path.clone(), "secret = 2\n".to_string()).unwrap();
+        let backup = w.apply("20261023-120000").unwrap().unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&backup), 0o600);
+        assert_eq!(mode(&path), 0o600);
         let _ = fs::remove_dir_all(&dir);
     }
 }
