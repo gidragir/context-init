@@ -6,6 +6,9 @@ authors.workspace = true
 description = "Core types, configuration hierarchy, and storage primitives for context-init"
 
 [dependencies]
+quote.workspace = true
+syn.workspace = true
+tiktoken-rs.workspace = true
 anyhow.workspace = true
 dirs-next.workspace = true
 schemars.workspace = true

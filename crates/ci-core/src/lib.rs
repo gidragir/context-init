@@ -1,5 +1,6 @@
 //! Core types, configuration hierarchy, central storage, Git backend, and telemetry for `context-init`.
 
+pub mod analysis;
 pub mod config;
 pub mod git;
 pub mod openviking;
