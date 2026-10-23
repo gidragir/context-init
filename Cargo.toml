@@ -24,12 +24,13 @@ quote = "1.0"
 rmcp = { version = "3.5", features = ["server", "macros", "transport-io"] }
 schemars = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "0.10"
 syn = { version = "2.0", features = ["full", "parsing"] }
 tiktoken-rs = "0.5"
 tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "io-std"] }
 toml = "0.8"
+toml_edit = "0.22"
 ureq = { version = "2.10", features = ["json"] }
 
 [package]
@@ -48,11 +49,13 @@ clap.workspace = true
 colored.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+toml_edit.workspace = true
 
 [dev-dependencies]
 rmcp.workspace = true
 serde.workspace = true
 syn.workspace = true
+toml.workspace = true
 
 [profile.dev]
 opt-level = 0

@@ -7,6 +7,7 @@ mod mcp;
 mod migrate;
 mod output;
 mod pack;
+mod setup;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
