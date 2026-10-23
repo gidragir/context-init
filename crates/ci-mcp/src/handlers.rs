@@ -1,6 +1,6 @@
 //! MCP tool execution handlers with token budgeting, Git staleness validation, and telemetry (D14, D19, D21, D29).
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,8 +9,8 @@ use ci_core::config::{CliOverrides, Config, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
 use ci_core::storage::{
-    compute_project_id, normalize_line_endings, normalize_path, L0Index, SubsystemInfo,
-    CURRENT_L0_SCHEMA_VERSION,
+    compute_project_id, normalize_line_endings, normalize_path, now_rfc3339, subsystem_card_path,
+    L0Index, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
 };
 use ci_core::telemetry::{
     FeedbackSignal, JsonlTelemetrySink, TelemetryEvent, TelemetrySignal, TelemetrySink,
@@ -431,6 +431,96 @@ impl ContextHandler {
         Ok(paginated.rendered)
     }
 
+    /// Persists a validated agent submission into the knowledge base.
+    ///
+    /// Every subsystem id is validated before anything is written, so a hostile id can
+    /// neither escape `knowledge_dir` nor leave a half-applied update behind. File lists
+    /// are never taken from submissions: they come from the detector only.
+    fn persist_submission(project: &ResolvedProject, payload: &serde_json::Value) -> Result<()> {
+        let kd = &project.knowledge_dir;
+        let index_path = kd.join("L0_index.json");
+        let mut index = if index_path.is_file() {
+            project.load_l0_index()?
+        } else {
+            L0Index::default()
+        };
+        let str_field = |v: &serde_json::Value, key: &str| {
+            v.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        };
+        let tags_field = |v: &serde_json::Value| {
+            v.get("tags")
+                .and_then(|t| serde_json::from_value::<Vec<String>>(t.clone()).ok())
+        };
+
+        if let Some(items) = payload
+            .get("subsystems")
+            .and_then(serde_json::Value::as_array)
+        {
+            let mut cards = Vec::with_capacity(items.len());
+            for item in items {
+                let id = str_field(item, "id").unwrap_or_default();
+                cards.push((subsystem_card_path(kd, &id)?, id, item));
+            }
+            for (card_path, id, item) in cards {
+                let name = str_field(item, "name").unwrap_or_else(|| id.clone());
+                let summary = str_field(item, "summary").unwrap_or_default();
+                if let Some(sub) = index.subsystems.iter_mut().find(|s| s.id == id) {
+                    sub.name = name.clone();
+                    sub.summary = summary.clone();
+                    if let Some(tags) = tags_field(item) {
+                        sub.tags = tags;
+                    }
+                } else {
+                    index.subsystems.push(SubsystemInfo {
+                        id: id.clone(),
+                        name: name.clone(),
+                        summary: summary.clone(),
+                        l1_path: format!("subsystems/{id}.md"),
+                        tags: tags_field(item).unwrap_or_default(),
+                        entrypoints: Vec::new(),
+                        key_files: Vec::new(),
+                        files: Vec::new(),
+                        key_symbols: Vec::new(),
+                        test_command: None,
+                        tokens: 0,
+                    });
+                }
+                if !card_path.exists() {
+                    fs::create_dir_all(kd.join("subsystems"))?;
+                    fs::write(
+                        &card_path,
+                        format!("# Subsystem: {name} (L1)\n\n{summary}\n"),
+                    )
+                    .with_context(|| format!("Failed to write card {card_path:?}"))?;
+                }
+            }
+        } else if let Some(id) = str_field(payload, "id") {
+            let card_path = subsystem_card_path(kd, &id)?;
+            if let Some(body) = str_field(payload, "body") {
+                fs::create_dir_all(kd.join("subsystems"))
+                    .with_context(|| format!("Failed to create {:?}", kd.join("subsystems")))?;
+                fs::write(&card_path, body)
+                    .with_context(|| format!("Failed to write card {card_path:?}"))?;
+            }
+            if let Some(sub) = index.subsystems.iter_mut().find(|s| s.id == id) {
+                if let Some(summary) = str_field(payload, "summary") {
+                    sub.summary = summary;
+                }
+                if let Some(tags) = tags_field(payload) {
+                    sub.tags = tags;
+                }
+            }
+        } else {
+            return Ok(());
+        }
+
+        index.updated_at = now_rfc3339();
+        fs::create_dir_all(kd)?;
+        index.save_to_file(&index_path)
+    }
+
     /// Handler for `context_submit` (D14, D29, R4).
     pub fn submit(
         project: &ResolvedProject,
@@ -462,65 +552,23 @@ impl ContextHandler {
 
         match validate_agent_submission(pkg_ref, submission) {
             Ok(validated) => {
-                // If submission contains subsystems list (RoleName::Init), persist to knowledge base
-                if let Some(subsystems_val) = validated.payload.get("subsystems") {
-                    if let Ok(mut index) = project.load_l0_index() {
-                        if let Ok(parsed_subs) =
-                            serde_json::from_value::<Vec<SubsystemInfo>>(subsystems_val.clone())
-                        {
-                            let subs_dir = project.knowledge_dir.join("subsystems");
-                            let _ = fs::create_dir_all(&subs_dir);
-                            for s in &parsed_subs {
-                                let card_p = subs_dir.join(format!("{}.md", s.id));
-                                if !card_p.exists() {
-                                    let _ = fs::write(
-                                        &card_p,
-                                        format!("# Subsystem: {} (L1)\n\n{}\n", s.name, s.summary),
-                                    );
-                                }
-                            }
-                            index.subsystems = parsed_subs;
-                            index.updated_at = "2026-10-19".to_string();
-                            let _ =
-                                index.save_to_file(&project.knowledge_dir.join("L0_index.json"));
-                        }
-                    }
-                } else if let Some(id_val) = validated
-                    .payload
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                {
-                    // Update single subsystem card and metadata (RoleName::Update)
-                    if let Ok(mut index) = project.load_l0_index() {
-                        let subs_dir = project.knowledge_dir.join("subsystems");
-                        let _ = fs::create_dir_all(&subs_dir);
-                        let card_p = subs_dir.join(format!("{id_val}.md"));
-                        if let Some(body) = validated
-                            .payload
-                            .get("body")
-                            .and_then(serde_json::Value::as_str)
-                        {
-                            let _ = fs::write(&card_p, body);
-                        }
-                        if let Some(sub) = index.subsystems.iter_mut().find(|s| s.id == id_val) {
-                            if let Some(summary) = validated
-                                .payload
-                                .get("summary")
-                                .and_then(serde_json::Value::as_str)
-                            {
-                                sub.summary = summary.to_string();
-                            }
-                            if let Some(tags_val) = validated.payload.get("tags") {
-                                if let Ok(tags) =
-                                    serde_json::from_value::<Vec<String>>(tags_val.clone())
-                                {
-                                    sub.tags = tags;
-                                }
-                            }
-                        }
-                        index.updated_at = "2026-10-19".to_string();
-                        let _ = index.save_to_file(&project.knowledge_dir.join("L0_index.json"));
-                    }
+                if let Err(e) = Self::persist_submission(project, &validated.payload) {
+                    let result = SubmitResult {
+                        valid: false,
+                        package_id: validated.package_id,
+                        role: validated.role.to_string(),
+                        errors: e.chain().map(|c| c.to_string()).collect(),
+                        message: "Agent submission rejected: it could not be persisted."
+                            .to_string(),
+                    };
+                    let json_text = serde_json::to_string_pretty(&result)?;
+                    return Ok(paginate_content(
+                        &json_text,
+                        None,
+                        project.config.max_response_tokens,
+                        false,
+                    )
+                    .rendered);
                 }
 
                 let result = SubmitResult {

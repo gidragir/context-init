@@ -267,6 +267,64 @@ pub struct SubsystemInfo {
     pub tokens: usize,
 }
 
+/// Allowed subsystem id shape. Ids become file names (`subsystems/<id>.md`), so they
+/// must never contain path separators or `..`.
+pub const SUBSYSTEM_ID_PATTERN: &str = "^[a-z0-9][a-z0-9_-]{0,63}$";
+
+/// Validates `id` against [`SUBSYSTEM_ID_PATTERN`].
+pub fn validate_subsystem_id(id: &str) -> Result<()> {
+    let bytes = id.as_bytes();
+    let valid = !bytes.is_empty()
+        && bytes.len() <= 64
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_' || *b == b'-');
+    if !valid {
+        bail!(
+            "Invalid subsystem id {:?}: must match {}",
+            id,
+            SUBSYSTEM_ID_PATTERN
+        );
+    }
+    Ok(())
+}
+
+/// Returns `<knowledge_dir>/subsystems/<id>.md` after validating `id`.
+pub fn subsystem_card_path(knowledge_dir: &Path, id: &str) -> Result<PathBuf> {
+    validate_subsystem_id(id)?;
+    let path = knowledge_dir.join("subsystems").join(format!("{id}.md"));
+    if !path.starts_with(knowledge_dir) {
+        bail!("Subsystem card path {:?} escapes knowledge dir", path);
+    }
+    Ok(path)
+}
+
+/// Current UTC time as `YYYY-MM-DDTHH:MM:SSZ`.
+pub fn now_rfc3339() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    // Civil-from-days (Howard Hinnant), valid for all dates after 1970.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
 /// Discovered build, test, and lint commands for a project.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectCommands {
@@ -549,4 +607,40 @@ fn copy_dir_recursive(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod subsystem_id_tests {
+    use super::*;
+
+    #[test]
+    fn subsystem_id_validation() {
+        for ok in ["core", "src_mcp", "a-1"] {
+            assert!(validate_subsystem_id(ok).is_ok(), "{ok} must be valid");
+        }
+        let long = "x".repeat(65);
+        for bad in ["", "../x", "/tmp/x", "a/b", "A", long.as_str()] {
+            assert!(
+                validate_subsystem_id(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn subsystem_card_path_stays_inside_knowledge_dir() {
+        let kd = Path::new("/kb");
+        assert_eq!(
+            subsystem_card_path(kd, "core").unwrap(),
+            PathBuf::from("/kb/subsystems/core.md")
+        );
+        assert!(subsystem_card_path(kd, "../escape").is_err());
+    }
+
+    #[test]
+    fn now_rfc3339_has_utc_shape() {
+        let ts = now_rfc3339();
+        assert_eq!(ts.len(), 20, "{ts}");
+        assert!(ts.ends_with('Z') && ts.as_bytes()[10] == b'T', "{ts}");
+    }
 }

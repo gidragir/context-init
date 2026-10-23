@@ -450,7 +450,7 @@ pub fn default_role_json_schema(role: RoleName) -> Value {
                         "type": "object",
                         "required": ["id", "name", "summary", "tags"],
                         "properties": {
-                            "id": { "type": "string", "minLength": 1 },
+                            "id": { "type": "string", "minLength": 1, "pattern": ci_core::storage::SUBSYSTEM_ID_PATTERN },
                             "name": { "type": "string", "minLength": 1 },
                             "summary": { "type": "string", "minLength": 1 },
                             "tags": {
@@ -466,7 +466,7 @@ pub fn default_role_json_schema(role: RoleName) -> Value {
             "type": "object",
             "required": ["id", "summary", "body"],
             "properties": {
-                "id": { "type": "string", "minLength": 1 },
+                "id": { "type": "string", "minLength": 1, "pattern": ci_core::storage::SUBSYSTEM_ID_PATTERN },
                 "summary": { "type": "string", "minLength": 1 },
                 "body": { "type": "string", "minLength": 1 },
                 "tags": {

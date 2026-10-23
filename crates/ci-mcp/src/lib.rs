@@ -301,6 +301,144 @@ mod tests {
         );
     }
 
+    /// Seeds an in-repo knowledge base (lazy fallback) with one `core` subsystem; returns its dir.
+    fn seed_in_repo_knowledge(root: &Path) -> PathBuf {
+        let kd = root.join(".agents").join("knowledge");
+        fs::create_dir_all(kd.join("subsystems")).unwrap();
+        let index = L0Index {
+            subsystems: vec![SubsystemInfo {
+                id: "core".to_string(),
+                name: "Core".to_string(),
+                summary: "Core subsystem".to_string(),
+                l1_path: "subsystems/core.md".to_string(),
+                tags: vec![],
+                entrypoints: vec![],
+                key_files: vec![],
+                files: vec![SubsystemFile {
+                    path: "src/lib.rs".to_string(),
+                    is_entrypoint: true,
+                    lines: 10,
+                }],
+                key_symbols: vec![],
+                test_command: None,
+                tokens: 10,
+            }],
+            ..L0Index::default()
+        };
+        index.save_to_file(&kd.join("L0_index.json")).unwrap();
+        kd
+    }
+
+    async fn submit_with_package(
+        server: &ContextInitServer,
+        root: &Path,
+        role: RoleName,
+        payload: serde_json::Value,
+    ) -> SubmitResult {
+        let pkg = AgentWorkPackage {
+            package_id: format!("pkg-test-{}-1", role.as_str()),
+            role,
+            facts: json!({}),
+            instruction: "test".to_string(),
+            json_schema: ci_llm::default_role_json_schema(role),
+        };
+        server.register_work_package(pkg.clone()).await;
+        let out = server
+            .submit(Parameters(McpSubmitParams {
+                package_id: pkg.package_id,
+                submission: payload,
+                path: Some(root.to_string_lossy().to_string()),
+                project: None,
+            }))
+            .await
+            .expect("submit tool call");
+        serde_json::from_str(&out).expect("parse SubmitResult JSON")
+    }
+
+    #[tokio::test]
+    async fn submit_rejects_traversal_ids() {
+        let tmp = TempDirGuard::new("submit_traversal");
+        let kd = seed_in_repo_knowledge(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+
+        let upd = submit_with_package(
+            &server,
+            tmp.path(),
+            RoleName::Update,
+            json!({"id": "../escape", "summary": "s", "body": "b"}),
+        )
+        .await;
+        assert!(!upd.valid);
+        assert!(
+            upd.errors.iter().any(|e| e.contains("id")),
+            "{:?}",
+            upd.errors
+        );
+        assert!(!kd.join("escape.md").exists());
+        assert!(!kd.parent().unwrap().join("escape.md").exists());
+
+        let abs_target = tmp.path().join("abs_target");
+        let init = submit_with_package(
+            &server,
+            tmp.path(),
+            RoleName::Init,
+            json!({"subsystems": [{
+                "id": abs_target.to_string_lossy(), "name": "x", "summary": "s", "tags": []
+            }]}),
+        )
+        .await;
+        assert!(!init.valid);
+        assert!(
+            init.errors.iter().any(|e| e.contains("id")),
+            "{:?}",
+            init.errors
+        );
+        assert!(!tmp.path().join("abs_target.md").exists());
+    }
+
+    #[tokio::test]
+    async fn submit_ignores_submitted_files_list() {
+        let tmp = TempDirGuard::new("submit_files");
+        let kd = seed_in_repo_knowledge(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+
+        let out = submit_with_package(
+            &server,
+            tmp.path(),
+            RoleName::Init,
+            json!({"subsystems": [{
+                "id": "core", "name": "Core", "summary": "Updated summary", "tags": ["x"],
+                "files": [{"path": "/etc/passwd", "is_entrypoint": false, "lines": 1}]
+            }]}),
+        )
+        .await;
+        assert!(out.valid, "{:?}", out.errors);
+        let saved = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        let core = saved.subsystems.iter().find(|s| s.id == "core").unwrap();
+        assert_eq!(core.summary, "Updated summary");
+        assert_eq!(core.files.len(), 1);
+        assert_eq!(core.files[0].path, "src/lib.rs");
+    }
+
+    #[tokio::test]
+    async fn submit_reports_write_errors() {
+        let tmp = TempDirGuard::new("submit_write_err");
+        let kd = seed_in_repo_knowledge(tmp.path());
+        fs::remove_dir_all(kd.join("subsystems")).unwrap();
+        fs::write(kd.join("subsystems"), "not a dir").unwrap();
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+
+        let out = submit_with_package(
+            &server,
+            tmp.path(),
+            RoleName::Update,
+            json!({"id": "core", "summary": "s", "body": "# Core"}),
+        )
+        .await;
+        assert!(!out.valid || !out.errors.is_empty());
+        assert!(!out.message.contains("accepted"), "{}", out.message);
+    }
+
     #[tokio::test]
     async fn context_submit_valid_and_schema_error_feedback() {
         let tmp = TempDirGuard::new("submit");
