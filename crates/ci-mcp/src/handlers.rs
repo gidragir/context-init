@@ -18,8 +18,11 @@ use ci_core::telemetry::{
 use ci_llm::providers::validate_agent_submission;
 use ci_llm::AgentWorkPackage;
 
-use crate::pagination::paginate_content;
+use crate::pagination::{count_tokens, paginate_content};
 use crate::tools::*;
+
+/// `pack all` is refused when the packed project exceeds this many response pages (D19).
+pub const PACK_ALL_MAX_PAGES: usize = 5;
 
 /// Context bundle describing a dynamically resolved project root and its knowledge store (D21).
 #[derive(Debug, Clone)]
@@ -417,6 +420,19 @@ impl ContextHandler {
             compress,
             style,
         );
+
+        let budget = project.config.max_response_tokens;
+        if subsystem_id.eq_ignore_ascii_case("all")
+            && count_tokens(&packed_content) > PACK_ALL_MAX_PAGES.saturating_mul(budget)
+        {
+            let ids: Vec<&str> = index.subsystems.iter().map(|s| s.id.as_str()).collect();
+            let refusal = format!(
+                "Refusing pack all: the packed project exceeds {PACK_ALL_MAX_PAGES} pages of {budget} tokens (D19). \
+                 Pack per subsystem instead with context_pack(subsystem_id=<id>). Subsystems: {}",
+                ids.join(", ")
+            );
+            return Ok(paginate_content(&refusal, cursor, budget, false).rendered);
+        }
 
         let any_stale = matched_subs
             .iter()

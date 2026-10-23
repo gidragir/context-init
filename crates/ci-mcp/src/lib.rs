@@ -396,6 +396,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pack_all_over_limit_is_refused() {
+        let tmp = TempDirGuard::new("pack_all_limit");
+        seed_in_repo_knowledge(tmp.path());
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        let big: String = (0..200)
+            .map(|i| format!("pub struct Item{i} {{ pub field_{i}: u64 }}\n"))
+            .collect();
+        fs::write(tmp.path().join("src/lib.rs"), big).unwrap();
+        fs::write(
+            tmp.path().join(".context-init.toml"),
+            "max_response_tokens = 64\n",
+        )
+        .unwrap();
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+
+        let out = server
+            .pack(Parameters(McpPackParams {
+                subsystem_id: "all".to_string(),
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                project: None,
+                compress: Some(false),
+                style: Some("xml".to_string()),
+                cursor: None,
+            }))
+            .await
+            .expect("pack tool call");
+        assert!(out.contains("pack all"), "{out}");
+        assert!(out.contains("per subsystem"), "{out}");
+        assert!(out.contains("core"), "{out}");
+        assert!(!out.contains("pub struct Item"), "{out}");
+    }
+
+    #[tokio::test]
     async fn submit_rejects_unknown_package_id() {
         let tmp = TempDirGuard::new("submit_unknown_pkg");
         let kd = seed_in_repo_knowledge(tmp.path());

@@ -89,3 +89,21 @@
 - `rtk cargo clippy --workspace --all-targets -- -D warnings`: **No issues**
 - `rtk cargo nextest run --workspace`: **80 passed (6 binaries, 0.371s)**
 - `rtk rg -i '1[cс]' crates/ci-mcp`: 0 matches
+
+---
+
+## 5. Acceptance findings closed (2026-10-23, Step 5 Phase 0)
+
+Source: [ci-mcp_verification.md](ci-mcp_verification.md) (PASS WITH NOTES).
+
+| Finding | Fix | Regression tests |
+| :--- | :--- | :--- |
+| F1 High — path traversal via submission `id` | `ci_core::storage::{validate_subsystem_id, subsystem_card_path}`. All ids are validated before any write, file lists are never taken from submissions, init submissions merge by id, write errors are returned to the agent, and `updated_at` is now real (`now_rfc3339`). | `submit_rejects_traversal_ids`, `submit_ignores_submitted_files_list`, `submit_reports_write_errors`, `storage::subsystem_id_tests::*` |
+| F2 Medium — unknown `package_id` accepted via fallback schema | Rejected with `Unknown package_id`; role guessing from the id is removed | `submit_rejects_unknown_package_id` |
+| F3 Medium — MCP roots unreachable | Explicit `ServerHandler` with `on_initialized`/`on_roots_list_changed` → `refresh_roots` (only if the client declares `roots`); `roots_to_paths` decodes `file://` URIs. Note: rmcp 3.5.1 marks Roots deprecated (SEP-2577), so scoped `#[allow(deprecated)]` is used. | `roots_to_paths_parses_file_uris`, `resolution_uses_roots_after_refresh` |
+| F4 Medium — `pack all` limit not enforced | Refused above `PACK_ALL_MAX_PAGES (5) × max_response_tokens`, with the list of subsystem ids | `pack_all_over_limit_is_refused` |
+| Low — cursor `page + 1` overflow | `saturating_add` | `cursor_page_overflow_saturates` |
+
+Deferred to Step 5 Phase 1: budget/footer on init/update replies (the handlers are rewritten there). Still out of scope: perf on long unbroken runs, whitespace-only token count, cursor not bound to content, the incomplete D29 signal set.
+
+Verification: `cargo nextest run --workspace` → 91 passed; `cargo clippy --workspace --all-targets -- -D warnings` → clean.

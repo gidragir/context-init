@@ -286,7 +286,7 @@ pub fn paginate_content(
         next_offset = start_offset + split_len;
         next_cur = encode_cursor(&CursorData {
             byte_offset: next_offset,
-            page: page_no + 1,
+            page: page_no.saturating_add(1),
         });
 
         // 1. Format tentative footer with effective_max_tokens as placeholder token count
@@ -530,6 +530,19 @@ mod tests {
             }
             assert_eq!(reassembled, text, "budget {}", budget);
         }
+    }
+
+    #[test]
+    fn cursor_page_overflow_saturates() {
+        let text = "line of content\n".repeat(200);
+        let cursor = encode_cursor(&CursorData {
+            byte_offset: 16,
+            page: usize::MAX,
+        });
+        let out = paginate_content(&text, Some(&cursor), 64, false);
+        assert!(out.truncated);
+        let next = decode_cursor(out.next_cursor.as_deref().unwrap()).unwrap();
+        assert_eq!(next.page, usize::MAX);
     }
 
     #[test]
