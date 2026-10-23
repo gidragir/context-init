@@ -1,6 +1,7 @@
 //! Command-line interface: argument parsing, project/config loading and dispatch.
 
 mod check;
+mod config;
 mod init_update;
 mod mcp;
 mod output;
@@ -91,6 +92,8 @@ enum Commands {
     Pack(pack::PackArgs),
     /// Run the MCP server on stdio
     Mcp(mcp::McpArgs),
+    /// Inspect, create and validate configuration
+    Config(config::ConfigArgs),
 }
 
 /// Parses arguments and runs the selected command.
@@ -106,6 +109,7 @@ pub fn run() -> Result<ExitCode> {
         Some(Commands::Check(args)) => check::run(&cli.global, &args),
         Some(Commands::Pack(args)) => pack::run(&cli.global, &args),
         Some(Commands::Mcp(args)) => mcp::run(&args),
+        Some(Commands::Config(args)) => config::run(&cli.global, &args),
     }
 }
 

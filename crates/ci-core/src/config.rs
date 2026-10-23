@@ -16,6 +16,9 @@ pub const DEFAULT_LANGUAGE: &str = "ru";
 /// Default hard ceiling of tokens per MCP response (D19).
 pub const DEFAULT_MAX_RESPONSE_TOKENS: usize = 4000;
 
+/// Smallest `max_response_tokens` that fits a paginated reply's cursor footer.
+pub const MIN_RESPONSE_TOKENS: usize = 64;
+
 /// Default deterministic role fallback sentinel (D16).
 pub const ROLE_NONE: &str = "none";
 
@@ -655,6 +658,10 @@ pub struct Config {
     /// Opt-in telemetry settings (`[telemetry]`, D28).
     #[serde(default)]
     pub telemetry: TelemetryConfig,
+    /// Config files applied by `load` (not serialized).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub loaded_sources: Vec<PathBuf>,
 }
 
 /// Alias for `Config`.
@@ -670,6 +677,7 @@ impl Default for Config {
             models: BTreeMap::new(),
             roles: RolesConfig::default(),
             telemetry: TelemetryConfig::default(),
+            loaded_sources: Vec::new(),
         }
     }
 }
@@ -762,12 +770,25 @@ impl Config {
                 None
             };
 
-        Self::from_layers(
+        let mut cfg = Self::from_layers(
             global_toml.as_deref(),
             project_toml.as_deref(),
             get_env,
             cli,
-        )
+        )?;
+        if global_toml.is_some() {
+            cfg.loaded_sources.push(global_path.to_path_buf());
+        }
+        if let (Some(_), Some(path)) = (&project_toml, &paths.project_config_path) {
+            cfg.loaded_sources.push(path.clone());
+        }
+        if cfg.max_response_tokens < MIN_RESPONSE_TOKENS {
+            eprintln!(
+                "context-init: warning: max_response_tokens = {} is below {MIN_RESPONSE_TOKENS}; replies may exceed it",
+                cfg.max_response_tokens
+            );
+        }
+        Ok(cfg)
     }
 
     /// Resolves configuration from raw TOML strings, an environment lookup function, and `CliOverrides` (D11).
@@ -1003,19 +1024,30 @@ impl Config {
         Ok(())
     }
 
-    /// Validates configuration invariants (D11, D16, D19):
-    /// - `max_response_tokens > 0`
-    /// - `language` is non-empty
-    /// - `ModelKind::Command` models specify a non-empty `command`
-    /// - Every role (`init`, `update`, `task`, `search`) has a non-empty chain where each alias is `"none"` or exists in `[models]`.
+    /// Validates configuration invariants; fails with every problem found by [`Config::lint`].
     pub fn validate(&self) -> Result<()> {
-        if self.max_response_tokens == 0 {
-            bail!("Invalid configuration: max_response_tokens must be > 0");
+        let problems = self.lint();
+        if !problems.is_empty() {
+            bail!("Invalid configuration:\n- {}", problems.join("\n- "));
+        }
+        Ok(())
+    }
+
+    /// Lists every configuration problem (D11, D16, D19) without failing fast:
+    /// `max_response_tokens >= MIN_RESPONSE_TOKENS`, non-empty `language`, `command` models
+    /// with a command, `ollama` endpoints that are http(s) URLs, and role chains whose
+    /// aliases are `none` or defined in `[models]`.
+    pub fn lint(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.max_response_tokens < MIN_RESPONSE_TOKENS {
+            problems.push(format!(
+                "max_response_tokens = {} is below the minimum of {MIN_RESPONSE_TOKENS} (a paginated reply's footer alone needs ~50 tokens)",
+                self.max_response_tokens
+            ));
         }
         if self.language.trim().is_empty() {
-            bail!("Invalid configuration: language must not be empty");
+            problems.push("language must not be empty".to_string());
         }
-
         for (alias, model_cfg) in &self.models {
             if model_cfg.kind == ModelKind::Command {
                 let valid_cmd = model_cfg
@@ -1023,14 +1055,24 @@ impl Config {
                     .as_ref()
                     .is_some_and(|cmd| !cmd.is_empty() && !cmd[0].trim().is_empty());
                 if !valid_cmd {
-                    bail!(
-                        "Invalid configuration: model '{}' with kind = 'command' must specify a non-empty 'command' list",
-                        alias
-                    );
+                    problems.push(format!(
+                        "model '{alias}' with kind = 'command' must specify a non-empty 'command' list"
+                    ));
+                }
+            }
+            if model_cfg.kind == ModelKind::Ollama {
+                if let Some(endpoint) = &model_cfg.endpoint {
+                    let host = endpoint
+                        .strip_prefix("http://")
+                        .or_else(|| endpoint.strip_prefix("https://"));
+                    if host.is_none_or(|h| h.trim().is_empty()) {
+                        problems.push(format!(
+                            "model '{alias}': endpoint '{endpoint}' must be an http:// or https:// URL"
+                        ));
+                    }
                 }
             }
         }
-
         for role in [
             RoleKind::Init,
             RoleKind::Update,
@@ -1039,30 +1081,25 @@ impl Config {
         ] {
             let chain = self.roles.get(role);
             if chain.is_empty() {
-                bail!(
-                    "Invalid configuration: role '{}' fallback chain must not be empty",
-                    role
-                );
+                problems.push(format!("role '{role}' fallback chain must not be empty"));
             }
             for alias in chain {
                 let trimmed = alias.trim();
                 if trimmed.is_empty() {
-                    bail!(
-                        "Invalid configuration: role '{}' contains an empty model alias",
-                        role
-                    );
-                }
-                if trimmed != ROLE_NONE && !self.models.contains_key(trimmed) {
-                    bail!(
-                        "Invalid configuration: role '{}' references unknown model alias '{}' (not found in [models] and not 'none')",
-                        role,
-                        trimmed
-                    );
+                    problems.push(format!("role '{role}' contains an empty model alias"));
+                } else if trimmed != ROLE_NONE && !self.models.contains_key(trimmed) {
+                    problems.push(format!(
+                        "role '{role}' references unknown model alias '{trimmed}' (not in [models] and not 'none')"
+                    ));
                 }
             }
         }
+        problems
+    }
 
-        Ok(())
+    /// Config files actually applied by [`Config::load`], lowest priority first.
+    pub fn loaded_sources(&self) -> &[PathBuf] {
+        &self.loaded_sources
     }
 
     /// Serializes the effective configuration as formatted TOML (`context-init config show`).
@@ -1149,4 +1186,79 @@ where
     P: AsRef<OsStr>,
 {
     std::env::join_paths(dirs).context("Failed to join search paths")
+}
+
+#[cfg(test)]
+mod lint_tests {
+    use super::*;
+
+    fn cfg(toml: &str) -> Config {
+        let mut c = Config::default();
+        c.apply_toml_str(toml).unwrap();
+        c
+    }
+
+    #[test]
+    fn lint_clean_default_config() {
+        assert!(Config::default().lint().is_empty());
+    }
+
+    #[test]
+    fn lint_reports_each_rule() {
+        let cases = [
+            (
+                "[roles]\ninit = [\"ghost\"]\n",
+                "unknown model alias 'ghost'",
+            ),
+            ("[models.c]\nkind = \"command\"\n", "non-empty 'command'"),
+            (
+                "[models.o]\nkind = \"ollama\"\nendpoint = \"localhost:11434\"\n",
+                "endpoint",
+            ),
+            ("max_response_tokens = 10\n", "64"),
+            ("language = \" \"\n", "language"),
+        ];
+        for (toml, needle) in cases {
+            let problems = cfg(toml).lint();
+            assert_eq!(problems.len(), 1, "{toml:?} -> {problems:?}");
+            assert!(problems[0].contains(needle), "{toml:?} -> {problems:?}");
+        }
+    }
+
+    #[test]
+    fn lint_collects_all_problems() {
+        let problems = cfg("max_response_tokens = 10\n[roles]\ninit = [\"ghost\"]\n").lint();
+        assert_eq!(problems.len(), 2, "{problems:?}");
+    }
+
+    #[test]
+    fn loaded_sources_lists_applied_files_in_order() {
+        let dir = std::env::temp_dir().join(format!(
+            "ci_cfg_sources_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let home = dir.join("home");
+        let repo = dir.join("repo");
+        fs::create_dir_all(home.join(".config/context-init")).unwrap();
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(
+            home.join(".config/context-init/config.toml"),
+            "language = \"en\"\n",
+        )
+        .unwrap();
+        fs::write(
+            repo.join(".context-init.toml"),
+            "max_response_tokens = 3000\n",
+        )
+        .unwrap();
+        let c = Config::load_with_env(Some(&repo), Some(&home), |_| None, &CliOverrides::default())
+            .unwrap();
+        assert_eq!(c.loaded_sources().len(), 2, "{:?}", c.loaded_sources());
+        assert!(c.loaded_sources()[1].ends_with(".context-init.toml"));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

@@ -213,3 +213,66 @@ fn cli_check_exit_code_tracks_drift() {
         .status
         .success());
 }
+
+#[test]
+fn cli_config_validate_exit_codes() {
+    let sb = Sandbox::new("cfg_validate");
+    let ok = sb.run(&["config", "validate"]);
+    assert!(ok.status.success(), "{}{}", stdout(&ok), stderr(&ok));
+
+    fs::write(
+        sb.project().join(".context-init.toml"),
+        "max_response_tokens = 10\n",
+    )
+    .unwrap();
+    let bad = sb.run(&["config", "validate"]);
+    assert_eq!(bad.status.code(), Some(1));
+    assert!(stdout(&bad).contains("64"), "{}", stdout(&bad));
+}
+
+#[test]
+fn cli_config_init_refuses_overwrite_without_force() {
+    let sb = Sandbox::new("cfg_init");
+    assert!(sb.run(&["config", "init"]).status.success());
+    let global = sb.home().join(".config/context-init/config.toml");
+    assert!(global.is_file());
+    let again = sb.run(&["config", "init"]);
+    assert!(!again.status.success());
+    assert!(stderr(&again).contains("--force"), "{}", stderr(&again));
+    assert!(sb.run(&["config", "init", "--force"]).status.success());
+
+    assert!(sb.run(&["config", "init", "--project"]).status.success());
+    assert!(sb.project().join(".context-init.toml").is_file());
+}
+
+#[test]
+fn cli_config_show_lists_sources() {
+    let sb = Sandbox::new("cfg_show");
+    fs::write(
+        sb.project().join(".context-init.toml"),
+        "max_response_tokens = 3000\n",
+    )
+    .unwrap();
+    let out = sb.run(&["config", "show"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains(".context-init.toml"), "{text}");
+    assert!(text.contains("max_response_tokens = 3000"), "{text}");
+
+    let json = sb.run(&["config", "show", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(v["config"]["max_response_tokens"], 3000);
+    assert_eq!(v["sources"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn cli_config_path_lists_storage() {
+    let sb = Sandbox::new("cfg_path");
+    let out = sb.run(&["config", "path"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("project_storage_dir:"),
+        "{}",
+        stdout(&out)
+    );
+}
