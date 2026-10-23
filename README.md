@@ -34,21 +34,43 @@ cargo install --path . --root ~/.local
 ### 1. Первичная инициализация (`init`)
 
 ```bash
-# Инициализация текущего проекта с автоматическим обнаружением монорепозиториев и команд:
-context-init .
+# Инициализация текущего проекта (база знаний пишется в ~/.local/share/context-init/projects/<id>/):
+context-init init .
 
 # С глубоким извлечением сигнатур публичных функций, типов и структур:
-context-init --deep .
+context-init init . --deep
 
 # Режим предварительного просмотра без записи на диск:
-context-init --dry-run .
+context-init init . --dry-run
 
-# С интеллектуальным описанием подсистем через локальную Ollama:
-context-init --ai .
+# С описанием подсистем через любую LLM из конфига (алиас из [models]):
+context-init init . --model local
 
-# С указанием конкретной модели Ollama (по умолчанию qwen2.5:14b-ctx64k):
-context-init --ai --model qwen2.5:14b-ctx64k .
+# Отдельная модель для конкретной роли (повторяемый флаг):
+context-init init . --role init=local,none
 ```
+
+Модели задаются в `~/.config/context-init/config.toml` (или `<repo>/.context-init.toml`):
+
+```toml
+[models.local]
+kind = "ollama"
+model = "qwen2.5:14b-ctx64k"
+endpoint = "http://127.0.0.1:11434"
+
+[roles]
+init = ["local", "none"]   # "none" = детерминированный режим без LLM (по умолчанию)
+```
+
+#### Миграция с v0.2
+
+| Было (v0.2) | Стало (v0.3) |
+| :--- | :--- |
+| `context-init .` / `context-init --deep .` | `context-init init .` / `context-init init . --deep` |
+| `--ai -m qwen2.5:14b-ctx64k` | `[models.local] kind = "ollama"` + `--model local` |
+| `--ollama-url <URL>` | `endpoint = "<URL>"` в `[models.<alias>]` |
+| `--with-agents-md` (всегда включено) | по умолчанию включено, `--no-agents-md` отключает |
+| `.agents/knowledge/` в репозитории | центральное хранилище; перенос — `context-init migrate` |
 
 ### 2. Проверка дрейфа архитектуры (`check`)
 

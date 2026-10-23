@@ -478,7 +478,15 @@ fn update_or_create_root_agents_md(
     let section_header = "## 🗺 Архитектурная карта и навигация (OpenViking L0-L2)";
 
     let mut map_content = format!(
-        "\n\n{}\n\nПроект `{}` управляется трехуровневой базой знаний OpenViking (L0-L2).\nКатегорически запрещено читать файлы `.agents/knowledge/**` напрямую через инструменты чтения файлов (`view_file`, `cat` и др.). Вся навигация и исследование архитектуры выполняются исключительно через MCP-сервер `context-init` (MCP-First Protocol).\n\n### ⚡ MCP-First Protocol (context-init)\n\n1. **Обзор всех подсистем и структуры проекта (L0):**\n   Вызовите `context_get_subsystems`:\n   ```json\n   {{\"ServerName\": \"context-init\", \"ToolName\": \"context_get_subsystems\", \"Arguments\": {{}}}}\n   ```\n2. **Получение компактной L1-карточки конкретной подсистемы:**\n   Вызовите `context_get_subsystem` (передайте `subsystem_id`):\n   ```json\n   {{\"ServerName\": \"context-init\", \"ToolName\": \"context_get_subsystem\", \"Arguments\": {{\"subsystem_id\": \"<subsystem_id>\"}}}}\n   ```\n3. **AST-сжатый контекст кода подсистемы (без раздувания контекста):**\n   Вызовите `context_pack`:\n   ```json\n   {{\"ServerName\": \"context-init\", \"ToolName\": \"context_pack\", \"Arguments\": {{\"subsystem_id\": \"<subsystem_id>\", \"compress\": true}}}}\n   ```\n4. **Проверка архитектурного дрейфа перед сдачей задачи:**\n   Вызовите `context_check`:\n   ```json\n   {{\"ServerName\": \"context-init\", \"ToolName\": \"context_check\", \"Arguments\": {{}}}}\n   ```\n\n### 📦 Доступные подсистемы:\n",
+        "\n\n{}\n\nПроект `{}` описан трехуровневой базой знаний context-init (L0-L2), которая хранится вне репозитория. \
+Для навигации используйте её вместо чтения исходников целиком.\n\n\
+### ⚡ MCP-First Protocol (context-init)\n\n\
+1. `context_get_subsystems` — карта подсистем проекта (L0).\n\
+2. `context_get_subsystem(subsystem_id)` — компактная L1-карточка подсистемы.\n\
+3. `context_pack(subsystem_id, compress=true)` — AST-сжатый код подсистемы.\n\
+4. `context_check` — проверка архитектурного дрейфа перед сдачей задачи.\n\n\
+Без доступа к MCP (субагенты, скрипты): `context-init pack <subsystem_id> --compress` и `context-init check --compact`.\n\n\
+### 📦 Доступные подсистемы:\n",
         section_header, project_name
     );
 

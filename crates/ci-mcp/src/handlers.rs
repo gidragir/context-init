@@ -3,12 +3,11 @@
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use ci_core::analysis::generator::{self, GenerateOptions};
-use ci_core::analysis::pack::{pack_files, PackStyle};
-use ci_core::analysis::subsystems::build_deterministic;
-use ci_core::analysis::{detector, resolve_knowledge_dir, KnowledgeLocation, ProjectAnalysis};
+use ci_core::analysis::generator;
+use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
+use ci_core::analysis::{detector, resolve_knowledge_dir, KnowledgeLocation};
 use ci_core::config::{CliOverrides, Config, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
@@ -18,9 +17,11 @@ use ci_core::storage::{
 use ci_core::telemetry::{
     FeedbackSignal, JsonlTelemetrySink, TelemetryEvent, TelemetrySignal, TelemetrySink,
 };
-use ci_llm::enrich::{cli_outcome_message, enrich_subsystems, EnrichOutcome};
+use ci_llm::enrich::{cli_outcome_message, EnrichOutcome};
 use ci_llm::providers::validate_agent_submission;
-use ci_llm::{AgentWorkPackage, PromptTemplateRegistry, RoleName, RoleRouter};
+use ci_llm::{AgentWorkPackage, RoleRouter};
+
+use crate::pipeline::{self, PipelineOptions};
 
 use crate::pagination::{count_tokens, paginate_content};
 use crate::tools::*;
@@ -51,7 +52,29 @@ impl ResolvedProject {
         let canonical_root = fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
         let config =
             Config::load(Some(&canonical_root), &CliOverrides::default()).unwrap_or_default();
+        Ok(Self::with_config(canonical_root, config))
+    }
 
+    /// Strict variant for the CLI: configuration errors are returned, CLI overrides and an
+    /// optional extra config file (`--config`, applied above project/global files) are honored.
+    pub fn load_with(
+        root: PathBuf,
+        cli: &CliOverrides,
+        extra_config: Option<&Path>,
+    ) -> Result<Self> {
+        let canonical_root = fs::canonicalize(&root)
+            .with_context(|| format!("Project path {:?} does not exist", root))?;
+        let mut config = Config::load(Some(&canonical_root), cli)?;
+        if let Some(extra) = extra_config {
+            let text = fs::read_to_string(extra)
+                .with_context(|| format!("Failed to read config file {:?}", extra))?;
+            config.apply_toml_str(&text)?;
+            config.apply_cli_overrides(cli)?;
+        }
+        Ok(Self::with_config(canonical_root, config))
+    }
+
+    fn with_config(canonical_root: PathBuf, config: Config) -> Self {
         let git_backend = SystemGitBackend::new();
         let remote = git_backend.remote_url(&canonical_root).ok().flatten();
         let project_id = compute_project_id(&canonical_root, remote.as_deref());
@@ -62,14 +85,14 @@ impl ResolvedProject {
         let (knowledge_dir, location) = resolve_knowledge_dir(&canonical_root, &central_kb);
         let is_central = location == KnowledgeLocation::Central;
 
-        Ok(Self {
+        Self {
             root: canonical_root,
             config,
             project_id,
             storage_paths,
             knowledge_dir,
             is_central,
-        })
+        }
     }
 
     /// Loads the `L0Index` from the active knowledge base.
@@ -313,65 +336,18 @@ impl ContextHandler {
         cursor: Option<&str>,
     ) -> Result<String> {
         let index = project.load_l0_index()?;
-
-        let matched_subs: Vec<&SubsystemInfo> = if subsystem_id.eq_ignore_ascii_case("all") {
-            index.subsystems.iter().collect()
-        } else {
-            let clean = subsystem_id
-                .trim()
-                .trim_start_matches("subsystems/")
-                .trim_end_matches(".md");
-            index
-                .subsystems
-                .iter()
-                .filter(|s| {
-                    s.id.eq_ignore_ascii_case(subsystem_id)
-                        || s.name.eq_ignore_ascii_case(subsystem_id)
-                        || s.id.eq_ignore_ascii_case(clean)
-                        || s.name.eq_ignore_ascii_case(clean)
-                })
-                .collect()
-        };
-
-        if matched_subs.is_empty() {
-            let available: Vec<&str> = index.subsystems.iter().map(|s| s.id.as_str()).collect();
-            bail!(
-                "Subsystem '{}' not found in L0 index. Available subsystems: {}",
-                subsystem_id,
-                available.join(", ")
-            );
-        }
-
-        let mut files_to_pack: Vec<String> = Vec::new();
-        for sub in &matched_subs {
-            for f in &sub.files {
-                let full = project.root.join(&f.path);
-                if full.exists() && !files_to_pack.contains(&f.path) {
-                    files_to_pack.push(f.path.clone());
-                }
-            }
-            for kf in &sub.key_files {
-                let full = project.root.join(kf);
-                if full.exists() && !files_to_pack.contains(kf) {
-                    files_to_pack.push(kf.clone());
-                }
-            }
-        }
-
-        if files_to_pack.is_empty() {
-            bail!(
-                "No existing source files found on disk for subsystem '{}'",
-                subsystem_id
-            );
-        }
-
-        let packed_content = pack_files(
+        let PackedSubsystems {
+            content: packed_content,
+            subsystems: matched_subs,
+            ..
+        } = pack_subsystem(
             &project.root,
-            &matched_subs,
-            &files_to_pack,
+            &project.knowledge_dir,
+            &index,
+            subsystem_id,
             compress,
             PackStyle::parse(style),
-        );
+        )?;
 
         let budget = project.config.max_response_tokens;
         if subsystem_id.eq_ignore_ascii_case("all")
@@ -667,96 +643,51 @@ impl ContextHandler {
         Ok(paginated.rendered)
     }
 
-    /// Handler for `context_init`: detect → optional LLM enrichment → generate into
-    /// central storage (D1, D16, D23).
+    /// Handler for `context_init` (pipeline in [`crate::pipeline::run_init`]).
     pub fn init(
         project: &ResolvedProject,
         params: &McpInitParams,
         router: &RoleRouter,
     ) -> Result<HandlerReply> {
-        let analysis = detector::analyze_project(
-            &project.root,
-            params.deep.unwrap_or(false),
-            project.config.integrations.resolve_rtk_active(),
-        )?;
-        let mut subsystems = build_deterministic(&analysis);
-        let outcome = Self::enrich(
-            project,
-            router,
-            RoleName::Init,
-            &analysis,
-            &mut subsystems,
-            params.model.as_deref(),
-        );
-
-        let target = project
-            .storage_paths
-            .project_knowledge_dir(&project.project_id);
-        let opts = GenerateOptions {
+        let opts = PipelineOptions {
+            deep: params.deep.unwrap_or(false),
             force: params.force.unwrap_or(false),
             dry_run: false,
             with_agents_md: params.with_agents_md.unwrap_or(true),
+            model_override: params.model.as_deref(),
         };
-        generator::generate(&analysis, &subsystems, &target, &opts)?;
-
+        let out = pipeline::run_init(project, router, &opts)?;
         let mut text = format!(
             "Knowledge base initialized at {} ({} subsystems).",
-            target.display(),
-            subsystems.len()
+            out.knowledge_dir.display(),
+            out.subsystems.len()
         );
-        if !project.is_central {
-            text.push_str(&format!(
-                "\nA legacy in-repo knowledge base exists at {}; central storage is now authoritative. \
-                 Run `context-init migrate --remove-source` to clean it up.",
-                project.knowledge_dir.display()
-            ));
+        if let Some(hint) = pipeline::legacy_hint(project) {
+            text.push_str(&format!("\n{hint}"));
         }
-        Ok(Self::finish_reply(project, text, outcome))
+        Ok(Self::finish_reply(project, text, out.enrich))
     }
 
-    /// Handler for `context_update`: re-detect and merge into the active knowledge base.
+    /// Handler for `context_update` (pipeline in [`crate::pipeline::run_update`]).
     pub fn update(
         project: &ResolvedProject,
         params: &McpUpdateParams,
         router: &RoleRouter,
     ) -> Result<HandlerReply> {
-        let analysis = detector::analyze_project(
-            &project.root,
-            params.deep.unwrap_or(false),
-            project.config.integrations.resolve_rtk_active(),
-        )?;
-        let mut subsystems = build_deterministic(&analysis);
-        let outcome = Self::enrich(
-            project,
-            router,
-            RoleName::Update,
-            &analysis,
-            &mut subsystems,
-            params.model.as_deref(),
-        );
-        let (added, updated) = generator::update(
-            &analysis,
-            &subsystems,
-            &project.knowledge_dir,
-            project.config.touch_agents_md,
-        )?;
+        let opts = PipelineOptions {
+            deep: params.deep.unwrap_or(false),
+            with_agents_md: project.config.touch_agents_md,
+            model_override: params.model.as_deref(),
+            ..PipelineOptions::default()
+        };
+        let out = pipeline::run_update(project, router, &opts)?;
         let text = format!(
-            "Knowledge base updated at {}: {added} added, {updated} refreshed.",
-            project.knowledge_dir.display()
+            "Knowledge base updated at {}: {} added, {} refreshed.",
+            out.knowledge_dir.display(),
+            out.added,
+            out.updated
         );
-        Ok(Self::finish_reply(project, text, outcome))
-    }
-
-    fn enrich(
-        project: &ResolvedProject,
-        router: &RoleRouter,
-        role: RoleName,
-        analysis: &ProjectAnalysis,
-        subsystems: &mut [SubsystemInfo],
-        model_override: Option<&str>,
-    ) -> EnrichOutcome {
-        let prompts = PromptTemplateRegistry::new(project.config.language.clone());
-        enrich_subsystems(router, &prompts, role, analysis, subsystems, model_override)
+        Ok(Self::finish_reply(project, text, out.enrich))
     }
 
     /// Appends the enrichment result (and an agent work package, if any) and paginates.

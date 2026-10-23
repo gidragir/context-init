@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use crate::storage::SubsystemInfo;
+use anyhow::{bail, Result};
+
+use crate::storage::{L0Index, SubsystemInfo};
 
 /// Output format of a context pack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -21,6 +23,97 @@ impl PackStyle {
             Self::Xml
         }
     }
+}
+
+/// A packed subsystem selection.
+#[derive(Debug, Clone)]
+pub struct PackedSubsystems {
+    /// Packed context text.
+    pub content: String,
+    /// Relative paths of the packed files.
+    pub files: Vec<String>,
+    /// Subsystems that matched the requested id.
+    pub subsystems: Vec<SubsystemInfo>,
+}
+
+/// Selects subsystems by id or name (`all` = every subsystem) and packs their files that
+/// exist on disk. A subsystem without file lists (legacy indexes) contributes its L1 card
+/// from `knowledge_dir`. Shared by CLI `pack` and MCP `context_pack`.
+pub fn pack_subsystem(
+    root: &Path,
+    knowledge_dir: &Path,
+    index: &L0Index,
+    subsystem_id: &str,
+    compress: bool,
+    style: PackStyle,
+) -> Result<PackedSubsystems> {
+    let wanted = subsystem_id.trim();
+    let clean = wanted
+        .trim_start_matches("subsystems/")
+        .trim_end_matches(".md");
+    let matched: Vec<&SubsystemInfo> = if wanted.eq_ignore_ascii_case("all") {
+        index.subsystems.iter().collect()
+    } else {
+        index
+            .subsystems
+            .iter()
+            .filter(|s| {
+                [wanted, clean]
+                    .iter()
+                    .any(|w| s.id.eq_ignore_ascii_case(w) || s.name.eq_ignore_ascii_case(w))
+            })
+            .collect()
+    };
+    if matched.is_empty() {
+        let available: Vec<&str> = index.subsystems.iter().map(|s| s.id.as_str()).collect();
+        bail!(
+            "Subsystem '{}' not found in L0 index. Available subsystems: {}",
+            subsystem_id,
+            available.join(", ")
+        );
+    }
+
+    let mut files: Vec<String> = Vec::new();
+    for sub in &matched {
+        if sub.files.is_empty() && sub.key_files.is_empty() {
+            let card = knowledge_dir.join(&sub.l1_path);
+            if card.is_file() {
+                // Relative when the card lives in the repo, absolute for central storage.
+                let path = card
+                    .strip_prefix(root)
+                    .unwrap_or(&card)
+                    .to_string_lossy()
+                    .into_owned();
+                if !files.contains(&path) {
+                    files.push(path);
+                }
+            }
+            continue;
+        }
+        let candidates = sub
+            .files
+            .iter()
+            .map(|f| &f.path)
+            .chain(sub.key_files.iter());
+        for path in candidates {
+            if root.join(path).exists() && !files.contains(path) {
+                files.push(path.clone());
+            }
+        }
+    }
+    if files.is_empty() {
+        bail!(
+            "No existing source files found on disk for subsystem '{}'",
+            subsystem_id
+        );
+    }
+
+    let content = pack_files(root, &matched, &files, compress, style);
+    Ok(PackedSubsystems {
+        content,
+        files,
+        subsystems: matched.into_iter().cloned().collect(),
+    })
 }
 
 /// Packs `files` (relative to `root`) of `subs` into one AI-ready context string,
@@ -360,4 +453,264 @@ pub fn compress_code(content: &str) -> String {
     }
 
     result.join("\n")
+}
+
+#[cfg(test)]
+mod packer_tests {
+    use super::*;
+
+    #[test]
+    fn test_compress_code() {
+        let raw = "fn hello() {\n\n\n    println!(\"hi\");   \n\n\n}\n";
+        let compressed = compress_code(raw);
+        assert_eq!(compressed, "fn hello() {\n\n    println!(\"hi\");\n\n}");
+    }
+
+    #[test]
+    fn test_compress_rust_ast() {
+        let code = r#"
+use std::collections::HashMap;
+
+pub struct Service {
+    pub name: String,
+}
+
+impl Service {
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+}
+
+pub fn run() {
+    println!("running");
+}
+"#;
+        let compressed = compress_source(code, "rs");
+        assert!(compressed.contains("pub fn run() {\n    ⋮----\n}"));
+        assert!(compressed.contains("pub fn new(name: String) -> Self {\n        ⋮----\n    }"));
+        assert!(compressed.contains("pub struct Service { pub name: String, }"));
+    }
+
+    #[test]
+    fn test_compress_rust_ast_with_attributes_and_references() {
+        let code = r#"
+#![allow(unused)]
+
+#[inline]
+pub fn process(text: &str) -> &str {
+    text
+}
+
+impl Service {
+    #[inline]
+    pub fn handle(&self, query: &str) -> bool {
+        query.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    pub fn internal() {
+        println!("test");
+    }
+}
+"#;
+        let compressed = compress_source(code, "rs");
+        assert!(compressed.contains("#![allow(unused)]"));
+        assert!(
+            compressed.contains("#[inline]\npub fn process(text: &str) -> &str {\n    ⋮----\n}")
+        );
+        assert!(compressed.contains(
+            "#[inline]\n    pub fn handle(&self, query: &str) -> bool {\n        ⋮----\n    }"
+        ));
+        assert!(compressed.contains(
+            "#[cfg(test)]\nmod tests {\n    pub fn internal() {\n        ⋮----\n    }\n}"
+        ));
+    }
+
+    #[test]
+    fn test_pack_fallback_xml_and_md() {
+        let temp_dir = std::env::temp_dir().join(format!("test_pack_sub_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let test_file = temp_dir.join("lib.rs");
+        std::fs::write(&test_file, "pub fn add(a: i32, b: i32) -> i32 { a + b }").unwrap();
+
+        let sub = SubsystemInfo {
+            id: "core".to_string(),
+            name: "Core".to_string(),
+            summary: "Core logic".to_string(),
+            l1_path: "subsystems/core.md".to_string(),
+            tags: vec!["core".to_string()],
+            entrypoints: vec!["lib.rs".to_string()],
+            key_files: vec!["lib.rs".to_string()],
+            files: vec![],
+            key_symbols: vec![],
+            test_command: None,
+            tokens: 10,
+        };
+
+        let files = vec!["lib.rs".to_string()];
+        let out_xml = temp_dir.join("pack.xml");
+        let out_md = temp_dir.join("pack.md");
+
+        let xml_str = pack_files(&temp_dir, &[&sub], &files, true, PackStyle::parse("xml"));
+        std::fs::write(&out_xml, &xml_str).unwrap();
+        assert!(out_xml.exists());
+        let xml_content = std::fs::read_to_string(&out_xml).unwrap();
+        assert!(xml_content.contains("<context_pack"));
+        assert!(xml_content.contains("lib.rs"));
+        assert!(xml_content.contains("⋮----"));
+
+        let md_str = pack_files(
+            &temp_dir,
+            &[&sub],
+            &files,
+            true,
+            PackStyle::parse("markdown"),
+        );
+        std::fs::write(&out_md, &md_str).unwrap();
+        assert!(out_md.exists());
+        let md_content = std::fs::read_to_string(&out_md).unwrap();
+        assert!(md_content.contains("# 📦 AI Context Pack:"));
+        assert!(md_content.contains("## File: `lib.rs`"));
+        assert!(md_content.contains("⋮----"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_pack_builtin_no_compress() {
+        let temp_dir = std::env::temp_dir().join(format!("test_pack_nc_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let test_file = temp_dir.join("lib.rs");
+        std::fs::write(&test_file, "pub fn add(a: i32, b: i32) -> i32 { a + b }").unwrap();
+
+        let sub = SubsystemInfo {
+            id: "core".to_string(),
+            name: "Core".to_string(),
+            summary: "Core logic".to_string(),
+            l1_path: "subsystems/core.md".to_string(),
+            tags: vec!["core".to_string()],
+            entrypoints: vec!["lib.rs".to_string()],
+            key_files: vec!["lib.rs".to_string()],
+            files: vec![],
+            key_symbols: vec![],
+            test_command: None,
+            tokens: 10,
+        };
+
+        let files = vec!["lib.rs".to_string()];
+        let out_xml = temp_dir.join("pack_nc.xml");
+        let out_md = temp_dir.join("pack_nc.md");
+
+        let xml_str = pack_files(&temp_dir, &[&sub], &files, false, PackStyle::parse("xml"));
+        std::fs::write(&out_xml, &xml_str).unwrap();
+        let xml_content = std::fs::read_to_string(&out_xml).unwrap();
+        assert!(xml_content.contains("pub fn add(a: i32, b: i32) -> i32 { a + b }"));
+        assert!(!xml_content.contains("⋮----"));
+
+        let md_str = pack_files(
+            &temp_dir,
+            &[&sub],
+            &files,
+            false,
+            PackStyle::parse("markdown"),
+        );
+        std::fs::write(&out_md, &md_str).unwrap();
+        let md_content = std::fs::read_to_string(&out_md).unwrap();
+        assert!(md_content.contains("pub fn add(a: i32, b: i32) -> i32 { a + b }"));
+        assert!(!md_content.contains("⋮----"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_pack_builtin_non_rust_files() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_pack_poly_{}_{}", std::process::id(), nanos));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let py_code = "def calculate(a, b):\n    # Indented block\n    result = a + b    \n\n\n    return result\n";
+        let py_file = temp_dir.join("main.py");
+        std::fs::write(&py_file, py_code).unwrap();
+
+        let sub = SubsystemInfo {
+            id: "scripts".to_string(),
+            name: "Scripts".to_string(),
+            summary: "Python script module".to_string(),
+            l1_path: "subsystems/scripts.md".to_string(),
+            tags: vec!["scripts".to_string()],
+            entrypoints: vec!["main.py".to_string()],
+            key_files: vec!["main.py".to_string()],
+            files: vec![],
+            key_symbols: vec![],
+            test_command: None,
+            tokens: 15,
+        };
+
+        let files = vec!["main.py".to_string()];
+        let out_nc = temp_dir.join("pack_nc.xml");
+        let out_comp = temp_dir.join("pack_comp.xml");
+
+        // With no-compress: content is 100% identical including extra blank lines and trailing whitespace
+        let nc_str = pack_files(&temp_dir, &[&sub], &files, false, PackStyle::parse("xml"));
+        std::fs::write(&out_nc, &nc_str).unwrap();
+        assert!(nc_str.contains("    result = a + b    \n\n\n    return result"));
+
+        // With compress: trailing whitespace and excessive empty lines collapsed, but python indentation strictly kept
+        let comp_str = pack_files(&temp_dir, &[&sub], &files, true, PackStyle::parse("xml"));
+        std::fs::write(&out_comp, &comp_str).unwrap();
+        assert!(comp_str.contains("    result = a + b\n\n    return result"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}
+
+#[cfg(test)]
+mod pack_subsystem_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn pack_subsystem_falls_back_to_l1_card_without_files() {
+        let root = std::env::temp_dir().join(format!(
+            "ci_pack_card_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let kd = root.join("kb");
+        fs::create_dir_all(kd.join("subsystems")).unwrap();
+        fs::write(kd.join("subsystems/wm.md"), "# Window manager card\n").unwrap();
+        let index = L0Index {
+            subsystems: vec![SubsystemInfo {
+                id: "wm".to_string(),
+                name: "WM".to_string(),
+                summary: "s".to_string(),
+                l1_path: "subsystems/wm.md".to_string(),
+                tags: vec![],
+                entrypoints: vec![],
+                key_files: vec![],
+                files: vec![],
+                key_symbols: vec![],
+                test_command: None,
+                tokens: 0,
+            }],
+            ..L0Index::default()
+        };
+        let packed = pack_subsystem(&root, &kd, &index, "wm", true, PackStyle::Xml).unwrap();
+        assert!(
+            packed.content.contains("Window manager card"),
+            "{}",
+            packed.content
+        );
+        assert_eq!(packed.files, vec!["kb/subsystems/wm.md".to_string()]);
+        let _ = fs::remove_dir_all(&root);
+    }
 }

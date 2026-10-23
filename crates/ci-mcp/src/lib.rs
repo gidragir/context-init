@@ -2,6 +2,7 @@
 
 pub mod handlers;
 pub mod pagination;
+pub mod pipeline;
 pub mod server;
 pub mod tools;
 

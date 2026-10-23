@@ -31,12 +31,12 @@ context-init init [OPTIONS] [PATH]
 - `--compact` — Однострочный машиночитаемый вывод `OK: initialized N subsystems...` без ASCII-баннеров (для агентов и скриптов).
 - `-f, --force` — Принудительная перезапись существующей базы знаний с нуля.
 - `--dry-run` — Предварительный просмотр структуры без внесения изменений на диск.
-- `-a, --ai` — Использование локальной LLM через Ollama для интеллектуального описания назначения подсистем.
-- `-m, --model <MODEL>` — Модель Ollama (по умолчанию: `qwen2.5:14b-ctx64k`).
-- `--ollama-url <URL>` — URL сервера Ollama (по умолчанию: `http://127.0.0.1:11434`).
+- `--model <ALIAS>` — Алиас модели из `[models]` конфига для всех ролей (Ollama, command, agent, ...).
+- `--role <ROLE>=<ALIAS[,ALIAS]>` — Цепочка моделей для роли `init|update|task|search` (повторяемый).
+- `--config <FILE>` — Дополнительный конфиг поверх проектного и глобального.
 - `--with-rtk` — Принудительно оборачивать команды в префикс `rtk` (по умолчанию: автодетекция в `$PATH`).
 - `--no-rtk` — Отключить оборачивание команд в `rtk`.
-- `--with-agents-md` — Создавать или дополнять корневой навигационный файл `AGENTS.md` (включено по умолчанию).
+- `--no-agents-md` — Не создавать и не обновлять навигационный раздел в корневом `AGENTS.md` (по умолчанию обновляется).
 
 ---
 
@@ -67,8 +67,7 @@ context-init update [OPTIONS] [PATH]
 #### Ключевые флаги:
 - `--compact` — Однострочный машиночитаемый вывод: `OK: updated N subsystems...`.
 - `--deep` — Повторное AST-сканирование контрактов для вновь обнаруженных модулей.
-- `-a, --ai` — Генерация описаний новых подсистем через Ollama.
-- `-m, --model <MODEL>` — Модель Ollama для описаний.
+- `--model <ALIAS>` / `--role update=<ALIAS>` — Модель из конфига для описаний новых подсистем.
 - `--with-rtk` / `--no-rtk` — Управление префиксом команд `rtk`.
 
 ---
@@ -101,8 +100,8 @@ context-init pack [OPTIONS] <SUBSYSTEM_ID> [PATH]
 # Рекомендуемый базовый запуск с точным AST-парсингом:
 context-init init . --deep
 
-# Запуск с обогащением описаний модулей локальной нейросетью:
-context-init init . --deep --ai --model qwen2.5:14b-ctx64k
+# Запуск с обогащением описаний модулей моделью из конфига ([models.local]):
+context-init init . --deep --model local
 
 # Безопасная проверка структуры перед записью:
 context-init init . --deep --dry-run
@@ -210,7 +209,7 @@ context-init pack all --repomix -o /tmp/project_repomix.xml
 Утилита полностью автономна и не требует Node.js, Python или доступа в интернет:
 
 ```bash
-# Инициализация без обращения к Ollama:
+# Инициализация без обращения к LLM (детерминированный режим по умолчанию):
 context-init init . --deep
 
 # Сжатие и упаковка через встроенный Rust-пакер без Repomix:
@@ -224,7 +223,7 @@ context-init pack all -o /tmp/context.xml
 | Задача | Рекомендуемая команда |
 | :--- | :--- |
 | Создать базу знаний впервые | `context-init init . --deep` |
-| Создать базу знаний с нейросетью | `context-init init . --deep --ai` |
+| Создать базу знаний с нейросетью | `context-init init . --deep --model local` |
 | Проверить актуальность перед коммитом | `context-init check --compact --exit-code .` |
 | Синхронизировать новые модули | `context-init update . --deep` |
 | Полностью пересоздать документацию | `context-init init . --force --deep` |

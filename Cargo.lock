@@ -193,10 +193,13 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "dirs-next",
+ "quote",
  "schemars",
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
+ "tiktoken-rs",
  "toml",
 ]
 
@@ -295,18 +298,11 @@ dependencies = [
  "ci-mcp",
  "clap",
  "colored",
- "dirs-next",
- "quote",
  "rmcp",
- "schemars",
  "serde",
  "serde_json",
- "sha2",
  "syn 2.0.119",
- "tiktoken-rs",
  "tokio",
- "toml",
- "ureq",
 ]
 
 [[package]]
