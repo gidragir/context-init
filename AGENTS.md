@@ -4,45 +4,22 @@
 
 ## 🗺 Архитектурная карта и навигация (OpenViking L0-L2)
 
-Проект `context-init` управляется трехуровневой базой знаний OpenViking (L0-L2).
-Категорически запрещено читать файлы `.agents/knowledge/**` напрямую через инструменты чтения файлов (`view_file`, `cat` и др.). Вся навигация и исследование архитектуры выполняются исключительно через MCP-сервер `context-init` (MCP-First Protocol).
+Проект `context-init` описан трехуровневой базой знаний context-init (L0-L2), которая хранится вне репозитория. Для навигации используйте её вместо чтения исходников целиком.
 
 ### ⚡ MCP-First Protocol (context-init)
 
-1. **Обзор всех подсистем и структуры проекта (L0):**
-   Вызовите `context_get_subsystems`:
-   ```json
-   {"ServerName": "context-init", "ToolName": "context_get_subsystems", "Arguments": {}}
-   ```
-2. **Получение компактной L1-карточки конкретной подсистемы:**
-   Вызовите `context_get_subsystem` (передайте `subsystem_id`):
-   ```json
-   {"ServerName": "context-init", "ToolName": "context_get_subsystem", "Arguments": {"subsystem_id": "<subsystem_id>"}}
-   ```
-3. **AST-сжатый контекст кода подсистемы (без раздувания контекста):**
-   Вызовите `context_pack`:
-   ```json
-   {"ServerName": "context-init", "ToolName": "context_pack", "Arguments": {"subsystem_id": "<subsystem_id>", "compress": true}}
-   ```
-4. **Проверка архитектурного дрейфа перед сдачей задачи:**
-   Вызовите `context_check`:
-   ```json
-   {"ServerName": "context-init", "ToolName": "context_check", "Arguments": {}}
-   ```
+1. `context_get_subsystems` — карта подсистем проекта (L0).
+2. `context_get_subsystem(subsystem_id)` — компактная L1-карточка подсистемы.
+3. `context_pack(subsystem_id, compress=true)` — AST-сжатый код подсистемы.
+4. `context_check` — проверка архитектурного дрейфа перед сдачей задачи.
 
-### 🖥 CLI-First Protocol (для субагентов и окружений без MCP)
-
-Автономные субагенты-воркеры (`DeepCoderWorker`, `research`), не имеющие доступа к `call_mcp_tool`, обязаны использовать CLI вместо чтения файлов целиком через `view_file`:
-1. **AST-сжатый контекст подсистемы:** `rtk context-init pack <subsystem_id> --compress` (или `rtk cargo run -- pack <subsystem_id> --compress`).
-2. **Проверка дрейфа и валидация:** `rtk context-init check` (или `rtk cargo run -- check`).
+Без доступа к MCP (субагенты, скрипты): `context-init pack <subsystem_id> --compress` и `context-init check --compact`.
 
 ### 📦 Доступные подсистемы:
-- `src_core` (Main) — Подсистема `src/core` с ключевыми точками входа: src/main.rs
-- `src_detector` (Detector) — Модуль и компоненты директории `src/detector` (1 файлов)
-- `src_generator` (Generator) — Модуль и компоненты директории `src/generator` (1 файлов)
-- `src_ollama` (Ollama) — Модуль и компоненты директории `src/ollama` (1 файлов)
-- `src_types` (Types) — Модуль и компоненты директории `src/types` (1 файлов)
-- `src_mcp` (Mcp) — Модуль и компоненты директории `src/mcp` (1 файлов)
-- `src_service` (Service) — Модуль и компоненты директории `src/service` (1 файлов)
-- `reports` (Reports) — Модуль и компоненты директории `reports` (2 файлов)
-- `tests` (Tests) — Модуль и компоненты директории `tests` (1 файлов)
+- `crates_ci-core` (Ci Core) — Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/src/lib.rs, crates/ci-core/src/analysis/mod.rs, crates/ci-core/Cargo.toml
+- `crates_ci-llm` (Ci Llm) — Подсистема `crates/ci-llm` с ключевыми точками входа: crates/ci-llm/src/lib.rs, crates/ci-llm/Cargo.toml
+- `crates_ci-mcp` (Ci Mcp) — Подсистема `crates/ci-mcp` с ключевыми точками входа: crates/ci-mcp/src/lib.rs, crates/ci-mcp/Cargo.toml
+- `references` (References) — Модуль и компоненты директории `references` (1 файлов)
+- `reports` (Reports) — Модуль и компоненты директории `reports` (11 файлов)
+- `src_cli` (Cli) — Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs, src/cli/setup/mod.rs
+- `tests` (Tests) — Модуль и компоненты директории `tests` (2 файлов)
