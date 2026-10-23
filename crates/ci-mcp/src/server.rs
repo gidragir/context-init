@@ -14,9 +14,9 @@ use tokio::sync::RwLock;
 
 use ci_core::config::{Config, StoragePaths};
 use ci_core::telemetry::TelemetrySink;
-use ci_llm::AgentWorkPackage;
+use ci_llm::{AgentWorkPackage, RoleRouter};
 
-use crate::handlers::{ContextHandler, ResolvedProject};
+use crate::handlers::{ContextHandler, HandlerReply, ResolvedProject};
 use crate::tools::*;
 
 /// Single global MCP server serving multiple projects with dynamic root resolution (D21).
@@ -130,6 +130,21 @@ impl ContextInitServer {
             return root;
         }
         normalize_existing_path(&cwd)
+    }
+
+    /// Builds the model router for a project's configuration (D16).
+    fn router_for(&self, project: &ResolvedProject) -> Result<RoleRouter, rmcp::ErrorData> {
+        RoleRouter::new(project.config.clone(), self.telemetry_sink.clone())
+            .map(|r| r.with_project_id(project.project_id.clone()))
+            .map_err(|e| rmcp::ErrorData::invalid_params(format!("{e:#}"), None))
+    }
+
+    /// Registers a pending agent work package (if any) and returns the reply text.
+    async fn accept_reply(&self, reply: HandlerReply) -> String {
+        if let Some(pkg) = reply.pending_package {
+            self.register_work_package(pkg).await;
+        }
+        reply.text
     }
 
     /// Resolves the full `ResolvedProject` context for the requested arguments.
@@ -333,14 +348,10 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::init(
-            &resolved,
-            p.deep.unwrap_or(false),
-            p.ai.unwrap_or(false),
-            p.force.unwrap_or(false),
-            p.with_agents_md.unwrap_or(true),
-        )
-        .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let router = self.router_for(&resolved)?;
+        let reply = ContextHandler::init(&resolved, &p, &router)
+            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))?;
+        Ok(self.accept_reply(reply).await)
     }
 
     /// Incrementally update knowledge base when architectural drift is detected.
@@ -356,13 +367,10 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::update(
-            &resolved,
-            p.deep.unwrap_or(false),
-            p.ai.unwrap_or(false),
-            p.model.as_deref(),
-        )
-        .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let router = self.router_for(&resolved)?;
+        let reply = ContextHandler::update(&resolved, &p, &router)
+            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))?;
+        Ok(self.accept_reply(reply).await)
     }
 
     /// Scan project topology, directories, and file extensions without LLM.

@@ -3,20 +3,24 @@
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use ci_core::analysis::generator::{self, GenerateOptions};
+use ci_core::analysis::pack::{pack_files, PackStyle};
+use ci_core::analysis::subsystems::build_deterministic;
+use ci_core::analysis::{detector, resolve_knowledge_dir, KnowledgeLocation, ProjectAnalysis};
 use ci_core::config::{CliOverrides, Config, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
 use ci_core::storage::{
-    compute_project_id, normalize_line_endings, normalize_path, now_rfc3339, subsystem_card_path,
-    L0Index, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
+    compute_project_id, now_rfc3339, subsystem_card_path, L0Index, SubsystemInfo,
 };
 use ci_core::telemetry::{
     FeedbackSignal, JsonlTelemetrySink, TelemetryEvent, TelemetrySignal, TelemetrySink,
 };
+use ci_llm::enrich::{cli_outcome_message, enrich_subsystems, EnrichOutcome};
 use ci_llm::providers::validate_agent_submission;
-use ci_llm::AgentWorkPackage;
+use ci_llm::{AgentWorkPackage, PromptTemplateRegistry, RoleName, RoleRouter};
 
 use crate::pagination::{count_tokens, paginate_content};
 use crate::tools::*;
@@ -55,19 +59,8 @@ impl ResolvedProject {
         let storage_paths = StoragePaths::resolve(Some(&canonical_root));
         let central_kb = storage_paths.project_knowledge_dir(&project_id);
 
-        let direct_knowledge = canonical_root.join(".agents").join("knowledge");
-        let (knowledge_dir, is_central) = if central_kb.join("L0_index.json").is_file() {
-            (central_kb, true)
-        } else if direct_knowledge.join("L0_index.json").is_file() {
-            (direct_knowledge, false)
-        } else if let Some(nested) = find_nested_knowledge_dir(&direct_knowledge) {
-            (nested, false)
-        } else if canonical_root.join("L0_index.json").is_file() {
-            (canonical_root.clone(), false)
-        } else {
-            // Default to central storage for new projects
-            (central_kb, true)
-        };
+        let (knowledge_dir, location) = resolve_knowledge_dir(&canonical_root, &central_kb);
+        let is_central = location == KnowledgeLocation::Central;
 
         Ok(Self {
             root: canonical_root,
@@ -129,18 +122,13 @@ impl ResolvedProject {
     }
 }
 
-fn find_nested_knowledge_dir(direct: &Path) -> Option<PathBuf> {
-    if direct.is_dir() {
-        if let Ok(entries) = fs::read_dir(direct) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() && p.join("L0_index.json").is_file() {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    None
+/// Reply of a handler that may hand an agent work package to the server.
+#[derive(Debug, Clone)]
+pub struct HandlerReply {
+    /// Paginated text returned to the MCP client.
+    pub text: String,
+    /// Work package the server must register for a later `context_submit`.
+    pub pending_package: Option<AgentWorkPackage>,
 }
 
 /// Core handler implementations for MCP tools.
@@ -149,66 +137,30 @@ pub struct ContextHandler;
 impl ContextHandler {
     /// Handler for `context_check`.
     pub fn check_drift(project: &ResolvedProject, cursor: Option<&str>) -> Result<String> {
-        let index_res = project.load_l0_index();
-        let (has_drift, missing_in_fs, untracked_in_knowledge, up_to_date_count, git_stale) =
-            match index_res {
-                Ok(index) => {
-                    let mut missing = Vec::new();
-                    let mut up_to_date = 0;
-                    let mut any_git_stale = false;
-
-                    for sub in &index.subsystems {
-                        let (stale, _) = project.check_subsystem_staleness(sub);
-                        if stale {
-                            any_git_stale = true;
-                        }
-
-                        let mut sub_has_missing = false;
-                        for file in &sub.files {
-                            let p = project.root.join(&file.path);
-                            if !p.exists() {
-                                missing.push(file.path.clone());
-                                sub_has_missing = true;
-                            }
-                        }
-                        if !sub_has_missing && !stale {
-                            up_to_date += 1;
-                        }
-                    }
-
-                    // Check top-level source directories for untracked modules
-                    let mut untracked = Vec::new();
-                    if let Ok(entries) = fs::read_dir(&project.root) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_dir() {
-                                let name = entry.file_name().to_string_lossy().to_string();
-                                if !name.starts_with('.')
-                                    && name != "target"
-                                    && name != "node_modules"
-                                {
-                                    let tracked = index.subsystems.iter().any(|s| {
-                                        s.id.contains(&name)
-                                            || s.name.to_ascii_lowercase().contains(&name)
-                                            || s.files.iter().any(|f| f.path.starts_with(&name))
-                                    });
-                                    if !tracked
-                                        && (path.join("Cargo.toml").exists()
-                                            || path.join("mod.rs").exists()
-                                            || path.join("lib.rs").exists())
-                                    {
-                                        untracked.push(name);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    let drift = !missing.is_empty() || !untracked.is_empty() || any_git_stale;
-                    (drift, missing, untracked, up_to_date, any_git_stale)
-                }
-                Err(_) => (true, Vec::new(), Vec::new(), 0, false),
-            };
+        let (has_drift, missing_in_fs, untracked_in_knowledge, up_to_date_count, git_stale) = match (
+            project.load_l0_index(),
+            detector::analyze_project(&project.root, false, false),
+        ) {
+            (Ok(index), Ok(analysis)) => {
+                let report = generator::audit(&analysis, &project.knowledge_dir)?;
+                let stale_count = index
+                    .subsystems
+                    .iter()
+                    .filter(|s| project.check_subsystem_staleness(s).0)
+                    .count();
+                let drift = !report.missing_in_fs.is_empty()
+                    || !report.untracked_in_knowledge.is_empty()
+                    || stale_count > 0;
+                (
+                    drift,
+                    report.missing_in_fs,
+                    report.untracked_in_knowledge,
+                    report.up_to_date_count.saturating_sub(stale_count),
+                    stale_count > 0,
+                )
+            }
+            _ => (true, Vec::new(), Vec::new(), 0, false),
+        };
 
         let message = if !has_drift {
             format!("OK: {} subsystems verified up-to-date", up_to_date_count)
@@ -413,12 +365,12 @@ impl ContextHandler {
             );
         }
 
-        let packed_content = pack_files_to_string(
+        let packed_content = pack_files(
             &project.root,
             &matched_subs,
             &files_to_pack,
             compress,
-            style,
+            PackStyle::parse(style),
         );
 
         let budget = project.config.max_response_tokens;
@@ -715,83 +667,124 @@ impl ContextHandler {
         Ok(paginated.rendered)
     }
 
-    /// Handler for `context_init`.
+    /// Handler for `context_init`: detect → optional LLM enrichment → generate into
+    /// central storage (D1, D16, D23).
     pub fn init(
         project: &ResolvedProject,
-        _deep: bool,
-        _ai: bool,
-        _force: bool,
-        _with_agents_md: bool,
-    ) -> Result<String> {
-        let index_path = project.knowledge_dir.join("L0_index.json");
-        if !project.knowledge_dir.exists() {
-            fs::create_dir_all(&project.knowledge_dir)?;
-        }
+        params: &McpInitParams,
+        router: &RoleRouter,
+    ) -> Result<HandlerReply> {
+        let analysis = detector::analyze_project(
+            &project.root,
+            params.deep.unwrap_or(false),
+            project.config.integrations.resolve_rtk_active(),
+        )?;
+        let mut subsystems = build_deterministic(&analysis);
+        let outcome = Self::enrich(
+            project,
+            router,
+            RoleName::Init,
+            &analysis,
+            &mut subsystems,
+            params.model.as_deref(),
+        );
 
-        let mut index = if index_path.is_file() {
-            L0Index::load_from_file(&index_path)?
-        } else {
-            L0Index {
-                schema_version: CURRENT_L0_SCHEMA_VERSION,
-                project: project.project_id.clone(),
-                root_path: normalize_path(&project.root),
-                updated_at: "2026-10-19".to_string(),
-                ..L0Index::default()
-            }
+        let target = project
+            .storage_paths
+            .project_knowledge_dir(&project.project_id);
+        let opts = GenerateOptions {
+            force: params.force.unwrap_or(false),
+            dry_run: false,
+            with_agents_md: params.with_agents_md.unwrap_or(true),
         };
+        generator::generate(&analysis, &subsystems, &target, &opts)?;
 
-        if index.subsystems.is_empty() {
-            index.subsystems.push(SubsystemInfo {
-                id: "core".to_string(),
-                name: "Core Logic".to_string(),
-                summary: format!("Core logic subsystem for project {}", project.project_id),
-                l1_path: "subsystems/core.md".to_string(),
-                tags: vec!["core".to_string()],
-                entrypoints: Vec::new(),
-                key_files: Vec::new(),
-                files: Vec::new(),
-                key_symbols: Vec::new(),
-                test_command: None,
-                tokens: 0,
-            });
+        let mut text = format!(
+            "Knowledge base initialized at {} ({} subsystems).",
+            target.display(),
+            subsystems.len()
+        );
+        if !project.is_central {
+            text.push_str(&format!(
+                "\nA legacy in-repo knowledge base exists at {}; central storage is now authoritative. \
+                 Run `context-init migrate --remove-source` to clean it up.",
+                project.knowledge_dir.display()
+            ));
         }
-
-        index.save_to_file(&index_path)?;
-
-        let subs_dir = project.knowledge_dir.join("subsystems");
-        fs::create_dir_all(&subs_dir)?;
-        let core_card = subs_dir.join("core.md");
-        if !core_card.exists() {
-            fs::write(
-                &core_card,
-                format!(
-                    "# Subsystem: Core Logic (L1)\n\nCore logic for {}\n",
-                    project.project_id
-                ),
-            )?;
-        }
-
-        Ok(format!(
-            "Knowledge base initialized at {:?} ({} subsystems).",
-            project.knowledge_dir,
-            index.subsystems.len()
-        ))
+        Ok(Self::finish_reply(project, text, outcome))
     }
 
-    /// Handler for `context_update`.
+    /// Handler for `context_update`: re-detect and merge into the active knowledge base.
     pub fn update(
         project: &ResolvedProject,
-        _deep: bool,
-        _ai: bool,
-        _model: Option<&str>,
-    ) -> Result<String> {
-        let mut index = project.load_l0_index()?;
-        index.updated_at = "2026-10-19".to_string();
-        index.save_to_file(&project.knowledge_dir.join("L0_index.json"))?;
-        Ok(format!(
-            "Knowledge base updated: {} subsystems synchronized.",
-            index.subsystems.len()
-        ))
+        params: &McpUpdateParams,
+        router: &RoleRouter,
+    ) -> Result<HandlerReply> {
+        let analysis = detector::analyze_project(
+            &project.root,
+            params.deep.unwrap_or(false),
+            project.config.integrations.resolve_rtk_active(),
+        )?;
+        let mut subsystems = build_deterministic(&analysis);
+        let outcome = Self::enrich(
+            project,
+            router,
+            RoleName::Update,
+            &analysis,
+            &mut subsystems,
+            params.model.as_deref(),
+        );
+        let (added, updated) = generator::update(
+            &analysis,
+            &subsystems,
+            &project.knowledge_dir,
+            project.config.touch_agents_md,
+        )?;
+        let text = format!(
+            "Knowledge base updated at {}: {added} added, {updated} refreshed.",
+            project.knowledge_dir.display()
+        );
+        Ok(Self::finish_reply(project, text, outcome))
+    }
+
+    fn enrich(
+        project: &ResolvedProject,
+        router: &RoleRouter,
+        role: RoleName,
+        analysis: &ProjectAnalysis,
+        subsystems: &mut [SubsystemInfo],
+        model_override: Option<&str>,
+    ) -> EnrichOutcome {
+        let prompts = PromptTemplateRegistry::new(project.config.language.clone());
+        enrich_subsystems(router, &prompts, role, analysis, subsystems, model_override)
+    }
+
+    /// Appends the enrichment result (and an agent work package, if any) and paginates.
+    fn finish_reply(
+        project: &ResolvedProject,
+        mut text: String,
+        outcome: EnrichOutcome,
+    ) -> HandlerReply {
+        let pending_package = match outcome {
+            EnrichOutcome::PendingAgent(pkg) => {
+                text.push_str(&format!(
+                    "\n\nAgent work package — improve the subsystem summaries and answer with \
+                     context_submit(package_id, submission).\npackage_id: {}\ninstruction: {}\njson_schema: {}\nfacts: {}",
+                    pkg.package_id, pkg.instruction, pkg.json_schema, pkg.facts
+                ));
+                Some(pkg)
+            }
+            other => {
+                if let Some(msg) = cli_outcome_message(&other) {
+                    text.push_str(&format!("\n{msg}"));
+                }
+                None
+            }
+        };
+        HandlerReply {
+            text: paginate_content(&text, None, project.config.max_response_tokens, false).rendered,
+            pending_package,
+        }
     }
 
     /// Handler for `context_task` (D4, D5).
@@ -921,182 +914,4 @@ impl ContextHandler {
         );
         Ok(paginated.rendered)
     }
-}
-
-/// Packs files into AST-compressed XML or Markdown format.
-pub fn pack_files_to_string(
-    root: &Path,
-    subs: &[&SubsystemInfo],
-    files: &[String],
-    compress: bool,
-    style: &str,
-) -> String {
-    let mut buffer = String::new();
-
-    if style.eq_ignore_ascii_case("markdown") {
-        buffer.push_str("# 📦 AI Context Pack: ");
-        let names: Vec<&str> = subs.iter().map(|s| s.name.as_str()).collect();
-        buffer.push_str(&names.join(", "));
-        buffer.push_str("\n\n");
-
-        for file_rel in files {
-            let full_p = root.join(file_rel);
-            if let Ok(content) = fs::read_to_string(&full_p) {
-                let ext = full_p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                let processed = if compress {
-                    compress_source_code(&content, ext)
-                } else {
-                    content
-                };
-                buffer.push_str(&format!(
-                    "## File: `{}`\n```{}\n{}\n```\n\n",
-                    file_rel, ext, processed
-                ));
-            }
-        }
-    } else {
-        buffer.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        buffer.push_str("<context_pack generated_by=\"context-init\">\n");
-        for sub in subs {
-            buffer.push_str(&format!(
-                "  <subsystem id=\"{}\" name=\"{}\">\n    <summary>{}</summary>\n  </subsystem>\n",
-                sub.id, sub.name, sub.summary
-            ));
-        }
-        buffer.push_str("  <files>\n");
-
-        for file_rel in files {
-            let full_p = root.join(file_rel);
-            if let Ok(content) = fs::read_to_string(&full_p) {
-                let ext = full_p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                let processed = if compress {
-                    compress_source_code(&content, ext)
-                } else {
-                    content
-                };
-                buffer.push_str(&format!(
-                    "    <file path=\"{}\">\n<![CDATA[\n{}\n]]>\n    </file>\n",
-                    file_rel, processed
-                ));
-            }
-        }
-        buffer.push_str("  </files>\n</context_pack>\n");
-    }
-
-    buffer
-}
-
-/// Compresses source code (AST stripping function bodies in Rust, normalizing blanks otherwise).
-pub fn compress_source_code(content: &str, ext: &str) -> String {
-    if ext.eq_ignore_ascii_case("rs") {
-        if let Some(compressed) = compress_rust_syntax(content) {
-            return compressed;
-        }
-    }
-    // Generic compression: collapse consecutive blank lines and trim trailing whitespace
-    normalize_blank_lines(content)
-}
-
-fn compress_rust_syntax(content: &str) -> Option<String> {
-    let parsed = syn::parse_file(content).ok()?;
-    let mut items = Vec::new();
-
-    for item in &parsed.items {
-        match item {
-            syn::Item::Fn(f) => {
-                let vis = &f.vis;
-                let sig = &f.sig;
-                let sig_str = quote::quote!(#vis #sig).to_string();
-                items.push(format!("{} {{\n    ⋮----\n}}", normalize_tokens(&sig_str)));
-            }
-            syn::Item::Impl(imp) => {
-                let defaultness = &imp.defaultness;
-                let unsafety = &imp.unsafety;
-                let generics = &imp.generics;
-                let (impl_generics, _, where_clause) = generics.split_for_impl();
-                let self_ty = &imp.self_ty;
-                let header = if let Some((bang, path, for_tok)) = &imp.trait_ {
-                    quote::quote!(#defaultness #unsafety impl #impl_generics #bang #path #for_tok #self_ty #where_clause)
-                } else {
-                    quote::quote!(#defaultness #unsafety impl #impl_generics #self_ty #where_clause)
-                };
-
-                let mut impl_items = Vec::new();
-                for it in &imp.items {
-                    if let syn::ImplItem::Fn(m) = it {
-                        let vis = &m.vis;
-                        let defaultness = &m.defaultness;
-                        let sig = &m.sig;
-                        let m_sig = quote::quote!(#vis #defaultness #sig).to_string();
-                        impl_items.push(format!(
-                            "    {} {{\n        ⋮----\n    }}",
-                            normalize_tokens(&m_sig)
-                        ));
-                    } else {
-                        impl_items.push(format!(
-                            "    {}",
-                            normalize_tokens(&quote::quote!(#it).to_string())
-                        ));
-                    }
-                }
-
-                if impl_items.is_empty() {
-                    items.push(format!("{} {{}}", normalize_tokens(&header.to_string())));
-                } else {
-                    items.push(format!(
-                        "{} {{\n{}\n}}",
-                        normalize_tokens(&header.to_string()),
-                        impl_items.join("\n\n")
-                    ));
-                }
-            }
-            syn::Item::Trait(t) => {
-                items.push(normalize_tokens(&quote::quote!(#t).to_string()));
-            }
-            syn::Item::Struct(s) => {
-                items.push(normalize_tokens(&quote::quote!(#s).to_string()));
-            }
-            syn::Item::Enum(e) => {
-                items.push(normalize_tokens(&quote::quote!(#e).to_string()));
-            }
-            _ => {
-                items.push(normalize_tokens(&quote::quote!(#item).to_string()));
-            }
-        }
-    }
-
-    Some(items.join("\n\n"))
-}
-
-fn normalize_tokens(s: &str) -> String {
-    let mut res = s
-        .replace(" (", "(")
-        .replace(" ;", ";")
-        .replace(" :", ":")
-        .replace(" ,", ",");
-    while res.contains("  ") {
-        res = res.replace("  ", " ");
-    }
-    res
-}
-
-fn normalize_blank_lines(text: &str) -> String {
-    let normalized = normalize_line_endings(text);
-    let mut out = Vec::new();
-    let mut last_was_blank = false;
-
-    for line in normalized.lines() {
-        let trimmed = line.trim_end();
-        if trimmed.is_empty() {
-            if !last_was_blank {
-                out.push("");
-                last_was_blank = true;
-            }
-        } else {
-            out.push(trimmed);
-            last_was_blank = false;
-        }
-    }
-
-    out.join("\n")
 }

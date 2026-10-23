@@ -5,7 +5,7 @@ pub mod pagination;
 pub mod server;
 pub mod tools;
 
-pub use handlers::{pack_files_to_string, ContextHandler, ResolvedProject};
+pub use handlers::{ContextHandler, HandlerReply, ResolvedProject};
 pub use pagination::{
     count_tokens, decode_cursor, encode_cursor, format_footer, paginate_content, CursorData,
     PaginatedOutput,
@@ -60,6 +60,8 @@ mod tests {
             let pid = std::process::id();
             let path = std::env::temp_dir().join(format!("ci_mcp_{prefix}_{pid}_{nanos}_{seq}"));
             fs::create_dir_all(&path).expect("create temp test dir");
+            // Keep central storage (`$XDG_DATA_HOME/context-init`) out of the real home.
+            std::env::set_var("XDG_DATA_HOME", path.join(".xdg-data"));
             Self { path }
         }
 
@@ -395,6 +397,160 @@ mod tests {
         assert_eq!(explicit, fs::canonicalize(other.path()).unwrap());
     }
 
+    /// A small Rust project with three modules.
+    fn write_fixture(root: &Path) {
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/main.rs"),
+            "mod api;\nmod engine;\nmod store;\nfn main() {}\n",
+        )
+        .unwrap();
+        for m in ["api", "engine", "store"] {
+            fs::create_dir_all(root.join("src").join(m)).unwrap();
+            fs::write(
+                root.join("src").join(m).join("mod.rs"),
+                format!("pub struct {m}Thing;\npub fn run_{m}() -> u32 {{ 1 }}\n"),
+            )
+            .unwrap();
+        }
+    }
+
+    fn init_params(root: &Path) -> McpInitParams {
+        McpInitParams {
+            path: Some(root.to_string_lossy().to_string()),
+            force: Some(true),
+            with_agents_md: Some(false),
+            ..McpInitParams::default()
+        }
+    }
+
+    const AGENT_CONFIG: &str = "[models.h]\nkind = \"agent\"\n\n[roles]\ninit = [\"h\"]\n";
+
+    #[tokio::test]
+    async fn context_init_on_fixture_produces_real_subsystems() {
+        let tmp = TempDirGuard::new("init_real");
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        assert!(resolved.is_central, "init must write central storage");
+        let index = resolved.load_l0_index().unwrap();
+        assert!(index.subsystems.len() > 1, "{:?}", index.subsystems);
+        assert!(!index
+            .subsystems
+            .iter()
+            .any(|s| s.summary.starts_with("Core logic subsystem for project")));
+        assert!(!tmp.path().join(".agents").exists());
+    }
+
+    #[tokio::test]
+    async fn context_init_with_agent_model_registers_package() {
+        let tmp = TempDirGuard::new("init_agent");
+        write_fixture(tmp.path());
+        fs::write(tmp.path().join(".context-init.toml"), AGENT_CONFIG).unwrap();
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+
+        let reply = server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        let package_id = reply
+            .lines()
+            .find_map(|l| l.strip_prefix("package_id: "))
+            .unwrap_or_else(|| panic!("no package_id line in: {reply}"))
+            .trim()
+            .to_string();
+
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let first_id = resolved.load_l0_index().unwrap().subsystems[0].id.clone();
+        let out = server
+            .submit(Parameters(McpSubmitParams {
+                package_id,
+                submission: json!({"subsystems": [{
+                    "id": first_id, "name": "Better", "summary": "Agent summary", "tags": ["x"]
+                }]}),
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                project: None,
+            }))
+            .await
+            .unwrap();
+        let out: SubmitResult = serde_json::from_str(&out).unwrap();
+        assert!(out.valid, "{:?}", out.errors);
+    }
+
+    #[tokio::test]
+    async fn check_reports_new_nested_module_as_untracked() {
+        let tmp = TempDirGuard::new("check_untracked");
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+
+        fs::create_dir_all(tmp.path().join("src/extra")).unwrap();
+        fs::write(tmp.path().join("src/extra/mod.rs"), "pub fn extra() {}\n").unwrap();
+        let out = server
+            .check_drift(Parameters(McpCheckParams {
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..McpCheckParams::default()
+            }))
+            .await
+            .expect("check");
+        let json_part = out.split("\n\n[").next().unwrap();
+        let result: serde_json::Value = serde_json::from_str(json_part).unwrap();
+        assert_eq!(result["has_drift"], true, "{out}");
+        assert!(
+            result["untracked_in_knowledge"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v.as_str().unwrap().contains("extra")),
+            "{out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn init_update_replies_have_footer_when_paged() {
+        let tmp = TempDirGuard::new("init_paged");
+        write_fixture(tmp.path());
+        fs::write(
+            tmp.path().join(".context-init.toml"),
+            format!("max_response_tokens = 64\n{AGENT_CONFIG}"),
+        )
+        .unwrap();
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let reply = server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        assert!(reply.contains("[truncated: true"), "{reply}");
+        let upd = server
+            .update(Parameters(McpUpdateParams {
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..McpUpdateParams::default()
+            }))
+            .await
+            .expect("update");
+        assert!(
+            upd.contains("tokens:"),
+            "update reply must carry a footer: {upd}"
+        );
+    }
+
     #[tokio::test]
     async fn pack_all_over_limit_is_refused() {
         let tmp = TempDirGuard::new("pack_all_limit");
@@ -693,7 +849,7 @@ mod tests {
             .init(Parameters(McpInitParams {
                 path: Some(tmp.path().to_string_lossy().to_string()),
                 deep: Some(false),
-                ai: Some(false),
+                model: None,
                 force: Some(true),
                 with_agents_md: Some(false),
                 project: None,

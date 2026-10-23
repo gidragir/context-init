@@ -160,9 +160,9 @@ pub struct McpInitParams {
     /// Perform deep AST inspection.
     #[serde(default)]
     pub deep: Option<bool>,
-    /// Enable AI-assisted card generation.
+    /// Model alias overriding the `init` role chain (D16).
     #[serde(default)]
-    pub ai: Option<bool>,
+    pub model: Option<String>,
     /// Overwrite existing knowledge base.
     #[serde(default)]
     pub force: Option<bool>,
@@ -183,10 +183,7 @@ pub struct McpUpdateParams {
     /// Perform deep AST inspection.
     #[serde(default)]
     pub deep: Option<bool>,
-    /// Enable AI-assisted card updates.
-    #[serde(default)]
-    pub ai: Option<bool>,
-    /// Model alias to use for update.
+    /// Model alias overriding the `update` role chain (D16).
     #[serde(default)]
     pub model: Option<String>,
 }
