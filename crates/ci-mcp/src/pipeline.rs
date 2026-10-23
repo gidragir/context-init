@@ -88,21 +88,24 @@ pub fn run_update(
     })
 }
 
-/// Hint shown when a legacy in-repo knowledge base still exists next to central storage.
-pub fn legacy_hint(project: &ResolvedProject) -> Option<String> {
-    let legacy = project
-        .root
-        .join(".agents")
-        .join("knowledge")
-        .join("L0_index.json");
-    legacy.is_file().then(|| {
+/// Hint about a legacy in-repo knowledge base: either it is still the one being read
+/// (`central_active == false`), or central storage took over and the copy is stale.
+pub fn legacy_hint(project: &ResolvedProject, central_active: bool) -> Option<String> {
+    let legacy = project.root.join(".agents").join("knowledge");
+    let present =
+        legacy.join("L0_index.json").is_file() || project.knowledge_dir.starts_with(&legacy);
+    if !present {
+        return None;
+    }
+    Some(if central_active {
         format!(
-            "A legacy in-repo knowledge base exists at {}; central storage is authoritative. \
-             Run `context-init migrate` (add --remove-source to delete it).",
-            legacy
-                .parent()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
+            "The in-repo knowledge base at {} is no longer read (central storage is used); you can delete it.",
+            legacy.display()
+        )
+    } else {
+        format!(
+            "Reading the legacy in-repo knowledge base at {}. Run `context-init migrate` to move it to central storage.",
+            legacy.display()
         )
     })
 }

@@ -147,6 +147,14 @@ fn cli_check_reads_legacy_in_repo_knowledge() {
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     let all = format!("{}{}", stdout(&out), stderr(&out));
     assert!(all.contains("migrate"), "{all}");
+    assert!(all.contains("Reading the legacy"), "{all}");
+    assert!(!all.contains("authoritative"), "{all}");
+
+    // After `init`, central storage is used and the in-repo copy is reported as stale.
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let after = sb.run(&["check", "."]);
+    let all = format!("{}{}", stdout(&after), stderr(&after));
+    assert!(all.contains("no longer read"), "{all}");
 }
 
 #[test]

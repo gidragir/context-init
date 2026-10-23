@@ -665,7 +665,7 @@ impl ContextHandler {
             out.knowledge_dir.display(),
             out.subsystems.len()
         );
-        if let Some(hint) = pipeline::legacy_hint(project) {
+        if let Some(hint) = pipeline::legacy_hint(project, true) {
             text.push_str(&format!("\n{hint}"));
         }
         Ok(Self::finish_reply(project, text, out.enrich))
