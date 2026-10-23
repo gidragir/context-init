@@ -617,6 +617,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_subsystem_does_not_read_l1_path_outside_knowledge_dir() {
+        let tmp = TempDirGuard::new("l1_escape");
+        let kd = seed_in_repo_knowledge(tmp.path());
+        fs::write(tmp.path().join("secret.md"), "TOP-SECRET").unwrap();
+        let mut index = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        index.subsystems[0].l1_path = "../../secret.md".to_string();
+        index.save_to_file(&kd.join("L0_index.json")).unwrap();
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let out = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: "core".to_string(),
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..McpGetSubsystemParams::default()
+            }))
+            .await
+            .expect("get_subsystem");
+        assert!(!out.contains("TOP-SECRET"), "{out}");
+    }
+
+    #[tokio::test]
     async fn submit_rejects_traversal_ids() {
         let tmp = TempDirGuard::new("submit_traversal");
         let kd = seed_in_repo_knowledge(tmp.path());

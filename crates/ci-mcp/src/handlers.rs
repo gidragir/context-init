@@ -12,7 +12,7 @@ use ci_core::config::{CliOverrides, Config, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
 use ci_core::storage::{
-    compute_project_id, now_rfc3339, subsystem_card_path, L0Index, SubsystemInfo,
+    compute_project_id, now_rfc3339, safe_join, subsystem_card_path, L0Index, SubsystemInfo,
 };
 use ci_core::telemetry::{
     record_feedback, FeedbackSignal, TelemetryEvent, TelemetrySignal, TelemetrySink,
@@ -107,24 +107,22 @@ impl ResolvedProject {
         L0Index::load_from_file(&index_path)
     }
 
+    /// The subsystem's L1 card inside the knowledge dir: `l1_path`, else `subsystems/<id>.md`.
+    /// Index paths that would leave the knowledge dir are ignored.
+    pub fn card_file(&self, subsystem: &SubsystemInfo) -> Option<PathBuf> {
+        let norm_l1 = subsystem.l1_path.replace('\\', "/");
+        safe_join(&self.knowledge_dir, &norm_l1)
+            .filter(|p| p.is_file())
+            .or_else(|| {
+                subsystem_card_path(&self.knowledge_dir, &subsystem.id)
+                    .ok()
+                    .filter(|p| p.is_file())
+            })
+    }
+
     /// Checks if a subsystem card is stale relative to Git.
     pub fn check_subsystem_staleness(&self, subsystem: &SubsystemInfo) -> (bool, Option<String>) {
-        let norm_l1 = subsystem.l1_path.replace('\\', "/");
-        let l1_file = self.knowledge_dir.join(&norm_l1);
-        let alt_file = self
-            .knowledge_dir
-            .join("subsystems")
-            .join(format!("{}.md", subsystem.id));
-
-        let card_path = if l1_file.is_file() {
-            Some(l1_file)
-        } else if alt_file.is_file() {
-            Some(alt_file)
-        } else {
-            None
-        };
-
-        let Some(path) = card_path else {
+        let Some(path) = self.card_file(subsystem) else {
             return (false, None);
         };
 
@@ -270,16 +268,8 @@ impl ContextHandler {
         let (stale, diff_stat) = project.check_subsystem_staleness(sub);
 
         // Try reading markdown card file
-        let l1_file = project.knowledge_dir.join(&sub.l1_path);
-        let alt_file = project
-            .knowledge_dir
-            .join("subsystems")
-            .join(format!("{}.md", sub.id));
-
-        let mut card_content = if l1_file.is_file() {
-            fs::read_to_string(&l1_file)?
-        } else if alt_file.is_file() {
-            fs::read_to_string(&alt_file)?
+        let mut card_content = if let Some(card) = project.card_file(sub) {
+            fs::read_to_string(&card)?
         } else {
             // Synthesize compact L1 card from L0 metadata
             let mut card = format!(

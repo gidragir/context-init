@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
-use crate::storage::{L0Index, SubsystemInfo};
+use crate::storage::{safe_join, L0Index, SubsystemInfo};
 
 /// Output format of a context pack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -76,7 +76,9 @@ pub fn pack_subsystem(
     let mut files: Vec<String> = Vec::new();
     for sub in &matched {
         if sub.files.is_empty() && sub.key_files.is_empty() {
-            let card = knowledge_dir.join(&sub.l1_path);
+            let Some(card) = safe_join(knowledge_dir, &sub.l1_path) else {
+                continue;
+            };
             if card.is_file() {
                 // Relative when the card lives in the repo, absolute for central storage.
                 let path = card
@@ -96,7 +98,8 @@ pub fn pack_subsystem(
             .map(|f| &f.path)
             .chain(sub.key_files.iter());
         for path in candidates {
-            if root.join(path).exists() && !files.contains(path) {
+            let inside = safe_join(root, path).is_some_and(|p| p.exists());
+            if inside && !files.contains(path) {
                 files.push(path.clone());
             }
         }
@@ -673,6 +676,7 @@ mod tests {
 #[cfg(test)]
 mod pack_subsystem_tests {
     use super::*;
+    use crate::storage::SubsystemFile;
     use std::fs;
 
     #[test]
@@ -712,5 +716,61 @@ mod pack_subsystem_tests {
         );
         assert_eq!(packed.files, vec!["kb/subsystems/wm.md".to_string()]);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pack_subsystem_ignores_paths_outside_root() {
+        let base = std::env::temp_dir().join(format!(
+            "ci_pack_escape_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = base.join("repo");
+        let kd = root.join("kb");
+        fs::create_dir_all(kd.join("subsystems")).unwrap();
+        let secret = base.join("secret.txt");
+        fs::write(&secret, "TOP-SECRET").unwrap();
+        let sub = |id: &str, files: Vec<SubsystemFile>, key_files: Vec<String>, l1: String| {
+            SubsystemInfo {
+                id: id.to_string(),
+                name: id.to_string(),
+                summary: "s".to_string(),
+                l1_path: l1,
+                tags: vec![],
+                entrypoints: vec![],
+                key_files,
+                files,
+                key_symbols: vec![],
+                test_command: None,
+                tokens: 0,
+            }
+        };
+        let index = L0Index {
+            subsystems: vec![
+                sub(
+                    "a",
+                    vec![SubsystemFile {
+                        path: "../secret.txt".to_string(),
+                        is_entrypoint: false,
+                        lines: 1,
+                    }],
+                    vec![secret.to_string_lossy().into_owned()],
+                    "subsystems/a.md".to_string(),
+                ),
+                sub("b", vec![], vec![], secret.to_string_lossy().into_owned()),
+                sub("c", vec![], vec![], "../../secret.txt".to_string()),
+            ],
+            ..L0Index::default()
+        };
+        for id in ["a", "b", "c", "all"] {
+            match pack_subsystem(&root, &kd, &index, id, false, PackStyle::Xml) {
+                Ok(p) => assert!(!p.content.contains("TOP-SECRET"), "{id}: {}", p.content),
+                Err(e) => assert!(!format!("{e:#}").contains("TOP-SECRET")),
+            }
+        }
+        let _ = fs::remove_dir_all(&base);
     }
 }

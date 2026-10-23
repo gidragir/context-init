@@ -300,6 +300,18 @@ pub fn subsystem_card_path(knowledge_dir: &Path, id: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Joins an index-supplied relative path onto `base`, rejecting absolute paths and any
+/// `..` (index files may come from an untrusted cloned repository).
+pub fn safe_join(base: &Path, rel: &str) -> Option<PathBuf> {
+    use std::path::Component;
+    let rel_path = Path::new(rel);
+    let ok = !rel.is_empty()
+        && rel_path
+            .components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    ok.then(|| base.join(rel_path))
+}
+
 /// Current UTC time as `YYYY-MM-DDTHH:MM:SSZ`.
 pub fn now_rfc3339() -> String {
     let secs = std::time::SystemTime::now()
@@ -791,5 +803,26 @@ mod migrate_tests {
             assert!(target.join(rel).is_file(), "{rel} missing in target");
         }
         let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod safe_join_tests {
+    use super::*;
+
+    #[test]
+    fn safe_join_rejects_escaping_paths() {
+        let base = Path::new("/base");
+        assert_eq!(
+            safe_join(base, "src/a.rs"),
+            Some(PathBuf::from("/base/src/a.rs"))
+        );
+        assert_eq!(
+            safe_join(base, "./a.md"),
+            Some(PathBuf::from("/base/./a.md"))
+        );
+        for bad in ["/etc/passwd", "../x", "a/../../x", "a/..", ""] {
+            assert_eq!(safe_join(base, bad), None, "{bad:?}");
+        }
     }
 }
