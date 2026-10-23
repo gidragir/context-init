@@ -98,6 +98,8 @@ enum Commands {
     Config(config::ConfigArgs),
     /// Move a legacy in-repo knowledge base into central storage
     Migrate(migrate::MigrateArgs),
+    /// Register the MCP server (and a short agent rule) with an AI harness
+    Setup(setup::SetupArgs),
 }
 
 /// Parses arguments and runs the selected command.
@@ -115,6 +117,7 @@ pub fn run() -> Result<ExitCode> {
         Some(Commands::Mcp(args)) => mcp::run(&args),
         Some(Commands::Config(args)) => config::run(&cli.global, &args),
         Some(Commands::Migrate(args)) => migrate::run(&cli.global, &args),
+        Some(Commands::Setup(args)) => setup::run(&args),
     }
 }
 

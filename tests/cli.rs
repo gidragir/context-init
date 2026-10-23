@@ -338,3 +338,80 @@ fn cli_migrate_twice_requires_force() {
     assert!(stderr(&again).contains("--force"), "{}", stderr(&again));
     assert!(sb.run(&["migrate", ".", "--force"]).status.success());
 }
+
+fn exe_path() -> PathBuf {
+    fs::canonicalize(env!("CARGO_BIN_EXE_context-init")).unwrap()
+}
+
+#[test]
+fn cli_setup_dry_run_prints_diff_and_writes_nothing() {
+    let sb = Sandbox::new("setup_dry");
+    let out = sb.run(&["setup", "claude-code"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(".claude.json") && text.contains("+"),
+        "{text}"
+    );
+    assert!(text.contains("--write"), "{text}");
+    assert!(!sb.home().join(".claude.json").exists());
+}
+
+#[test]
+fn cli_setup_write_claude_code() {
+    let sb = Sandbox::new("setup_cc");
+    fs::write(sb.home().join(".claude.json"), "{\"numStartups\": 3}\n").unwrap();
+    let out = sb.run(&["setup", "claude-code", "--write"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let cfg: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(sb.home().join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(cfg["numStartups"], 3);
+    let cmd = cfg["mcpServers"]["context-init"]["command"]
+        .as_str()
+        .unwrap();
+    assert_eq!(fs::canonicalize(cmd).unwrap(), exe_path());
+    assert!(sb
+        .home()
+        .join(".claude/skills/context-init/SKILL.md")
+        .is_file());
+}
+
+#[test]
+fn cli_setup_all_skips_absent_harnesses() {
+    let sb = Sandbox::new("setup_all");
+    fs::create_dir_all(sb.home().join(".cursor")).unwrap();
+    let out = sb.run(&["setup", "all", "--write"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(sb.home().join(".cursor/mcp.json").is_file());
+    assert!(!sb.home().join(".codex").exists());
+    assert!(!sb.home().join(".gemini").exists());
+    assert!(stdout(&out).contains("User Rules"), "{}", stdout(&out));
+}
+
+#[test]
+fn cli_setup_write_twice_no_second_backup() {
+    let sb = Sandbox::new("setup_twice");
+    fs::create_dir_all(sb.home().join(".codex")).unwrap();
+    fs::write(
+        sb.home().join(".codex/config.toml"),
+        "# mine\nmodel = \"o3\"\n",
+    )
+    .unwrap();
+    assert!(sb.run(&["setup", "codex", "--write"]).status.success());
+    let backups = |sb: &Sandbox| {
+        fs::read_dir(sb.home().join(".codex"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".bak."))
+            .count()
+    };
+    assert_eq!(backups(&sb), 1);
+    let again = sb.run(&["setup", "codex", "--write"]);
+    assert!(again.status.success());
+    assert_eq!(backups(&sb), 1, "{}", stdout(&again));
+    let agents = fs::read_to_string(sb.home().join(".codex/AGENTS.md")).unwrap();
+    assert_eq!(agents.matches("<!-- context-init:begin -->").count(), 1);
+    assert!(fs::read_to_string(sb.home().join(".codex/config.toml"))
+        .unwrap()
+        .contains("# mine"));
+}
