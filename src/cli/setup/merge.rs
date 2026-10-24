@@ -67,6 +67,18 @@ pub fn merge_toml(existing: Option<&str>, exe: &Path) -> Result<String> {
     Ok(doc.to_string())
 }
 
+/// Caps for the preview diff, so a huge or minified config (e.g. `~/.claude.json`)
+/// does not flood the terminal.
+pub const DIFF_MAX_LINES: usize = 200;
+pub const DIFF_MAX_LINE_CHARS: usize = 200;
+
+fn clip_line(line: &str) -> String {
+    match line.char_indices().nth(DIFF_MAX_LINE_CHARS) {
+        Some((cut, _)) => format!("{}… (+{} chars)", &line[..cut], line[cut..].chars().count()),
+        None => line.to_string(),
+    }
+}
+
 /// A file write computed in memory; applied only after the user asked for `--write`.
 #[derive(Debug, Clone)]
 pub struct PlannedWrite {
@@ -114,11 +126,18 @@ impl PlannedWrite {
             self.path.display(),
             prefix + 1
         );
-        for line in &old[prefix..old.len() - suffix] {
-            out.push_str(&format!("-{line}\n"));
+        let changed = old[prefix..old.len() - suffix]
+            .iter()
+            .map(|l| ('-', *l))
+            .chain(new[prefix..new.len() - suffix].iter().map(|l| ('+', *l)));
+        let total = old.len() - suffix - prefix + new.len() - suffix - prefix;
+        for (sign, line) in changed.take(DIFF_MAX_LINES) {
+            out.push(sign);
+            out.push_str(&clip_line(line));
+            out.push('\n');
         }
-        for line in &new[prefix..new.len() - suffix] {
-            out.push_str(&format!("+{line}\n"));
+        if total > DIFF_MAX_LINES {
+            out.push_str(&format!("… ({} more lines)\n", total - DIFF_MAX_LINES));
         }
         out
     }
@@ -157,6 +176,29 @@ mod tests {
 
     fn entry() -> Value {
         json!({"command": "/opt/ci/context-init", "args": ["mcp"]})
+    }
+
+    #[test]
+    fn unified_diff_is_capped_for_huge_or_minified_files() {
+        let long_line = "é".repeat(100_000);
+        let many_lines = (0..5_000)
+            .map(|i| format!("line {i}\n"))
+            .collect::<String>();
+        let plan = PlannedWrite {
+            path: PathBuf::from("/h/.claude.json"),
+            old: Some(long_line.clone()),
+            new: format!("{long_line}x\n{many_lines}"),
+        };
+        let diff = plan.unified_diff();
+        assert!(
+            diff.lines().count() <= DIFF_MAX_LINES + 5,
+            "{}",
+            diff.lines().count()
+        );
+        assert!(diff
+            .lines()
+            .all(|l| l.chars().count() <= DIFF_MAX_LINE_CHARS + 32));
+        assert!(diff.contains("more lines"), "{diff}");
     }
 
     #[test]

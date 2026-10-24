@@ -394,7 +394,18 @@ fn cli_setup_all_skips_absent_harnesses() {
     assert!(sb.home().join(".cursor/mcp.json").is_file());
     assert!(!sb.home().join(".codex").exists());
     assert!(!sb.home().join(".gemini").exists());
+    // `$HOME` always exists; claude-code counts as installed only with `~/.claude`.
+    assert!(!sb.home().join(".claude.json").exists());
     assert!(stdout(&out).contains("User Rules"), "{}", stdout(&out));
+}
+
+#[test]
+fn cli_setup_all_detects_claude_code_by_its_dir() {
+    let sb = Sandbox::new("setup_all_claude");
+    fs::create_dir_all(sb.home().join(".claude")).unwrap();
+    let out = sb.run(&["setup", "all", "--write"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(sb.home().join(".claude.json").is_file());
 }
 
 #[test]

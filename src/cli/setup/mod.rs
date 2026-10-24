@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 use ci_core::storage::now_rfc3339;
 
-use harness::{server_entry, spec, ConfigFormat, Harness, HomeDirs, RuleTarget};
+use harness::{is_installed, server_entry, spec, ConfigFormat, Harness, HomeDirs, RuleTarget};
 use merge::{merge_json, merge_toml, PlannedWrite};
 use rules::{skill_file, upsert_marked_block, RULE_TEMPLATE};
 
@@ -105,7 +105,7 @@ pub fn run(args: &SetupArgs) -> Result<ExitCode> {
         SetupTarget::One(h) => vec![h],
         SetupTarget::All => Harness::ALL
             .into_iter()
-            .filter(|h| spec(*h, &dirs).mcp_file.parent().is_some_and(Path::is_dir))
+            .filter(|h| is_installed(*h, &dirs))
             .collect(),
     };
     if harnesses.is_empty() {

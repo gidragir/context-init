@@ -146,6 +146,15 @@ pub fn spec(h: Harness, dirs: &HomeDirs) -> HarnessSpec {
     }
 }
 
+/// Whether `h` looks installed, for `setup all`. Claude Code keeps `.claude.json`
+/// directly in `$HOME`, so its `~/.claude` dir is checked instead.
+pub fn is_installed(h: Harness, dirs: &HomeDirs) -> bool {
+    match h {
+        Harness::ClaudeCode => dirs.home.join(".claude").is_dir(),
+        _ => spec(h, dirs).mcp_file.parent().is_some_and(Path::is_dir),
+    }
+}
+
 /// The JSON `mcpServers.context-init` entry for `h`.
 pub fn server_entry(h: Harness, exe: &Path) -> Value {
     let mut entry = json!({ "command": exe.to_string_lossy(), "args": ["mcp"] });
