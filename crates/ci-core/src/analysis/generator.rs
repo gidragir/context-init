@@ -1,5 +1,7 @@
 use crate::analysis::ProjectAnalysis;
-use crate::storage::{now_rfc3339, DriftReport, L0Index, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION};
+use crate::storage::{
+    now_rfc3339, safe_join, DriftReport, L0Index, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
+};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -134,14 +136,17 @@ pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftRe
     let fs_module_ids: Vec<String> = analysis
         .detected_modules
         .iter()
-        .map(|m| sanitize_id(&m.dir_path))
+        .map(|m| m.id.clone())
         .collect();
 
     let mut missing_in_fs = Vec::new();
     let mut up_to_date_count = 0;
 
     for sub in &index.subsystems {
-        let exists = if !sub.files.is_empty() {
+        let exists = if sub.parent.is_some() {
+            // A split-off module lives only while its crate is still split.
+            fs_module_ids.contains(&sub.id)
+        } else if !sub.files.is_empty() {
             sub.files
                 .iter()
                 .any(|f| analysis.root_dir.join(&f.path).exists())
@@ -248,6 +253,7 @@ pub fn update(
             existing.key_symbols = new_sub.key_symbols.clone();
             existing.test_command = new_sub.test_command.clone();
             existing.tokens = new_sub.tokens;
+            existing.parent = new_sub.parent.clone();
             updated_count += 1;
         } else {
             // Новая подсистема: генерируем L1 файл
@@ -257,6 +263,21 @@ pub fn update(
 
             index.subsystems.push(new_sub.clone());
             added_count += 1;
+        }
+    }
+
+    // Split-off modules whose crate is no longer split are gone, cards included.
+    let mut superseded = Vec::new();
+    index.subsystems.retain(|s| {
+        let keep = s.parent.is_none() || new_subsystems.iter().any(|n| n.id == s.id);
+        if !keep {
+            superseded.push(s.l1_path.clone());
+        }
+        keep
+    });
+    for l1_path in superseded {
+        if let Some(card) = safe_join(&base_dir, &l1_path) {
+            let _ = fs::remove_file(card);
         }
     }
 
@@ -596,6 +617,7 @@ mod tests {
             tags: vec!["core".to_string()],
             test_command: None,
             tokens: 100,
+            parent: None,
         };
 
         // 1. Test generate_knowledge_base
@@ -655,6 +677,7 @@ mod tests {
             tags: vec!["core".to_string()],
             test_command: None,
             tokens: 100,
+            parent: None,
         };
 
         update_or_create_root_agents_md(&temp_dir, "test-proj", &[sub]).expect("should succeed");
@@ -672,5 +695,105 @@ mod tests {
         assert!(content.contains("- `core` (Core) — Core module"));
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    fn split_drift_fixture() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "test_split_drift_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let src = root.join("crates").join("foo").join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/foo\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("crates").join("foo").join("Cargo.toml"),
+            "[package]\nname = \"foo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(src.join("lib.rs"), "pub mod big;\n").unwrap();
+        let body = |prefix: &str, n: usize| -> String {
+            let mut out = String::new();
+            let mut i = 0;
+            while crate::analysis::detector::count_tokens(&out) < n {
+                out.push_str(&format!("pub fn {prefix}_{i}() {{}}\n"));
+                i += 1;
+            }
+            out
+        };
+        fs::write(src.join("big.rs"), body("big", 900)).unwrap();
+        fs::write(src.join("small.rs"), body("small", 300)).unwrap();
+        root
+    }
+
+    fn analyze_at(root: &Path, threshold: usize) -> ProjectAnalysis {
+        crate::analysis::detector::analyze_project_with(
+            root,
+            &crate::analysis::detector::AnalyzeOptions {
+                deep: false,
+                with_rtk: false,
+                split_threshold_tokens: threshold,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_crate_split_is_clean_added_and_removed_drift() {
+        let root = split_drift_fixture();
+        let kb = root.with_extension("kb");
+        let whole = analyze_at(&root, 1_000_000);
+        let subs = crate::analysis::subsystems::build_deterministic(&whole);
+        generate(&whole, &subs, &kb, &GenerateOptions::default()).unwrap();
+
+        // Crate grows past the threshold: the child is new, the crate id survives.
+        let split = analyze_at(&root, 1000);
+        let report = audit(&split, &kb).unwrap();
+        assert!(report.missing_in_fs.is_empty(), "{report:?}");
+        assert_eq!(
+            report.untracked_in_knowledge,
+            vec!["crates_foo_big".to_string()]
+        );
+
+        let split_subs = crate::analysis::subsystems::build_deterministic(&split);
+        let child = split_subs
+            .iter()
+            .find(|s| s.id == "crates_foo_big")
+            .unwrap();
+        assert_eq!(child.parent.as_deref(), Some("crates_foo"));
+        let (added, _) = update(&split, &split_subs, &kb, false).unwrap();
+        assert_eq!(added, 1);
+        let report = audit(&split, &kb).unwrap();
+        assert!(report.missing_in_fs.is_empty() && report.untracked_in_knowledge.is_empty());
+        let index = L0Index::load_from_file(&kb.join("L0_index.json")).unwrap();
+        let crate_sub = index
+            .subsystems
+            .iter()
+            .find(|s| s.id == "crates_foo")
+            .unwrap();
+        assert!(
+            !crate_sub.files.iter().any(|f| f.path.ends_with("big.rs")),
+            "the crate root no longer packs the split-off module"
+        );
+
+        // Crate shrinks back: the child is reported gone and dropped by update.
+        let report = audit(&whole, &kb).unwrap();
+        assert_eq!(report.missing_in_fs, vec!["crates_foo_big".to_string()]);
+        assert!(report.untracked_in_knowledge.is_empty());
+        update(&whole, &subs, &kb, false).unwrap();
+        let index = L0Index::load_from_file(&kb.join("L0_index.json")).unwrap();
+        assert!(index.subsystems.iter().all(|s| s.id != "crates_foo_big"));
+        assert!(!kb.join("subsystems/crates_foo_big.md").exists());
+        let report = audit(&whole, &kb).unwrap();
+        assert!(report.missing_in_fs.is_empty() && report.untracked_in_knowledge.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&kb);
     }
 }

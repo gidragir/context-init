@@ -137,10 +137,13 @@ fn analyze(
     role: RoleName,
     opts: &PipelineOptions,
 ) -> Result<(ProjectAnalysis, Vec<SubsystemInfo>, EnrichOutcome)> {
-    let analysis = detector::analyze_project(
+    let analysis = detector::analyze_project_with(
         &project.root,
-        opts.deep,
-        project.config.integrations.resolve_rtk_active(),
+        &detector::AnalyzeOptions {
+            deep: opts.deep,
+            with_rtk: project.config.integrations.resolve_rtk_active(),
+            split_threshold_tokens: project.config.split_threshold_tokens,
+        },
     )?;
     let mut subsystems = build_deterministic(&analysis);
     let prompts = PromptTemplateRegistry::new(project.config.language.clone());

@@ -9,6 +9,10 @@ use crate::storage::{ProjectCommands, ProjectType, SubsystemFile};
 /// A source module (directory) discovered by the detector.
 #[derive(Debug, Clone)]
 pub struct DiscoveredModule {
+    /// Subsystem id: `sanitize_id(dir_path)`, or `<parent>_<module>` for a split-off module.
+    pub id: String,
+    /// Id of the module this one was split off from (oversized crates).
+    pub parent: Option<String>,
     pub dir_path: String,
     pub name: String,
     pub files: Vec<SubsystemFile>,

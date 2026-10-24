@@ -16,6 +16,9 @@ pub const DEFAULT_LANGUAGE: &str = "ru";
 /// Default hard ceiling of tokens per MCP response (D19).
 pub const DEFAULT_MAX_RESPONSE_TOKENS: usize = 4000;
 
+/// Default token size above which a module is split into per-module subsystems.
+pub const DEFAULT_SPLIT_THRESHOLD_TOKENS: usize = 15_000;
+
 /// Smallest `max_response_tokens` that fits a paginated reply's cursor footer.
 pub const MIN_RESPONSE_TOKENS: usize = 64;
 
@@ -634,6 +637,10 @@ fn default_max_response_tokens() -> usize {
     DEFAULT_MAX_RESPONSE_TOKENS
 }
 
+fn default_split_threshold_tokens() -> usize {
+    DEFAULT_SPLIT_THRESHOLD_TOKENS
+}
+
 /// Complete resolved configuration for `context-init` (D1, D10–D12, D16, D19, D28).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
@@ -643,6 +650,10 @@ pub struct Config {
     /// Hard upper bound on MCP response tokens (default `4000`, D19).
     #[serde(default = "default_max_response_tokens")]
     pub max_response_tokens: usize,
+    /// Source size (BPE tokens) above which a module such as a workspace crate is split
+    /// into per-module subsystems (default `15000`; `0` disables splitting).
+    #[serde(default = "default_split_threshold_tokens")]
+    pub split_threshold_tokens: usize,
     /// Whether to modify in-repo `AGENTS.md` by default (default `false`, D1).
     #[serde(default)]
     pub touch_agents_md: bool,
@@ -672,6 +683,7 @@ impl Default for Config {
         Self {
             language: default_language(),
             max_response_tokens: default_max_response_tokens(),
+            split_threshold_tokens: default_split_threshold_tokens(),
             touch_agents_md: false,
             integrations: IntegrationsConfig::default(),
             models: BTreeMap::new(),
@@ -722,6 +734,7 @@ struct PartialModelConfig {
 struct PartialConfig {
     language: Option<String>,
     max_response_tokens: Option<usize>,
+    split_threshold_tokens: Option<usize>,
     touch_agents_md: Option<bool>,
     integrations: Option<PartialIntegrationsConfig>,
     models: Option<BTreeMap<String, PartialModelConfig>>,
@@ -828,6 +841,9 @@ impl Config {
         if let Some(max_tokens) = partial.max_response_tokens {
             self.max_response_tokens = max_tokens;
         }
+        if let Some(threshold) = partial.split_threshold_tokens {
+            self.split_threshold_tokens = threshold;
+        }
         if let Some(touch) = partial.touch_agents_md {
             self.touch_agents_md = touch;
         }
@@ -930,6 +946,15 @@ impl Config {
                 )
             })?;
             self.max_response_tokens = tokens;
+        }
+
+        if let Some(threshold_str) = non_empty("CONTEXT_INIT_SPLIT_THRESHOLD_TOKENS") {
+            self.split_threshold_tokens = threshold_str.parse().with_context(|| {
+                format!(
+                    "Invalid CONTEXT_INIT_SPLIT_THRESHOLD_TOKENS value '{}'",
+                    threshold_str
+                )
+            })?;
         }
 
         if let Some(touch_str) = non_empty("CONTEXT_INIT_TOUCH_AGENTS_MD") {
@@ -1141,6 +1166,7 @@ pub fn generate_template_toml() -> String {
     r#"# context-init configuration file
 language = "ru"
 max_response_tokens = 4000
+split_threshold_tokens = 15000
 touch_agents_md = false
 
 [integrations]
@@ -1223,6 +1249,26 @@ mod lint_tests {
             assert_eq!(problems.len(), 1, "{toml:?} -> {problems:?}");
             assert!(problems[0].contains(needle), "{toml:?} -> {problems:?}");
         }
+    }
+
+    #[test]
+    fn split_threshold_defaults_and_layers() {
+        assert_eq!(
+            Config::default().split_threshold_tokens,
+            DEFAULT_SPLIT_THRESHOLD_TOKENS
+        );
+        assert_eq!(
+            cfg("split_threshold_tokens = 0\n").split_threshold_tokens,
+            0
+        );
+        let env = Config::from_layers(
+            Some("split_threshold_tokens = 9000\n"),
+            None,
+            |k| (k == "CONTEXT_INIT_SPLIT_THRESHOLD_TOKENS").then(|| "20000".to_string()),
+            &CliOverrides::default(),
+        )
+        .unwrap();
+        assert_eq!(env.split_threshold_tokens, 20000);
     }
 
     #[test]

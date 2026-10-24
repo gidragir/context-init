@@ -265,6 +265,9 @@ pub struct SubsystemInfo {
     pub test_command: Option<String>,
     #[serde(default)]
     pub tokens: usize,
+    /// Id of the subsystem this one was split off from (oversized crates).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// Allowed subsystem id shape. Ids become file names (`subsystems/<id>.md`), so they

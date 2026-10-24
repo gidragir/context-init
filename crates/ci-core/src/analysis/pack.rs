@@ -550,6 +550,7 @@ mod tests {
             key_symbols: vec![],
             test_command: None,
             tokens: 10,
+            parent: None,
         };
 
         let files = vec!["lib.rs".to_string()];
@@ -600,6 +601,7 @@ mod tests {
             key_symbols: vec![],
             test_command: None,
             tokens: 10,
+            parent: None,
         };
 
         let files = vec!["lib.rs".to_string()];
@@ -653,6 +655,7 @@ mod tests {
             key_symbols: vec![],
             test_command: None,
             tokens: 15,
+            parent: None,
         };
 
         let files = vec!["main.py".to_string()];
@@ -705,6 +708,7 @@ mod pack_subsystem_tests {
                 key_symbols: vec![],
                 test_command: None,
                 tokens: 0,
+                parent: None,
             }],
             ..L0Index::default()
         };
@@ -746,6 +750,7 @@ mod pack_subsystem_tests {
                 key_symbols: vec![],
                 test_command: None,
                 tokens: 0,
+                parent: None,
             }
         };
         let index = L0Index {

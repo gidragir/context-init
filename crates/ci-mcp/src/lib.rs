@@ -245,6 +245,7 @@ mod tests {
                 key_symbols: vec!["run".to_string()],
                 test_command: None,
                 tokens: 50,
+                parent: None,
             }],
             ..L0Index::default()
         };
@@ -284,6 +285,7 @@ mod tests {
                 key_symbols: vec![],
                 test_command: None,
                 tokens: 80,
+                parent: None,
             }],
             ..L0Index::default()
         };
@@ -325,6 +327,7 @@ mod tests {
                 key_symbols: vec![],
                 test_command: None,
                 tokens: 10,
+                parent: None,
             }],
             ..L0Index::default()
         };

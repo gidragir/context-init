@@ -94,6 +94,7 @@ mod tests {
             key_symbols: vec![],
             test_command: None,
             tokens: 0,
+            parent: None,
         }
     }
 

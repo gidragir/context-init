@@ -160,7 +160,14 @@ impl ContextHandler {
     pub fn check_drift(project: &ResolvedProject, cursor: Option<&str>) -> Result<String> {
         let (has_drift, missing_in_fs, untracked_in_knowledge, up_to_date_count, git_stale) = match (
             project.load_l0_index(),
-            detector::analyze_project(&project.root, false, false),
+            detector::analyze_project_with(
+                &project.root,
+                &detector::AnalyzeOptions {
+                    deep: false,
+                    with_rtk: false,
+                    split_threshold_tokens: project.config.split_threshold_tokens,
+                },
+            ),
         ) {
             (Ok(index), Ok(analysis)) => {
                 let report = generator::audit(&analysis, &project.knowledge_dir)?;
@@ -419,6 +426,7 @@ impl ContextHandler {
                         key_symbols: Vec::new(),
                         test_command: None,
                         tokens: 0,
+                        parent: None,
                     });
                 }
                 if !card_path.exists() {

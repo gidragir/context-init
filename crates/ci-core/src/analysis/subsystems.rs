@@ -3,12 +3,11 @@
 use std::path::Path;
 
 use crate::analysis::detector;
-use crate::analysis::generator::sanitize_id;
 use crate::analysis::ProjectAnalysis;
 use crate::storage::SubsystemInfo;
 
 /// Builds one subsystem per detected module (or a single `core` for flat projects),
-/// with token counts of their files.
+/// with token counts of their files. Split-off modules keep their `parent` link.
 pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
     let mut subsystems: Vec<SubsystemInfo> = Vec::new();
     if analysis.detected_modules.is_empty() {
@@ -25,10 +24,11 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
             key_symbols: Vec::new(),
             test_command: analysis.commands.test.clone(),
             tokens: 0,
+            parent: None,
         });
     } else {
         for m in &analysis.detected_modules {
-            let clean_id = sanitize_id(&m.dir_path);
+            let clean_id = m.id.clone();
             let capitalized = m
                 .name
                 .replace(['_', '-'], " ")
@@ -71,6 +71,7 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
                 key_symbols: m.symbols.clone(),
                 test_command: m.test_cmd.clone(),
                 tokens: 0,
+                parent: m.parent.clone(),
             });
         }
     }

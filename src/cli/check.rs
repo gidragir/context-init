@@ -26,7 +26,14 @@ pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode> {
     if let Some(hint) = pipeline::legacy_hint(&project, project.is_central) {
         output::notice(&hint);
     }
-    let analysis = detector::analyze_project(&project.root, false, false)?;
+    let analysis = detector::analyze_project_with(
+        &project.root,
+        &detector::AnalyzeOptions {
+            deep: false,
+            with_rtk: false,
+            split_threshold_tokens: project.config.split_threshold_tokens,
+        },
+    )?;
     let report = generator::audit(&analysis, &project.knowledge_dir)?;
     let has_drift = !report.missing_in_fs.is_empty() || !report.untracked_in_knowledge.is_empty();
 
