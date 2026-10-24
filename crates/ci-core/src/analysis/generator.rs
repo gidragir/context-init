@@ -1,3 +1,4 @@
+use crate::analysis::subsystems::GENERATED_SUMMARY_PREFIXES;
 use crate::analysis::ProjectAnalysis;
 use crate::storage::{
     now_rfc3339, safe_join, DriftReport, L0Index, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
@@ -254,6 +255,12 @@ pub fn update(
             existing.test_command = new_sub.test_command.clone();
             existing.tokens = new_sub.tokens;
             existing.parent = new_sub.parent.clone();
+            if GENERATED_SUMMARY_PREFIXES
+                .iter()
+                .any(|p| existing.summary.starts_with(p))
+            {
+                existing.summary = new_sub.summary.clone();
+            }
             updated_count += 1;
         } else {
             // Новая подсистема: генерируем L1 файл
@@ -511,7 +518,10 @@ fn update_or_create_root_agents_md(
         section_header, project_name
     );
 
-    for s in subsystems {
+    // Sorted by id, so split-off modules (`<crate>_<module>`) follow their crate.
+    let mut sorted: Vec<&SubsystemInfo> = subsystems.iter().collect();
+    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    for s in sorted {
         map_content.push_str(&format!("- `{}` ({}) — {}\n", s.id, s.name, s.summary));
     }
 
@@ -657,6 +667,92 @@ mod tests {
             "L0_index.json should not end with multiple newlines"
         );
 
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    fn named_sub(id: &str, summary: &str) -> SubsystemInfo {
+        SubsystemInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            summary: summary.to_string(),
+            l1_path: format!("subsystems/{id}.md"),
+            files: Vec::new(),
+            entrypoints: Vec::new(),
+            key_files: Vec::new(),
+            key_symbols: Vec::new(),
+            tags: Vec::new(),
+            test_command: None,
+            tokens: 1,
+            parent: None,
+        }
+    }
+
+    #[test]
+    fn test_agents_md_map_is_sorted_so_children_follow_their_crate() {
+        let temp_dir = std::env::temp_dir().join("test_agents_md_sorted");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        let subs = [
+            named_sub("tests", "t"),
+            named_sub("crates_a_storage", "s"),
+            named_sub("crates_b", "b"),
+            named_sub("crates_a", "a"),
+        ];
+        update_or_create_root_agents_md(&temp_dir, "p", &subs).unwrap();
+        let content = fs::read_to_string(temp_dir.join("AGENTS.md")).unwrap();
+        let pos = |id: &str| content.find(&format!("- `{id}`")).unwrap();
+        assert!(pos("crates_a") < pos("crates_a_storage"));
+        assert!(pos("crates_a_storage") < pos("crates_b"));
+        assert!(pos("crates_b") < pos("tests"));
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_update_refreshes_generated_summary_but_keeps_manual_one() {
+        let temp_dir = std::env::temp_dir().join("test_update_summary_refresh");
+        let _ = fs::remove_dir_all(&temp_dir);
+        let analysis = ProjectAnalysis {
+            name: "p".to_string(),
+            root_dir: temp_dir.clone(),
+            description: String::new(),
+            project_type: crate::storage::ProjectType::Rust,
+            rules: Vec::new(),
+            root_entrypoints: Vec::new(),
+            commands: crate::storage::ProjectCommands::default(),
+            detected_modules: Vec::new(),
+            workspace_members: Vec::new(),
+        };
+        let kd = temp_dir.join("kb");
+        let old_generated = named_sub(
+            "a_cfg",
+            "Модуль и компоненты директории `a/cfg.rs` (1 файлов)",
+        );
+        let manual = named_sub("a_manual", "Hand-written summary");
+        generate(
+            &analysis,
+            &[old_generated, manual],
+            &kd,
+            &GenerateOptions::default(),
+        )
+        .unwrap();
+
+        let fresh = [
+            named_sub("a_cfg", "Модуль-файл `a/cfg.rs`"),
+            named_sub("a_manual", "Модуль-файл `a/manual.rs`"),
+        ];
+        update(&analysis, &fresh, &kd, false).unwrap();
+        let index = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        let summary = |id: &str| {
+            index
+                .subsystems
+                .iter()
+                .find(|s| s.id == id)
+                .unwrap()
+                .summary
+                .clone()
+        };
+        assert_eq!(summary("a_cfg"), "Модуль-файл `a/cfg.rs`");
+        assert_eq!(summary("a_manual"), "Hand-written summary");
         let _ = fs::remove_dir_all(&temp_dir);
     }
 

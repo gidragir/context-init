@@ -43,19 +43,12 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            let summary = if !m.entrypoints.is_empty() {
-                format!(
-                    "Подсистема `{}` с ключевыми точками входа: {}",
-                    m.dir_path,
-                    m.entrypoints.join(", ")
-                )
-            } else {
-                format!(
-                    "Модуль и компоненты директории `{}` ({} файлов)",
-                    m.dir_path,
-                    m.files.len()
-                )
-            };
+            let summary = module_summary(
+                &m.dir_path,
+                &m.entrypoints,
+                m.files.len(),
+                analysis.root_dir.join(&m.dir_path).is_file(),
+            );
 
             let key_files = m.files.iter().map(|f| f.path.clone()).collect();
 
@@ -82,6 +75,29 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
     subsystems
 }
 
+/// Prefixes of the deterministic summaries below; `update` refreshes summaries that
+/// start with one of them and keeps everything else (hand-written or LLM-enriched).
+pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 3] = [
+    "Подсистема `",
+    "Модуль и компоненты директории `",
+    "Модуль-файл `",
+];
+
+/// Deterministic summary of a module: a single-file module (split off a large crate)
+/// is named as a file, not as a directory.
+fn module_summary(dir_path: &str, entrypoints: &[String], files: usize, is_file: bool) -> String {
+    if is_file {
+        format!("Модуль-файл `{dir_path}`")
+    } else if !entrypoints.is_empty() {
+        format!(
+            "Подсистема `{dir_path}` с ключевыми точками входа: {}",
+            entrypoints.join(", ")
+        )
+    } else {
+        format!("Модуль и компоненты директории `{dir_path}` ({files} файлов)")
+    }
+}
+
 fn compute_subsystem_tokens(root_dir: &Path, sub: &mut SubsystemInfo) {
     let mut total_tokens = 0;
     if !sub.files.is_empty() {
@@ -100,4 +116,33 @@ fn compute_subsystem_tokens(root_dir: &Path, sub: &mut SubsystemInfo) {
         }
     }
     sub.tokens = total_tokens;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_file_module_is_described_as_a_file() {
+        let s = module_summary("crates/a/src/config.rs", &[], 1, true);
+        assert_eq!(s, "Модуль-файл `crates/a/src/config.rs`");
+        assert!(!s.contains("директории"));
+    }
+
+    #[test]
+    fn directory_modules_keep_their_wording() {
+        let eps = vec!["a/src/lib.rs".to_string()];
+        assert!(module_summary("a", &eps, 3, false).starts_with("Подсистема `a`"));
+        assert_eq!(
+            module_summary("docs", &[], 2, false),
+            "Модуль и компоненты директории `docs` (2 файлов)"
+        );
+        for s in [
+            module_summary("x.rs", &[], 1, true),
+            module_summary("a", &eps, 3, false),
+            module_summary("docs", &[], 2, false),
+        ] {
+            assert!(GENERATED_SUMMARY_PREFIXES.iter().any(|p| s.starts_with(p)));
+        }
+    }
 }
