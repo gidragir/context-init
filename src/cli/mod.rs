@@ -86,7 +86,7 @@ pub fn router_for(project: &ResolvedProject) -> Result<RoleRouter> {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Build the knowledge base from scratch (into central storage)
+    /// Build the knowledge base from scratch
     Init(init_update::InitArgs),
     /// Re-detect the project and merge changes into the knowledge base
     Update(init_update::UpdateArgs),
@@ -98,7 +98,7 @@ enum Commands {
     Mcp(mcp::McpArgs),
     /// Inspect, create and validate configuration
     Config(config::ConfigArgs),
-    /// Move a legacy in-repo knowledge base into central storage
+    /// Copy the knowledge base between repo and central storage
     Migrate(migrate::MigrateArgs),
     /// Register the MCP server (and a short agent rule) with an AI harness
     Setup(setup::SetupArgs),

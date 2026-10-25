@@ -595,3 +595,96 @@ fn cli_update_twice_leaves_git_clean() {
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert_eq!(git(&["status", "--porcelain"]), "");
 }
+
+fn kb_index(sb: &Sandbox) -> PathBuf {
+    sb.project().join(".context-init/knowledge/L0_index.json")
+}
+
+#[test]
+fn cli_migrate_round_trip() {
+    let sb = Sandbox::new("mig_round");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let index = ci_core::storage::L0Index::load_from_file(&kb_index(&sb)).unwrap();
+    let id = index.subsystems[0].id.clone();
+
+    let out = sb.run(&["migrate", ".", "--to", "central", "--remove-source"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(central_indexes(&sb.data_home()).len(), 1);
+    assert!(!kb_index(&sb).exists());
+    let toml = fs::read_to_string(sb.project().join(".context-init.toml")).unwrap();
+    assert!(toml.contains("storage = \"central\""), "{toml}");
+    let pack = sb.run(&["pack", &id, ".", "--compress"]);
+    assert!(pack.status.success(), "{}{}", stdout(&pack), stderr(&pack));
+
+    let back = sb.run(&["migrate", ".", "--to", "repo", "--remove-source"]);
+    assert!(back.status.success(), "{}{}", stdout(&back), stderr(&back));
+    assert!(kb_index(&sb).is_file());
+    assert!(central_indexes(&sb.data_home()).is_empty());
+    let toml = fs::read_to_string(sb.project().join(".context-init.toml")).unwrap();
+    assert!(toml.contains("storage = \"repo\""), "{toml}");
+}
+
+#[test]
+fn cli_migrate_keeps_toml_comments() {
+    let sb = Sandbox::new("mig_toml");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    fs::write(
+        sb.project().join(".context-init.toml"),
+        "# keep me\nlanguage = \"en\"\n",
+    )
+    .unwrap();
+    let out = sb.run(&["migrate", ".", "--to", "central"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let toml = fs::read_to_string(sb.project().join(".context-init.toml")).unwrap();
+    assert!(toml.contains("# keep me"), "{toml}");
+    assert!(toml.contains("language = \"en\""), "{toml}");
+    assert!(toml.contains("storage = \"central\""), "{toml}");
+}
+
+#[test]
+fn cli_migrate_refuses_existing_target_without_force() {
+    let sb = Sandbox::new("mig_force");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    assert!(sb
+        .run(&["migrate", ".", "--to", "central"])
+        .status
+        .success());
+    let toml = sb.project().join(".context-init.toml");
+    fs::write(&toml, "storage = \"repo\"\n").unwrap();
+    let again = sb.run(&["migrate", ".", "--to", "central"]);
+    assert!(!again.status.success());
+    assert!(stderr(&again).contains("--force"), "{}", stderr(&again));
+    assert!(sb
+        .run(&["migrate", ".", "--to", "central", "--force"])
+        .status
+        .success());
+}
+
+#[test]
+fn cli_migrate_noop_when_already_in_mode() {
+    let sb = Sandbox::new("mig_noop");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let out = sb.run(&["migrate", ".", "--to", "repo"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(
+        stdout(&out).contains("already using storage = \"repo\""),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn cli_migrate_dry_run_writes_nothing() {
+    let sb = Sandbox::new("mig_dry");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let out = sb.run(&["migrate", ".", "--to", "central", "--dry-run"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(stdout(&out).contains("L0_index.json"), "{}", stdout(&out));
+    assert!(central_indexes(&sb.data_home()).is_empty());
+    assert!(!sb.project().join(".context-init.toml").exists());
+}

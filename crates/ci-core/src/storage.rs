@@ -465,6 +465,74 @@ pub struct DriftReport {
     pub up_to_date_count: usize,
 }
 
+/// Options for [`copy_knowledge`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CopyKbOptions {
+    /// List what would be copied; write and delete nothing.
+    pub dry_run: bool,
+    /// Delete `src` after the copy was verified.
+    pub remove_source: bool,
+}
+
+/// Result of [`copy_knowledge`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopyKbReport {
+    /// Relative paths (`/`-separated, sorted) of every file in the source base.
+    pub files: Vec<String>,
+    /// Number of subsystems in the source `L0_index.json`.
+    pub subsystems_count: usize,
+    /// Whether `src` was removed.
+    pub removed_source: bool,
+}
+
+/// Copies a whole knowledge base (hand-written files such as ADRs included) from `src` to
+/// `dst`. `src` must hold a loadable `L0_index.json`; the copy is verified by loading
+/// `dst/L0_index.json`, and `src` is removed only after that and only on request.
+pub fn copy_knowledge(src: &Path, dst: &Path, opts: &CopyKbOptions) -> Result<CopyKbReport> {
+    let src_index = src.join("L0_index.json");
+    if !src_index.is_file() {
+        bail!("Knowledge base not found: {:?} does not exist", src_index);
+    }
+    let index = L0Index::load_from_file(&src_index)?;
+    let mut files = Vec::new();
+    list_files_recursive(src, src, &mut files)?;
+    files.sort();
+
+    let mut report = CopyKbReport {
+        files,
+        subsystems_count: index.subsystems.len(),
+        removed_source: false,
+    };
+    if opts.dry_run {
+        return Ok(report);
+    }
+
+    for rel in &report.files {
+        let target = dst.join(rel);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("Failed to create {:?}", parent))?;
+        }
+        fs::copy(src.join(rel), &target)
+            .with_context(|| format!("Failed to copy {} into {:?}", rel, dst))?;
+    }
+    L0Index::load_from_file(&dst.join("L0_index.json"))
+        .with_context(|| format!("Copied knowledge base at {:?} failed verification", dst))?;
+
+    if opts.remove_source {
+        if let Some(missing) = report.files.iter().find(|rel| !dst.join(rel).is_file()) {
+            bail!(
+                "Refusing to remove {:?}: {} missing in {:?}",
+                src,
+                missing,
+                dst
+            );
+        }
+        fs::remove_dir_all(src).with_context(|| format!("Failed to remove {:?}", src))?;
+        report.removed_source = true;
+    }
+    Ok(report)
+}
+
 fn list_files_recursive(root: &Path, current: &Path, out: &mut Vec<String>) -> Result<()> {
     for entry in fs::read_dir(current).with_context(|| format!("Failed to read {:?}", current))? {
         let path = entry?.path();
@@ -530,6 +598,103 @@ mod schema_tests {
         let missing =
             L0Index::from_json_str(r#"{"project": "p", "updated_at": "2026-01-01"}"#).unwrap_err();
         assert!(format!("{missing:#}").contains("schema v1"));
+    }
+}
+
+#[cfg(test)]
+mod copy_kb_tests {
+    use super::*;
+
+    fn sandbox(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ci_copy_kb_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn seed(kd: &Path) {
+        fs::create_dir_all(kd.join("adr")).unwrap();
+        L0Index {
+            project: "p".to_string(),
+            ..L0Index::default()
+        }
+        .save_to_file(&kd.join("L0_index.json"))
+        .unwrap();
+        fs::write(kd.join("adr/x.md"), "# ADR x\n").unwrap();
+    }
+
+    #[test]
+    fn copy_knowledge_copies_and_verifies() {
+        let root = sandbox("copy");
+        seed(&root.join("src"));
+        let report = copy_knowledge(
+            &root.join("src"),
+            &root.join("dst"),
+            &CopyKbOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(report.files, vec!["L0_index.json", "adr/x.md"]);
+        assert!(!report.removed_source);
+        assert_eq!(
+            fs::read_to_string(root.join("dst/adr/x.md")).unwrap(),
+            "# ADR x\n"
+        );
+        assert!(root.join("src/L0_index.json").is_file());
+    }
+
+    #[test]
+    fn copy_knowledge_rejects_missing_index() {
+        let root = sandbox("missing");
+        fs::create_dir_all(root.join("src")).unwrap();
+        let err = copy_knowledge(
+            &root.join("src"),
+            &root.join("dst"),
+            &CopyKbOptions::default(),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("L0_index.json"), "{err:#}");
+    }
+
+    #[test]
+    fn copy_knowledge_dry_run_writes_nothing() {
+        let root = sandbox("dry");
+        seed(&root.join("src"));
+        let report = copy_knowledge(
+            &root.join("src"),
+            &root.join("dst"),
+            &CopyKbOptions {
+                dry_run: true,
+                remove_source: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(report.files.len(), 2);
+        assert!(!root.join("dst").exists());
+        assert!(root.join("src/L0_index.json").is_file());
+    }
+
+    #[test]
+    fn copy_knowledge_remove_source() {
+        let root = sandbox("rm");
+        seed(&root.join("src"));
+        let report = copy_knowledge(
+            &root.join("src"),
+            &root.join("dst"),
+            &CopyKbOptions {
+                dry_run: false,
+                remove_source: true,
+            },
+        )
+        .unwrap();
+        assert!(report.removed_source);
+        assert!(!root.join("src").exists());
+        assert!(root.join("dst/L0_index.json").is_file());
     }
 }
 
