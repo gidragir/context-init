@@ -1,5 +1,6 @@
 use crate::analysis::subsystems::GENERATED_SUMMARY_PREFIXES;
 use crate::analysis::ProjectAnalysis;
+use crate::config::StorageMode;
 use crate::storage::{
     now_rfc3339, safe_join, DriftReport, L0Index, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
 };
@@ -15,12 +16,42 @@ pub struct GenerateOptions {
     pub force: bool,
     /// Validate only; write nothing.
     pub dry_run: bool,
-    /// Create or refresh the navigation section of the repo's `AGENTS.md`.
-    pub with_agents_md: bool,
+    /// Create or refresh the navigation section of the repo's `AGENTS.md`, worded for this
+    /// storage mode; `None` leaves `AGENTS.md` alone.
+    pub agents_md: Option<StorageMode>,
+}
+
+/// Writes `content` to `path` only when the bytes differ (creating parent directories).
+/// Returns whether the file was written.
+fn write_if_changed(path: &Path, content: &str) -> Result<bool> {
+    if fs::read(path).ok().as_deref() == Some(content.as_bytes()) {
+        return Ok(false);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("Не удалось создать {:?}", parent))?;
+    }
+    fs::write(path, content).with_context(|| format!("Не удалось записать {:?}", path))?;
+    Ok(true)
+}
+
+/// Gives the index a stable order: subsystems by id; files, entrypoints, key files and
+/// tags of each subsystem lexicographically. `key_symbols` keep the detector's order.
+fn normalize_index(index: &mut L0Index) {
+    index.subsystems.sort_by(|a, b| a.id.cmp(&b.id));
+    for s in &mut index.subsystems {
+        s.files.sort_by(|a, b| a.path.cmp(&b.path));
+        s.entrypoints.sort();
+        s.key_files.sort();
+        s.tags.sort();
+    }
+}
+
+fn render_l0_json(index: &L0Index) -> Result<String> {
+    Ok(format!("{}\n", serde_json::to_string_pretty(index)?))
 }
 
 /// Writes a fresh L0–L2 knowledge base into `knowledge_dir`. Only `AGENTS.md` goes into
-/// the repository (`analysis.root_dir`).
+/// the repository (`analysis.root_dir`). Files whose bytes are unchanged are not rewritten.
 pub fn generate(
     analysis: &ProjectAnalysis,
     subsystems: &[SubsystemInfo],
@@ -30,12 +61,10 @@ pub fn generate(
     let GenerateOptions {
         force,
         dry_run,
-        with_agents_md,
+        agents_md,
     } = *opts;
     let base_dir = knowledge_dir.to_path_buf();
     let subsystems_dir = base_dir.join("subsystems");
-    let cli_dir = base_dir.join("cli");
-    let adr_dir = base_dir.join("adr");
 
     if base_dir.exists() && !force {
         anyhow::bail!(
@@ -47,26 +76,9 @@ pub fn generate(
         return Ok(());
     }
 
-    if force && subsystems_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&subsystems_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("md") {
-                    let _ = fs::remove_file(p);
-                }
-            }
-        }
-    }
-
-    fs::create_dir_all(&subsystems_dir)
-        .with_context(|| format!("Не удалось создать {:?}", subsystems_dir))?;
-    fs::create_dir_all(&cli_dir).with_context(|| format!("Не удалось создать {:?}", cli_dir))?;
-    fs::create_dir_all(&adr_dir).with_context(|| format!("Не удалось создать {:?}", adr_dir))?;
-
     let today = chrono_like_date();
 
-    // 1. Создаем L0_index.json
-    let l0_index = L0Index {
+    let mut l0_index = L0Index {
         schema: "https://json-schema.org/draft/2020-12/schema".to_string(),
         schema_version: CURRENT_L0_SCHEMA_VERSION,
         project_id: None,
@@ -80,41 +92,55 @@ pub fn generate(
         core_rules: analysis.rules.clone(),
         stow_packages: Vec::new(),
     };
+    normalize_index(&mut l0_index);
 
-    let l0_json = format!("{}\n", serde_json::to_string_pretty(&l0_index)?);
-    let l0_json_path = base_dir.join("L0_index.json");
-    fs::write(&l0_json_path, l0_json)
-        .with_context(|| format!("Не удалось записать {:?}", l0_json_path))?;
-
-    // 2. Создаем компактный L0_index.md (оптимальный для контекстного окна LLM)
-    let l0_md_content = render_l0_markdown(&l0_index, &today);
-    let l0_md_path = base_dir.join("L0_index.md");
-    fs::write(&l0_md_path, l0_md_content)
-        .with_context(|| format!("Не удалось записать {:?}", l0_md_path))?;
-
-    // 3. Создаем карточки подсистем L1
-    for sub in subsystems {
-        let sub_file = base_dir.join(&sub.l1_path);
-        let content = render_subsystem_card(sub, analysis);
-        fs::write(&sub_file, content)
-            .with_context(|| format!("Не удалось записать {:?}", sub_file))?;
+    // A forced rebuild drops cards of subsystems that no longer exist.
+    if force && subsystems_dir.exists() {
+        let keep: Vec<_> = l0_index
+            .subsystems
+            .iter()
+            .map(|s| base_dir.join(&s.l1_path))
+            .collect();
+        if let Ok(entries) = fs::read_dir(&subsystems_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file()
+                    && p.extension().and_then(|e| e.to_str()) == Some("md")
+                    && !keep.contains(&p)
+                {
+                    let _ = fs::remove_file(p);
+                }
+            }
+        }
     }
 
-    // 4. Создаем актуальный справочник команд L2 (cli/commands.md)
-    let cli_path = cli_dir.join("commands.md");
-    let cli_content = render_commands_markdown(analysis);
-    fs::write(&cli_path, cli_content)
-        .with_context(|| format!("Не удалось записать {:?}", cli_path))?;
+    write_if_changed(&base_dir.join("L0_index.json"), &render_l0_json(&l0_index)?)?;
+    write_if_changed(
+        &base_dir.join("L0_index.md"),
+        &render_l0_markdown(&l0_index, &today),
+    )?;
+    for sub in &l0_index.subsystems {
+        write_if_changed(
+            &base_dir.join(&sub.l1_path),
+            &render_subsystem_card(sub, analysis),
+        )?;
+    }
+    write_if_changed(
+        &base_dir.join("cli").join("commands.md"),
+        &render_commands_markdown(analysis),
+    )?;
+    write_if_changed(
+        &base_dir.join("adr").join("0001_initial_architecture.md"),
+        &render_adr_markdown(analysis, &l0_index.subsystems, &today),
+    )?;
 
-    // 5. Создаем начальный ADR (adr/0001_initial_architecture.md)
-    let adr_path = adr_dir.join("0001_initial_architecture.md");
-    let adr_content = render_adr_markdown(analysis, subsystems, &today);
-    fs::write(&adr_path, adr_content)
-        .with_context(|| format!("Не удалось записать {:?}", adr_path))?;
-
-    // 6. Опционально генерируем / обновляем корневой AGENTS.md
-    if with_agents_md {
-        update_or_create_root_agents_md(&analysis.root_dir, &analysis.name, subsystems)?;
+    if let Some(mode) = agents_md {
+        update_or_create_root_agents_md(
+            &analysis.root_dir,
+            &analysis.name,
+            &l0_index.subsystems,
+            mode,
+        )?;
     }
 
     Ok(())
@@ -203,11 +229,16 @@ pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftRe
 
 /// Incrementally merges `new_subsystems` into the knowledge base in `knowledge_dir`
 /// (creating it if missing). Returns `(added, updated)`.
+///
+/// Quiet by design: everything is rendered in memory first, and when no file would
+/// change nothing is written (`updated_at` included). Only a real difference bumps
+/// `updated_at` and rewrites the files whose bytes changed. Cards that are not
+/// generator output (agent- or hand-written) are left alone.
 pub fn update(
     analysis: &ProjectAnalysis,
     new_subsystems: &[SubsystemInfo],
     knowledge_dir: &Path,
-    with_agents_md: bool,
+    agents_md: Option<StorageMode>,
 ) -> Result<(usize, usize)> {
     let base_dir = knowledge_dir.to_path_buf();
     let l0_path = base_dir.join("L0_index.json");
@@ -215,7 +246,7 @@ pub fn update(
     if !l0_path.exists() {
         // Если базы не было, создаем с нуля
         let opts = GenerateOptions {
-            with_agents_md,
+            agents_md,
             ..GenerateOptions::default()
         };
         generate(analysis, new_subsystems, knowledge_dir, &opts)?;
@@ -223,15 +254,13 @@ pub fn update(
     }
 
     let mut index = L0Index::load_from_file(&l0_path)?;
-
-    let today = chrono_like_date();
-    index.updated_at = today.clone();
     index.commands = analysis.commands.clone();
     index.entrypoints = analysis.root_entrypoints.clone();
     index.core_rules = analysis.rules.clone();
 
     let mut added_count = 0;
     let mut updated_count = 0;
+    let mut new_ids: Vec<String> = Vec::new();
 
     for new_sub in new_subsystems {
         if let Some(existing) = index.subsystems.iter_mut().find(|s| {
@@ -259,11 +288,7 @@ pub fn update(
             }
             updated_count += 1;
         } else {
-            // Новая подсистема: генерируем L1 файл
-            let sub_file = base_dir.join(&new_sub.l1_path);
-            let content = render_subsystem_card(new_sub, analysis);
-            let _ = fs::write(sub_file, content);
-
+            new_ids.push(new_sub.id.clone());
             index.subsystems.push(new_sub.clone());
             added_count += 1;
         }
@@ -278,26 +303,56 @@ pub fn update(
         }
         keep
     });
-    for l1_path in superseded {
-        if let Some(card) = safe_join(&base_dir, &l1_path) {
-            let _ = fs::remove_file(card);
+    let superseded_cards: Vec<_> = superseded
+        .iter()
+        .filter_map(|l1| safe_join(&base_dir, l1))
+        .filter(|card| card.exists())
+        .collect();
+    normalize_index(&mut index);
+
+    // Render everything in memory; generator-owned cards only.
+    let mut rendered: Vec<(std::path::PathBuf, String)> = Vec::new();
+    for sub in &index.subsystems {
+        let Some(card) = safe_join(&base_dir, &sub.l1_path) else {
+            continue;
+        };
+        let owned = new_ids.contains(&sub.id)
+            || fs::read_to_string(&card).map_or(true, |c| c.starts_with("# Подсистема:"));
+        if owned {
+            rendered.push((card, render_subsystem_card(sub, analysis)));
         }
     }
+    rendered.push((
+        base_dir.join("cli/commands.md"),
+        render_commands_markdown(analysis),
+    ));
+    let differs =
+        |path: &Path, content: &str| fs::read(path).ok().as_deref() != Some(content.as_bytes());
+    let l0_md_path = base_dir.join("L0_index.md");
+    let changed = !superseded_cards.is_empty()
+        || differs(&l0_path, &render_l0_json(&index)?)
+        || differs(&l0_md_path, &render_l0_markdown(&index, &index.updated_at))
+        || rendered.iter().any(|(p, c)| differs(p, c));
 
-    // Сохраняем обновленные индексы
-    let l0_json = format!("{}\n", serde_json::to_string_pretty(&index)?);
-    fs::write(&l0_path, l0_json)?;
+    if changed {
+        index.updated_at = chrono_like_date();
+        for (path, content) in &rendered {
+            write_if_changed(path, content)?;
+        }
+        for card in &superseded_cards {
+            let _ = fs::remove_file(card);
+        }
+        write_if_changed(&l0_path, &render_l0_json(&index)?)?;
+        write_if_changed(&l0_md_path, &render_l0_markdown(&index, &index.updated_at))?;
+    }
 
-    let l0_md_content = render_l0_markdown(&index, &today);
-    fs::write(base_dir.join("L0_index.md"), l0_md_content)?;
-
-    // Обновляем commands.md
-    let cli_path = base_dir.join("cli/commands.md");
-    let cli_content = render_commands_markdown(analysis);
-    fs::write(cli_path, cli_content)?;
-
-    if with_agents_md {
-        update_or_create_root_agents_md(&analysis.root_dir, &analysis.name, &index.subsystems)?;
+    if let Some(mode) = agents_md {
+        update_or_create_root_agents_md(
+            &analysis.root_dir,
+            &analysis.name,
+            &index.subsystems,
+            mode,
+        )?;
     }
 
     Ok((added_count, updated_count))
@@ -483,13 +538,21 @@ fn update_or_create_root_agents_md(
     root: &Path,
     project_name: &str,
     subsystems: &[SubsystemInfo],
+    mode: StorageMode,
 ) -> Result<()> {
     let agents_path = root.join("AGENTS.md");
     let section_header = "## 🗺 Архитектурная карта и навигация (OpenViking L0-L2)";
 
+    let storage_note = match mode {
+        StorageMode::Central => {
+            "которая хранится вне репозитория. Для навигации используйте её вместо чтения исходников целиком."
+        }
+        StorageMode::Repo => {
+            "которая лежит в `.context-init/knowledge/` и коммитится вместе с кодом. Людям можно читать её напрямую; агентам — предпочитать MCP/`pack` ниже: это компактнее и учитывает бюджет токенов. После структурных изменений запустите `context-init update` и закоммитьте изменения базы в том же PR."
+        }
+    };
     let mut map_content = format!(
-        "\n\n{}\n\nПроект `{}` описан трехуровневой базой знаний context-init (L0-L2), которая хранится вне репозитория. \
-Для навигации используйте её вместо чтения исходников целиком.\n\n\
+        "\n\n{}\n\nПроект `{}` описан трехуровневой базой знаний context-init (L0-L2), {}\n\n\
 ### ⚡ MCP-First Protocol (context-init)\n\n\
 1. `context_get_subsystems` — карта подсистем проекта (L0).\n\
 2. `context_get_subsystem(subsystem_id)` — компактная L1-карточка подсистемы.\n\
@@ -497,7 +560,7 @@ fn update_or_create_root_agents_md(
 4. `context_check` — проверка архитектурного дрейфа перед сдачей задачи.\n\n\
 Без доступа к MCP (субагенты, скрипты): `context-init pack <subsystem_id> --compress` и `context-init check --compact`.\n\n\
 ### 📦 Доступные подсистемы:\n",
-        section_header, project_name
+        section_header, project_name, storage_note
     );
 
     // Sorted by id, so split-off modules (`<crate>_<module>`) follow their crate.
@@ -507,9 +570,9 @@ fn update_or_create_root_agents_md(
         map_content.push_str(&format!("- `{}` ({}) — {}\n", s.id, s.name, s.summary));
     }
 
-    if agents_path.exists() {
+    let content = if agents_path.exists() {
         let existing = fs::read_to_string(&agents_path).unwrap_or_default();
-        let updated = if let Some(idx) = existing.find("## 🗺 Архитектурная карта и навигация")
+        if let Some(idx) = existing.find("## 🗺 Архитектурная карта и навигация")
         {
             let before = existing[..idx].trim_end();
             format!("{}\n\n{}", before, map_content.trim_start())
@@ -517,18 +580,16 @@ fn update_or_create_root_agents_md(
             let mut u = existing;
             u.push_str(&map_content);
             u
-        };
-        fs::write(&agents_path, updated)
-            .with_context(|| format!("Не удалось обновить {:?}", agents_path))?;
+        }
     } else {
         let mut initial = format!(
             "# Инструкции для ИИ-агентов в проекте {}\n\nДанный проект настроен для автономной работы ассистентов.",
             project_name
         );
         initial.push_str(&map_content);
-        fs::write(&agents_path, initial)
-            .with_context(|| format!("Не удалось создать {:?}", agents_path))?;
-    }
+        initial
+    };
+    write_if_changed(&agents_path, &content)?;
 
     Ok(())
 }
@@ -567,6 +628,9 @@ fn chrono_like_date() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::StorageMode;
+    use std::collections::BTreeMap;
+    use std::time::SystemTime;
 
     #[test]
     fn test_sanitize_id() {
@@ -637,7 +701,7 @@ mod tests {
         // 2. Test update_knowledge_base
         let mut sub2 = sub.clone();
         sub2.tokens = 150;
-        update(&analysis, &[sub2], &kd, false).expect("update should succeed");
+        update(&analysis, &[sub2], &kd, None).expect("update should succeed");
 
         let updated_content = fs::read_to_string(&l0_path).expect("read updated L0_index.json");
         assert!(
@@ -680,7 +744,7 @@ mod tests {
             named_sub("crates_b", "b"),
             named_sub("crates_a", "a"),
         ];
-        update_or_create_root_agents_md(&temp_dir, "p", &subs).unwrap();
+        update_or_create_root_agents_md(&temp_dir, "p", &subs, StorageMode::Central).unwrap();
         let content = fs::read_to_string(temp_dir.join("AGENTS.md")).unwrap();
         let pos = |id: &str| content.find(&format!("- `{id}`")).unwrap();
         assert!(pos("crates_a") < pos("crates_a_storage"));
@@ -722,7 +786,7 @@ mod tests {
             named_sub("a_cfg", "Модуль-файл `a/cfg.rs`"),
             named_sub("a_manual", "Модуль-файл `a/manual.rs`"),
         ];
-        update(&analysis, &fresh, &kd, false).unwrap();
+        update(&analysis, &fresh, &kd, None).unwrap();
         let index = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
         let summary = |id: &str| {
             index
@@ -758,7 +822,8 @@ mod tests {
             parent: None,
         };
 
-        update_or_create_root_agents_md(&temp_dir, "test-proj", &[sub]).expect("should succeed");
+        update_or_create_root_agents_md(&temp_dir, "test-proj", &[sub], StorageMode::Central)
+            .expect("should succeed");
 
         let content = fs::read_to_string(temp_dir.join("AGENTS.md")).expect("read AGENTS.md");
         assert!(content.contains("MCP-First Protocol"));
@@ -845,7 +910,7 @@ mod tests {
             .find(|s| s.id == "crates_foo_big")
             .unwrap();
         assert_eq!(child.parent.as_deref(), Some("crates_foo"));
-        let (added, _) = update(&split, &split_subs, &kb, false).unwrap();
+        let (added, _) = update(&split, &split_subs, &kb, None).unwrap();
         assert_eq!(added, 1);
         let report = audit(&split, &kb).unwrap();
         assert!(report.missing_in_fs.is_empty() && report.untracked_in_knowledge.is_empty());
@@ -864,7 +929,7 @@ mod tests {
         let report = audit(&whole, &kb).unwrap();
         assert_eq!(report.missing_in_fs, vec!["crates_foo_big".to_string()]);
         assert!(report.untracked_in_knowledge.is_empty());
-        update(&whole, &subs, &kb, false).unwrap();
+        update(&whole, &subs, &kb, None).unwrap();
         let index = L0Index::load_from_file(&kb.join("L0_index.json")).unwrap();
         assert!(index.subsystems.iter().all(|s| s.id != "crates_foo_big"));
         assert!(!kb.join("subsystems/crates_foo_big.md").exists());
@@ -873,5 +938,190 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&kb);
+    }
+
+    fn quiet_root(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "test_quiet_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src/api")).unwrap();
+        fs::create_dir_all(root.join("src/store")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"quiet\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/main.rs"),
+            "mod api;\nmod store;\nfn main() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/api/mod.rs"),
+            "pub fn run_api() -> u32 {\n    1\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/store/mod.rs"),
+            "pub fn run_store() -> u32 {\n    2\n}\n",
+        )
+        .unwrap();
+        root
+    }
+
+    fn deterministic(root: &Path) -> (ProjectAnalysis, Vec<SubsystemInfo>) {
+        let analysis = analyze_at(root, 15_000);
+        let subs = crate::analysis::subsystems::build_deterministic(&analysis);
+        (analysis, subs)
+    }
+
+    /// Bytes and mtime of every file under `dir` plus `extra`.
+    fn snapshot(dir: &Path, extra: &[&Path]) -> BTreeMap<String, (Vec<u8>, SystemTime)> {
+        fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in fs::read_dir(dir).unwrap().flatten() {
+                if e.path().is_dir() {
+                    walk(&e.path(), out);
+                } else {
+                    out.push(e.path());
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(dir, &mut files);
+        files.extend(extra.iter().map(|p| p.to_path_buf()));
+        files
+            .into_iter()
+            .map(|p| {
+                let meta = fs::metadata(&p).unwrap();
+                (
+                    p.to_string_lossy().to_string(),
+                    (fs::read(&p).unwrap(), meta.modified().unwrap()),
+                )
+            })
+            .collect()
+    }
+
+    fn agents_opts() -> GenerateOptions {
+        GenerateOptions {
+            agents_md: Some(StorageMode::Repo),
+            ..GenerateOptions::default()
+        }
+    }
+
+    #[test]
+    fn update_twice_is_noop() {
+        let root = quiet_root("twice");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &agents_opts()).unwrap();
+        update(&analysis, &subs, &kd, Some(StorageMode::Repo)).unwrap();
+        let agents = root.join("AGENTS.md");
+        let before = snapshot(&kd, &[&agents]);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        update(&analysis, &subs, &kd, Some(StorageMode::Repo)).unwrap();
+        assert!(before == snapshot(&kd, &[&agents]), "update rewrote files");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn body_edit_does_not_touch_kb() {
+        let root = quiet_root("body");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &agents_opts()).unwrap();
+        update(&analysis, &subs, &kd, Some(StorageMode::Repo)).unwrap();
+        let before = snapshot(&kd, &[]);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let api = root.join("src/api/mod.rs");
+        fs::write(
+            &api,
+            "// reworked\npub fn run_api() -> u32 {\n    let x = 40;\n    x + 2\n}\n",
+        )
+        .unwrap();
+        let (analysis, subs) = deterministic(&root);
+        update(&analysis, &subs, &kd, Some(StorageMode::Repo)).unwrap();
+        assert!(before == snapshot(&kd, &[]), "a body edit changed the KB");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn structural_change_bumps_updated_at() {
+        let root = quiet_root("bump");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+        let mut index = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        index.updated_at = "2000-01-01".to_string();
+        fs::write(
+            kd.join("L0_index.json"),
+            format!("{}\n", serde_json::to_string_pretty(&index).unwrap()),
+        )
+        .unwrap();
+        fs::write(
+            kd.join("L0_index.md"),
+            render_l0_markdown(&index, "2000-01-01"),
+        )
+        .unwrap();
+
+        update(&analysis, &subs, &kd, None).unwrap();
+        let after = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        assert_eq!(
+            after.updated_at, "2000-01-01",
+            "unchanged run keeps the date"
+        );
+
+        fs::create_dir_all(root.join("src/extra")).unwrap();
+        fs::write(root.join("src/extra/mod.rs"), "pub fn extra() {}\n").unwrap();
+        let (analysis, subs) = deterministic(&root);
+        update(&analysis, &subs, &kd, None).unwrap();
+        let after = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        assert_eq!(after.updated_at, chrono_like_date());
+        assert!(
+            kd.join("subsystems/src_extra.md").is_file()
+                || after.subsystems.iter().any(|s| s.id.contains("extra"))
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_keeps_enriched_summary() {
+        let root = quiet_root("enriched");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+        let mut index = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        index.subsystems[0].summary = "Ручное описание".to_string();
+        let id = index.subsystems[0].id.clone();
+        fs::write(
+            kd.join("L0_index.json"),
+            format!("{}\n", serde_json::to_string_pretty(&index).unwrap()),
+        )
+        .unwrap();
+        update(&analysis, &subs, &kd, None).unwrap();
+        let after = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        let sub = after.subsystems.iter().find(|s| s.id == id).unwrap();
+        assert_eq!(sub.summary, "Ручное описание");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn agents_md_wording_follows_mode() {
+        let dir = quiet_root("wording");
+        let subs = [named_sub("core", "c")];
+        update_or_create_root_agents_md(&dir, "p", &subs, StorageMode::Repo).unwrap();
+        let repo = fs::read_to_string(dir.join("AGENTS.md")).unwrap();
+        assert!(repo.contains(".context-init/knowledge/"), "{repo}");
+        assert!(repo.contains("закоммитьте"), "{repo}");
+        assert!(!repo.contains("вне репозитория"), "{repo}");
+        update_or_create_root_agents_md(&dir, "p", &subs, StorageMode::Central).unwrap();
+        let central = fs::read_to_string(dir.join("AGENTS.md")).unwrap();
+        assert!(central.contains("вне репозитория"), "{central}");
+        assert!(!central.contains("закоммитьте"), "{central}");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

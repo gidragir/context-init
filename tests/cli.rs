@@ -567,3 +567,31 @@ fn cli_feedback_disabled_reports_not_recorded() {
     assert!(stdout(&out).contains("not recorded"), "{}", stdout(&out));
     assert!(!sb.data_home().join("context-init/telemetry").exists());
 }
+
+#[test]
+fn cli_update_twice_leaves_git_clean() {
+    let sb = Sandbox::new("git_clean");
+    sb.write_fixture();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(sb.project())
+            .env("HOME", sb.home())
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+        stdout(&out)
+    };
+    git(&["init", "-q"]);
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "kb"]);
+    let out = sb.run(&["update", ".", "--compact"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(git(&["status", "--porcelain"]), "");
+}

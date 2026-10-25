@@ -82,7 +82,7 @@ mod tests {
         let opts = GenerateOptions {
             force: false,
             dry_run: false,
-            with_agents_md: true,
+            agents_md: Some(StorageMode::Central),
         };
         generator::generate(&analysis_for(&root), &[core_subsystem()], &kd, &opts).unwrap();
         assert!(kd.join("L0_index.json").is_file());

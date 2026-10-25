@@ -54,7 +54,7 @@ pub fn run_init(
     let gen_opts = GenerateOptions {
         force: opts.force,
         dry_run: opts.dry_run,
-        with_agents_md: opts.with_agents_md,
+        agents_md: opts.with_agents_md.then_some(project.storage),
     };
     generator::generate(&analysis, &subsystems, &knowledge_dir, &gen_opts)?;
     Ok(PipelineOutcome {
@@ -75,8 +75,12 @@ pub fn run_update(
 ) -> Result<PipelineOutcome> {
     let (analysis, subsystems, enrich) = analyze(project, router, RoleName::Update, opts)?;
     let knowledge_dir = project.knowledge_dir.clone();
-    let (added, updated) =
-        generator::update(&analysis, &subsystems, &knowledge_dir, opts.with_agents_md)?;
+    let (added, updated) = generator::update(
+        &analysis,
+        &subsystems,
+        &knowledge_dir,
+        opts.with_agents_md.then_some(project.storage),
+    )?;
     Ok(PipelineOutcome {
         analysis,
         subsystems,
