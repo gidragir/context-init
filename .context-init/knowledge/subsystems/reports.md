@@ -1,17 +1,17 @@
 # Подсистема: Reports (L1)
 
 > **Идентификатор:** `reports`
-> **Теги:** reports, Rust (Cargo) | **Объем:** ~1264 токенов BPE
+> **Теги:** Rust (Cargo), reports
 
 ## 🎯 Назначение и роль
 Модуль и компоненты директории `reports` (2 файлов)
 
 ## 📁 Точки входа и структура файлов
 
-| Файл | Строк | Статус |
-| :--- | :--- | :--- |
-| `reports/benchmark_latest.json` | 54 | Исходный код |
-| `reports/BENCHMARK_REPORT.md` | 46 | Исходный код |
+| Файл | Статус |
+| :--- | :--- |
+| `reports/BENCHMARK_REPORT.md` | Исходный код |
+| `reports/benchmark_latest.json` | Исходный код |
 
 ## 🧪 Запуск и тестирование
 ```bash

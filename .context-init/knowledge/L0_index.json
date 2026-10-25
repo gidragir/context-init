@@ -1,0 +1,1043 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_version": 3,
+  "project": "context-init",
+  "description": "CLI-утилита на Rust для автоматической инициализации и поддержания трехуровневой базы знаний (**OpenViking L0-L2**) для автономных ИИ-ассистентов (Antigravity, Hermes, Claude Code, Cursor, Aider).",
+  "updated_at": "2026-10-25",
+  "project_type": "Rust (Cargo)",
+  "entrypoints": [
+    "src/main.rs",
+    "Cargo.toml"
+  ],
+  "commands": {
+    "build": "rtk cargo build",
+    "test": "rtk cargo test",
+    "lint": "rtk cargo clippy",
+    "fmt": "rtk cargo fmt --check",
+    "run": "rtk cargo run"
+  },
+  "subsystems": [
+    {
+      "id": "crates_ci-core",
+      "name": "Ci Core",
+      "summary": "Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs",
+      "l1_path": "subsystems/crates_ci-core.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core"
+      ],
+      "entrypoints": [
+        "crates/ci-core/Cargo.toml",
+        "crates/ci-core/src/lib.rs"
+      ],
+      "key_files": [
+        "crates/ci-core/Cargo.toml",
+        "crates/ci-core/src/git.rs",
+        "crates/ci-core/src/lib.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/Cargo.toml",
+          "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-core/src/git.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/lib.rs",
+          "is_entrypoint": true
+        }
+      ],
+      "key_symbols": [
+        "pub const VERSION: &str = env !(\"CARGO_PKG_VERSION\")",
+        "pub fn crate_info() -> &'static str",
+        "pub struct GitStatusEntry",
+        "pub struct StalenessReport",
+        "pub trait GitBackend",
+        "pub struct SystemGitBackend",
+        "pub fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitStatusEntry>",
+        "pub fn parse_nul_paths(bytes: &[u8]) -> Vec<String>",
+        "pub fn check_card_staleness(backend: &dyn GitBackend, repo_root: &Path, card: &OkfCard, ) -> Result<StalenessReport>",
+        "pub fn check_frontmatter_staleness(backend: &dyn GitBackend, repo_root: &Path, frontmatter: &CardFrontmatter, ) -> Result<StalenessReport>"
+      ],
+      "test_command": "rtk cargo test -p ci-core"
+    },
+    {
+      "id": "crates_ci-core_analysis",
+      "name": "Ci Core Analysis",
+      "summary": "Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs",
+      "l1_path": "subsystems/crates_ci-core_analysis.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis"
+      ],
+      "entrypoints": [
+        "crates/ci-core/src/analysis/mod.rs"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/mod.rs",
+        "crates/ci-core/src/analysis/pack.rs",
+        "crates/ci-core/src/analysis/subsystems.rs",
+        "crates/ci-core/src/analysis/types.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/mod.rs",
+          "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-core/src/analysis/pack.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/subsystems.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/types.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const REPO_KNOWLEDGE_DIR: &str = \".context-init/knowledge\"",
+        "pub fn resolve_knowledge_dir(root: &Path, mode: StorageMode, central_kb: &Path) -> PathBuf",
+        "pub enum PackStyle",
+        "pub struct PackedSubsystems",
+        "pub fn pack_subsystem(root: &Path, knowledge_dir: &Path, index: &L0Index, subsystem_id: &str, compress: bool, style: PackStyle, ) -> Result<PackedSubsystems>",
+        "pub fn pack_files(root: &Path, subs: &[&SubsystemInfo], files: &[String], compress: bool, style: PackStyle, ) -> String",
+        "pub fn compress_source(content: &str, ext: &str) -> String",
+        "pub fn compress_rust_ast(content: &str) -> Option<String>",
+        "pub fn format_rust_items(items: &[syn :: Item]) -> String",
+        "pub fn normalize_rust_tokens(s: &str) -> String"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core"
+    },
+    {
+      "id": "crates_ci-core_analysis_detector",
+      "name": "Ci Core Analysis Detector",
+      "summary": "Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (1 файлов)",
+      "l1_path": "subsystems/crates_ci-core_analysis_detector.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_detector"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/detector.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/detector.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct AnalyzeOptions",
+        "pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<ProjectAnalysis>",
+        "pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<ProjectAnalysis>",
+        "pub fn prefix_with_rtk(cmd: &str) -> String",
+        "pub fn count_tokens(text: &str) -> usize",
+        "pub fn is_ignored_path(path: &Path, root: &Path) -> bool",
+        "pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String>",
+        "pub fn extract_multiline_symbols(content: &str, ext: &str, deep: bool) -> Vec<String>",
+        "pub fn clean_symbol_line(line: &str) -> String",
+        "pub fn sanitize_symbol(raw: &str) -> Option<String>"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis"
+    },
+    {
+      "id": "crates_ci-core_analysis_detector_tests",
+      "name": "Ci Core Analysis Detector Tests",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/detector/tests.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_detector_tests.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_detector_tests"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/detector/tests.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/detector/tests.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct Engine<T: Clone>",
+        "pub enum Status",
+        "pub async fn run_task<T>(id: &str, payload: T) -> Result<Status, Error>"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis_detector"
+    },
+    {
+      "id": "crates_ci-core_analysis_generator",
+      "name": "Ci Core Analysis Generator",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/generator.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_generator.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_generator"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/generator.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/generator.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct GenerateOptions",
+        "pub fn generate(analysis: &ProjectAnalysis, subsystems: &[SubsystemInfo], knowledge_dir: &Path, opts: &GenerateOptions, ) -> Result<()>",
+        "pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftReport>",
+        "pub fn update(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, ) -> Result<(usize, usize)>",
+        "pub fn sanitize_id(raw: &str) -> String"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis"
+    },
+    {
+      "id": "crates_ci-core_config",
+      "name": "Ci Core Config",
+      "summary": "Модуль-файл `crates/ci-core/src/config.rs`",
+      "l1_path": "subsystems/crates_ci-core_config.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_config"
+      ],
+      "key_files": [
+        "crates/ci-core/src/config.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/config.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const DEFAULT_LANGUAGE: &str = \"ru\"",
+        "pub const DEFAULT_MAX_RESPONSE_TOKENS: usize = 4000",
+        "pub const DEFAULT_SPLIT_THRESHOLD_TOKENS: usize = 15_000",
+        "pub const MIN_RESPONSE_TOKENS: usize = 64",
+        "pub const ROLE_NONE: &str = \"none\"",
+        "pub struct StoragePaths",
+        "pub enum RtkMode",
+        "pub enum StorageMode",
+        "pub fn is_binary_available(bin_name: &str) -> bool",
+        "pub fn is_binary_available_in_path(bin_name: &str, path_var: Option<&OsStr>) -> bool"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core"
+    },
+    {
+      "id": "crates_ci-core_openviking",
+      "name": "Ci Core Openviking",
+      "summary": "Модуль-файл `crates/ci-core/src/openviking.rs`",
+      "l1_path": "subsystems/crates_ci-core_openviking.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_openviking"
+      ],
+      "key_files": [
+        "crates/ci-core/src/openviking.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/openviking.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const L0_ABSTRACT_MAX_CHARS: usize = 256",
+        "pub struct CardSource",
+        "pub struct CardGeneratedBy",
+        "pub struct CardFreshness",
+        "pub struct CardFrontmatter",
+        "pub struct OkfCard",
+        "pub fn extract_l0_abstract(markdown: &str) -> String",
+        "pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core"
+    },
+    {
+      "id": "crates_ci-core_storage",
+      "name": "Ci Core Storage",
+      "summary": "Модуль-файл `crates/ci-core/src/storage.rs`",
+      "l1_path": "subsystems/crates_ci-core_storage.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_storage"
+      ],
+      "key_files": [
+        "crates/ci-core/src/storage.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/storage.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const CURRENT_L0_SCHEMA_VERSION: u32 = 3",
+        "pub fn normalize_path(path: impl AsRef<Path>) -> String",
+        "pub fn normalize_path_str(raw: &str) -> String",
+        "pub fn normalize_line_endings(text: &str) -> String",
+        "pub fn normalize_git_remote(remote_url: &str) -> String",
+        "pub fn compute_project_id(project_path: &Path, remote_url: Option<&str>) -> String",
+        "pub fn hash_project_id(project_id: &str) -> String",
+        "pub enum ProjectType",
+        "pub struct SubsystemFile",
+        "pub struct SubsystemInfo"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core"
+    },
+    {
+      "id": "crates_ci-core_telemetry",
+      "name": "Ci Core Telemetry",
+      "summary": "Модуль-файл `crates/ci-core/src/telemetry.rs`",
+      "l1_path": "subsystems/crates_ci-core_telemetry.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_telemetry"
+      ],
+      "key_files": [
+        "crates/ci-core/src/telemetry.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/telemetry.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const TELEMETRY_SCHEMA_VERSION: u32 = 1",
+        "pub struct OperationalSignal",
+        "pub struct EfficiencySignal",
+        "pub struct LlmSignal",
+        "pub struct SessionPatternSignal",
+        "pub struct FeedbackSignal",
+        "pub enum TelemetrySignal",
+        "pub struct TelemetryEvent",
+        "pub trait TelemetrySink",
+        "pub fn record_feedback(cfg: &crate :: config :: Config, storage: &crate :: config :: StoragePaths, project_id: &str, signal: FeedbackSignal, ) -> Result<bool>"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core"
+    },
+    {
+      "id": "crates_ci-llm",
+      "name": "Ci Llm",
+      "summary": "Подсистема `crates/ci-llm` с ключевыми точками входа: crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs",
+      "l1_path": "subsystems/crates_ci-llm.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-llm"
+      ],
+      "entrypoints": [
+        "crates/ci-llm/Cargo.toml",
+        "crates/ci-llm/src/lib.rs"
+      ],
+      "key_files": [
+        "crates/ci-llm/Cargo.toml",
+        "crates/ci-llm/src/lib.rs",
+        "crates/ci-llm/src/provider.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-llm/Cargo.toml",
+          "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-llm/src/lib.rs",
+          "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-llm/src/provider.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const VERSION: &str = env !(\"CARGO_PKG_VERSION\")",
+        "pub fn crate_info() -> String",
+        "pub type RoleName = RoleKind",
+        "pub struct AgentWorkPackage",
+        "pub struct ValidatedAgentOutput",
+        "pub struct LlmRequest",
+        "pub struct LlmResponse",
+        "pub struct ProviderCapabilities",
+        "pub trait LlmProvider",
+        "pub struct LlmExecutionError"
+      ],
+      "test_command": "rtk cargo test -p ci-llm"
+    },
+    {
+      "id": "crates_ci-llm_decorators",
+      "name": "Ci Llm Decorators",
+      "summary": "Модуль-файл `crates/ci-llm/src/decorators.rs`",
+      "l1_path": "subsystems/crates_ci-llm_decorators.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-llm_decorators"
+      ],
+      "key_files": [
+        "crates/ci-llm/src/decorators.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-llm/src/decorators.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct RetryDecorator",
+        "pub struct TimeoutDecorator",
+        "pub struct TokenBudgetDecorator",
+        "pub struct LlmTelemetryRecord",
+        "pub struct TelemetryDecorator"
+      ],
+      "test_command": "rtk cargo test -p ci-llm",
+      "parent": "crates_ci-llm"
+    },
+    {
+      "id": "crates_ci-llm_enrich",
+      "name": "Ci Llm Enrich",
+      "summary": "Модуль-файл `crates/ci-llm/src/enrich.rs`",
+      "l1_path": "subsystems/crates_ci-llm_enrich.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-llm_enrich"
+      ],
+      "key_files": [
+        "crates/ci-llm/src/enrich.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-llm/src/enrich.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub enum EnrichOutcome",
+        "pub fn enrich_subsystems(router: &RoleRouter, prompts: &PromptTemplateRegistry, role: RoleName, analysis: &ProjectAnalysis, subsystems: &mut [SubsystemInfo], model_override: Option<&str>, ) -> EnrichOutcome",
+        "pub fn cli_outcome_message(outcome: &EnrichOutcome) -> Option<String>"
+      ],
+      "test_command": "rtk cargo test -p ci-llm",
+      "parent": "crates_ci-llm"
+    },
+    {
+      "id": "crates_ci-llm_prompts",
+      "name": "Ci Llm Prompts",
+      "summary": "Модуль-файл `crates/ci-llm/src/prompts.rs`",
+      "l1_path": "subsystems/crates_ci-llm_prompts.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-llm_prompts"
+      ],
+      "key_files": [
+        "crates/ci-llm/src/prompts.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-llm/src/prompts.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub enum PromptTemplateSource",
+        "pub struct PromptTemplate",
+        "pub struct PromptVars",
+        "pub struct RenderedPrompt",
+        "pub struct PromptTemplateRegistry",
+        "pub fn language_instruction(language: &str) -> String"
+      ],
+      "test_command": "rtk cargo test -p ci-llm",
+      "parent": "crates_ci-llm"
+    },
+    {
+      "id": "crates_ci-llm_providers",
+      "name": "Ci Llm Providers",
+      "summary": "Модуль-файл `crates/ci-llm/src/providers.rs`",
+      "l1_path": "subsystems/crates_ci-llm_providers.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-llm_providers"
+      ],
+      "key_files": [
+        "crates/ci-llm/src/providers.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-llm/src/providers.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const DEFAULT_PROVIDER_TIMEOUT_MS: u64 = 60_000",
+        "pub const DEFAULT_HEALTHCHECK_TIMEOUT_MS: u64 = 1_500",
+        "pub struct SubsystemAiSummary",
+        "pub fn parse_subsystem_summaries(raw: &str) -> Result<Vec<SubsystemAiSummary>>",
+        "pub fn is_ollama_online(endpoint: &str, timeout_ms: Option<u64>) -> bool",
+        "pub struct OllamaProvider",
+        "pub struct CommandProvider",
+        "pub struct AgentProvider",
+        "pub fn validate_agent_submission(package: &AgentWorkPackage, submission: &Value, ) -> Result<ValidatedAgentOutput>",
+        "pub struct ExtensionPointError"
+      ],
+      "test_command": "rtk cargo test -p ci-llm",
+      "parent": "crates_ci-llm"
+    },
+    {
+      "id": "crates_ci-llm_router",
+      "name": "Ci Llm Router",
+      "summary": "Модуль-файл `crates/ci-llm/src/router.rs`",
+      "l1_path": "subsystems/crates_ci-llm_router.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-llm_router"
+      ],
+      "key_files": [
+        "crates/ci-llm/src/router.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-llm/src/router.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub enum RoleExecutionOutcome",
+        "pub struct RoleRouter"
+      ],
+      "test_command": "rtk cargo test -p ci-llm",
+      "parent": "crates_ci-llm"
+    },
+    {
+      "id": "crates_ci-llm_schema",
+      "name": "Ci Llm Schema",
+      "summary": "Модуль-файл `crates/ci-llm/src/schema.rs`",
+      "l1_path": "subsystems/crates_ci-llm_schema.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-llm_schema"
+      ],
+      "key_files": [
+        "crates/ci-llm/src/schema.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-llm/src/schema.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub fn extract_json_payload(raw: &str) -> &str",
+        "pub fn parse_and_validate_json(raw: &str, schema: Option<&Value>, tokens_in: usize, ) -> Result<Value>",
+        "pub fn validate_json_schema(schema: &Value, instance: &Value) -> Result<()>",
+        "pub fn default_role_json_schema(role: RoleName) -> Value"
+      ],
+      "test_command": "rtk cargo test -p ci-llm",
+      "parent": "crates_ci-llm"
+    },
+    {
+      "id": "crates_ci-mcp",
+      "name": "Ci Mcp",
+      "summary": "Подсистема `crates/ci-mcp` с ключевыми точками входа: crates/ci-mcp/Cargo.toml, crates/ci-mcp/src/lib.rs",
+      "l1_path": "subsystems/crates_ci-mcp.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-mcp"
+      ],
+      "entrypoints": [
+        "crates/ci-mcp/Cargo.toml",
+        "crates/ci-mcp/src/lib.rs"
+      ],
+      "key_files": [
+        "crates/ci-mcp/Cargo.toml",
+        "crates/ci-mcp/src/lib.rs",
+        "crates/ci-mcp/src/pipeline.rs",
+        "crates/ci-mcp/src/tools.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-mcp/Cargo.toml",
+          "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-mcp/src/lib.rs",
+          "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-mcp/src/pipeline.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-mcp/src/tools.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const VERSION: &str = env !(\"CARGO_PKG_VERSION\")",
+        "pub fn crate_info() -> String",
+        "pub struct PipelineOptions<'a>",
+        "pub struct PipelineOutcome",
+        "pub fn run_init(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>",
+        "pub fn run_update(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>",
+        "pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>",
+        "pub struct McpCheckParams",
+        "pub struct McpCheckResult",
+        "pub struct McpGetSubsystemsParams"
+      ],
+      "test_command": "rtk cargo test -p ci-mcp"
+    },
+    {
+      "id": "crates_ci-mcp_handlers",
+      "name": "Ci Mcp Handlers",
+      "summary": "Модуль-файл `crates/ci-mcp/src/handlers.rs`",
+      "l1_path": "subsystems/crates_ci-mcp_handlers.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-mcp_handlers"
+      ],
+      "key_files": [
+        "crates/ci-mcp/src/handlers.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-mcp/src/handlers.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const PACK_ALL_MAX_PAGES: usize = 5",
+        "pub struct ResolvedProject",
+        "pub struct HandlerReply",
+        "pub struct ContextHandler"
+      ],
+      "test_command": "rtk cargo test -p ci-mcp",
+      "parent": "crates_ci-mcp"
+    },
+    {
+      "id": "crates_ci-mcp_pagination",
+      "name": "Ci Mcp Pagination",
+      "summary": "Модуль-файл `crates/ci-mcp/src/pagination.rs`",
+      "l1_path": "subsystems/crates_ci-mcp_pagination.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-mcp_pagination"
+      ],
+      "key_files": [
+        "crates/ci-mcp/src/pagination.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-mcp/src/pagination.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub fn count_tokens(text: &str) -> usize",
+        "pub struct CursorData",
+        "pub fn base64_url_encode(data: &[u8]) -> String",
+        "pub fn base64_url_decode(input: &str) -> Option<Vec<u8>>",
+        "pub fn encode_cursor(cursor: &CursorData) -> String",
+        "pub fn decode_cursor(cursor_str: &str) -> Option<CursorData>",
+        "pub fn format_footer(truncated: bool, next_cursor: Option<&str>, stale: bool, tokens: usize, ) -> String",
+        "pub struct PaginatedOutput",
+        "pub fn paginate_content(full_text: &str, cursor: Option<&str>, max_tokens: usize, stale: bool, ) -> PaginatedOutput"
+      ],
+      "test_command": "rtk cargo test -p ci-mcp",
+      "parent": "crates_ci-mcp"
+    },
+    {
+      "id": "crates_ci-mcp_server",
+      "name": "Ci Mcp Server",
+      "summary": "Модуль-файл `crates/ci-mcp/src/server.rs`",
+      "l1_path": "subsystems/crates_ci-mcp_server.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-mcp_server"
+      ],
+      "key_files": [
+        "crates/ci-mcp/src/server.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-mcp/src/server.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct ContextInitServer",
+        "pub fn find_project_root_upward(start: &Path) -> Option<PathBuf>",
+        "pub fn roots_to_paths(roots: &[Root]) -> Vec<PathBuf>",
+        "pub async fn run_mcp_server(default_root: Option<&Path>) -> Result<()>"
+      ],
+      "test_command": "rtk cargo test -p ci-mcp",
+      "parent": "crates_ci-mcp"
+    },
+    {
+      "id": "references",
+      "name": "References",
+      "summary": "Модуль и компоненты директории `references` (1 файлов)",
+      "l1_path": "subsystems/references.md",
+      "tags": [
+        "Rust (Cargo)",
+        "references"
+      ],
+      "key_files": [
+        "references/openviking_spec.md"
+      ],
+      "files": [
+        {
+          "path": "references/openviking_spec.md",
+          "is_entrypoint": false
+        }
+      ]
+    },
+    {
+      "id": "reports",
+      "name": "Reports",
+      "summary": "Модуль и компоненты директории `reports` (2 файлов)",
+      "l1_path": "subsystems/reports.md",
+      "tags": [
+        "Rust (Cargo)",
+        "reports"
+      ],
+      "key_files": [
+        "reports/BENCHMARK_REPORT.md",
+        "reports/benchmark_latest.json"
+      ],
+      "files": [
+        {
+          "path": "reports/BENCHMARK_REPORT.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "reports/benchmark_latest.json",
+          "is_entrypoint": false
+        }
+      ]
+    },
+    {
+      "id": "reports_subagents",
+      "name": "Reports Subagents",
+      "summary": "Модуль и компоненты директории `reports/subagents` (7 файлов)",
+      "l1_path": "subsystems/reports_subagents.md",
+      "tags": [
+        "Rust (Cargo)",
+        "reports_subagents"
+      ],
+      "key_files": [
+        "reports/subagents/ci-core_summary.md",
+        "reports/subagents/ci-llm_summary.md",
+        "reports/subagents/ci-mcp_summary.md",
+        "reports/subagents/context-init_summary.md",
+        "reports/subagents/crate_split_summary.md",
+        "reports/subagents/step1_workspace_summary.md",
+        "reports/subagents/v0.3_handoff.md"
+      ],
+      "files": [
+        {
+          "path": "reports/subagents/ci-core_summary.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "reports/subagents/ci-llm_summary.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "reports/subagents/ci-mcp_summary.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "reports/subagents/context-init_summary.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "reports/subagents/crate_split_summary.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "reports/subagents/step1_workspace_summary.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "reports/subagents/v0.3_handoff.md",
+          "is_entrypoint": false
+        }
+      ],
+      "parent": "reports"
+    },
+    {
+      "id": "reports_subagents_ci-core_verification",
+      "name": "Reports Subagents Ci Core Verification",
+      "summary": "Модуль-файл `reports/subagents/ci-core_verification.md`",
+      "l1_path": "subsystems/reports_subagents_ci-core_verification.md",
+      "tags": [
+        "Rust (Cargo)",
+        "reports_subagents_ci-core_verification"
+      ],
+      "key_files": [
+        "reports/subagents/ci-core_verification.md"
+      ],
+      "files": [
+        {
+          "path": "reports/subagents/ci-core_verification.md",
+          "is_entrypoint": false
+        }
+      ],
+      "parent": "reports_subagents"
+    },
+    {
+      "id": "reports_subagents_ci-llm_verification",
+      "name": "Reports Subagents Ci Llm Verification",
+      "summary": "Модуль-файл `reports/subagents/ci-llm_verification.md`",
+      "l1_path": "subsystems/reports_subagents_ci-llm_verification.md",
+      "tags": [
+        "Rust (Cargo)",
+        "reports_subagents_ci-llm_verification"
+      ],
+      "key_files": [
+        "reports/subagents/ci-llm_verification.md"
+      ],
+      "files": [
+        {
+          "path": "reports/subagents/ci-llm_verification.md",
+          "is_entrypoint": false
+        }
+      ],
+      "parent": "reports_subagents"
+    },
+    {
+      "id": "reports_subagents_ci-mcp_verification",
+      "name": "Reports Subagents Ci Mcp Verification",
+      "summary": "Модуль-файл `reports/subagents/ci-mcp_verification.md`",
+      "l1_path": "subsystems/reports_subagents_ci-mcp_verification.md",
+      "tags": [
+        "Rust (Cargo)",
+        "reports_subagents_ci-mcp_verification"
+      ],
+      "key_files": [
+        "reports/subagents/ci-mcp_verification.md"
+      ],
+      "files": [
+        {
+          "path": "reports/subagents/ci-mcp_verification.md",
+          "is_entrypoint": false
+        }
+      ],
+      "parent": "reports_subagents"
+    },
+    {
+      "id": "reports_subagents_context-init_verification",
+      "name": "Reports Subagents Context Init Verification",
+      "summary": "Модуль-файл `reports/subagents/context-init_verification.md`",
+      "l1_path": "subsystems/reports_subagents_context-init_verification.md",
+      "tags": [
+        "Rust (Cargo)",
+        "reports_subagents_context-init_verification"
+      ],
+      "key_files": [
+        "reports/subagents/context-init_verification.md"
+      ],
+      "files": [
+        {
+          "path": "reports/subagents/context-init_verification.md",
+          "is_entrypoint": false
+        }
+      ],
+      "parent": "reports_subagents"
+    },
+    {
+      "id": "reports_subagents_step1_workspace_verification",
+      "name": "Reports Subagents Step1 Workspace Verification",
+      "summary": "Модуль-файл `reports/subagents/step1_workspace_verification.md`",
+      "l1_path": "subsystems/reports_subagents_step1_workspace_verification.md",
+      "tags": [
+        "Rust (Cargo)",
+        "reports_subagents_step1_workspace_verification"
+      ],
+      "key_files": [
+        "reports/subagents/step1_workspace_verification.md"
+      ],
+      "files": [
+        {
+          "path": "reports/subagents/step1_workspace_verification.md",
+          "is_entrypoint": false
+        }
+      ],
+      "parent": "reports_subagents"
+    },
+    {
+      "id": "src_cli",
+      "name": "Cli",
+      "summary": "Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs",
+      "l1_path": "subsystems/src_cli.md",
+      "tags": [
+        "Rust (Cargo)",
+        "src_cli"
+      ],
+      "entrypoints": [
+        "src/cli/mod.rs"
+      ],
+      "key_files": [
+        "src/cli/check.rs",
+        "src/cli/config.rs",
+        "src/cli/feedback.rs",
+        "src/cli/init_update.rs",
+        "src/cli/mcp.rs",
+        "src/cli/migrate.rs",
+        "src/cli/mod.rs",
+        "src/cli/output.rs",
+        "src/cli/pack.rs",
+        "src/cli/telemetry.rs"
+      ],
+      "files": [
+        {
+          "path": "src/cli/check.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/config.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/feedback.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/init_update.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/mcp.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/migrate.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/mod.rs",
+          "is_entrypoint": true
+        },
+        {
+          "path": "src/cli/output.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/pack.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/telemetry.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct GlobalArgs",
+        "pub fn router_for(project: &ResolvedProject) -> Result<RoleRouter>",
+        "pub fn run() -> Result<ExitCode>",
+        "pub struct CheckArgs",
+        "pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode>",
+        "pub struct ConfigArgs",
+        "pub enum ConfigCommand",
+        "pub fn run(global: &GlobalArgs, args: &ConfigArgs) -> Result<ExitCode>",
+        "pub struct FeedbackArgs",
+        "pub fn run(global: &GlobalArgs, args: &FeedbackArgs) -> Result<ExitCode>"
+      ]
+    },
+    {
+      "id": "src_cli_setup",
+      "name": "Cli Setup",
+      "summary": "Подсистема `src/cli/setup` с ключевыми точками входа: src/cli/setup/mod.rs",
+      "l1_path": "subsystems/src_cli_setup.md",
+      "tags": [
+        "Rust (Cargo)",
+        "src_cli_setup"
+      ],
+      "entrypoints": [
+        "src/cli/setup/mod.rs"
+      ],
+      "key_files": [
+        "src/cli/setup/harness.rs",
+        "src/cli/setup/merge.rs",
+        "src/cli/setup/mod.rs",
+        "src/cli/setup/rule_template.md",
+        "src/cli/setup/rules.rs"
+      ],
+      "files": [
+        {
+          "path": "src/cli/setup/harness.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/setup/merge.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/setup/mod.rs",
+          "is_entrypoint": true
+        },
+        {
+          "path": "src/cli/setup/rule_template.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/setup/rules.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct SetupArgs",
+        "pub enum SetupTarget",
+        "pub struct SetupPlan",
+        "pub fn plan_setup(h: Harness, dirs: &HomeDirs, exe: &Path) -> Result<SetupPlan>",
+        "pub fn run(args: &SetupArgs) -> Result<ExitCode>",
+        "pub struct HomeDirs",
+        "pub enum Harness",
+        "pub enum ConfigFormat",
+        "pub enum RuleTarget",
+        "pub struct HarnessSpec"
+      ],
+      "parent": "src_cli"
+    },
+    {
+      "id": "tests",
+      "name": "Tests",
+      "summary": "Модуль и компоненты директории `tests` (2 файлов)",
+      "l1_path": "subsystems/tests.md",
+      "tags": [
+        "Rust (Cargo)",
+        "tests"
+      ],
+      "key_files": [
+        "tests/cli.rs",
+        "tests/regression_benchmark.rs"
+      ],
+      "files": [
+        {
+          "path": "tests/cli.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "tests/regression_benchmark.rs",
+          "is_entrypoint": false
+        }
+      ]
+    }
+  ],
+  "core_rules": [
+    "Все внешние крейты и зависимости строго объявляются в Cargo.toml.",
+    "Код должен проходить `rtk cargo clippy --all-targets` и `rtk cargo fmt --check` без ошибок.",
+    "Использование `unsafe` запрещено без исчерпывающего комментария безопасности `// SAFETY:`.",
+    "Публичные структуры и функции должны сопровождаться docstring (`///`)."
+  ]
+}
