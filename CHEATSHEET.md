@@ -8,19 +8,30 @@ CLI-утилита для генерации, поддержания и упак
 
 | Уровень | Файл / Директория | Назначение | Объем токенов |
 | :--- | :--- | :--- | :--- |
-| **L0 (Mental Map)** | `.agents/knowledge/L0_index.md` | Глобальная карта проекта, архитектурные слои, таблица подсистем | ~500–700 |
-| **L0 (Metadata)** | `.agents/knowledge/L0_index.json` | Машиночитаемая схема проекта, точки входа, BPE-токенометрия | ~1 000–1 500 |
-| **L1 (Subsystems)** | `.agents/knowledge/subsystems/<id>.md` | Карточки модулей: назначение, файлы, публичные AST-контракты | ~200–400 на модуль |
-| **L2 (Commands)** | `.agents/knowledge/cli/commands.md` | Справочник проверенных команд жизненного цикла (build, test, lint) | ~150–250 |
-| **ADR (Decisions)**| `.agents/knowledge/adr/0001_*.md` | Архитектурные решения и принятые проектные инварианты | ~300–600 |
+| **L0 (Mental Map)** | `.context-init/knowledge/L0_index.md` | Глобальная карта проекта, архитектурные слои, таблица подсистем | ~500–700 |
+| **L0 (Metadata)** | `.context-init/knowledge/L0_index.json` | Машиночитаемая схема проекта, точки входа, команды | ~1 000–1 500 |
+| **L1 (Subsystems)** | `.context-init/knowledge/subsystems/<id>.md` | Карточки модулей: назначение, файлы, публичные AST-контракты | ~200–400 на модуль |
+| **L2 (Commands)** | `.context-init/knowledge/cli/commands.md` | Справочник проверенных команд жизненного цикла (build, test, lint) | ~150–250 |
+| **ADR (Decisions)**| `.context-init/knowledge/adr/0001_*.md` | Архитектурные решения и принятые проектные инварианты | ~300–600 |
 
 ---
+
+## 💾 Хранение базы
+
+По умолчанию база L0–L2 лежит в репозитории: `.context-init/knowledge/`. Её коммитят вместе с кодом, поэтому коллега, клонировав репозиторий, сразу получает рабочие MCP/`pack`/`check` без `init`.
+
+- **Рабочий процесс:** перед коммитом запускайте `context-init update`, изменения базы идут в том же PR. База меняется только при структурных изменениях (появился/исчез файл или подсистема, поменялись описание, команды, символы), поэтому дифф тихий; повторный `update` на неизменённом дереве ничего не пишет.
+- **Конфликт слияния в базе:** разрешите конфликт любым способом и выполните `context-init update`: формат детерминирован и пересоберётся.
+- **Диффы:** добавьте в `.gitattributes` строку `.context-init/knowledge/** linguist-generated=true`, чтобы схлопнуть диффы базы в ревью.
+- **Центральное хранилище (опция):** `storage = "central"` в `.context-init.toml` (или `CONTEXT_INIT_STORAGE=central`) кладёт базу в `~/.local/share/context-init/projects/<project-id>/`. Кэш, телеметрия и feedback централизованы всегда.
+- **Переключение режима:** `context-init migrate --to repo|central [--remove-source] [--dry-run] [--force]` копирует базу (включая ручные ADR) и записывает `storage` в `.context-init.toml`, сохраняя остальные ключи и комментарии.
+- **Старый формат:** базу схемы v2 и ниже нужно пересоздать: `context-init init --force`.
 
 ## 🛠 Справочник команд и опций
 
 ### 1. `init` — Первичная инициализация базы знаний
 
-Создает полную структуру `.agents/knowledge/` и корневой `AGENTS.md`.
+Создает полную структуру `.context-init/knowledge/` (в репозитории, коммитится) и корневой `AGENTS.md`.
 
 ```bash
 context-init init [OPTIONS] [PATH]
@@ -137,13 +148,13 @@ context-init check --compact --exit-code .
 1. **Фаза ориентации:**
    Агент считывает компактную ментальную карту проекта (~600 токенов):
    ```bash
-   cat .agents/knowledge/L0_index.md
+   cat .context-init/knowledge/L0_index.md
    ```
 
 2. **Фаза локализации:**
    Агент читает контракт нужного модуля (~300 токенов):
    ```bash
-   cat .agents/knowledge/subsystems/src_detector.md
+   cat .context-init/knowledge/subsystems/src_detector.md
    ```
 
 3. **Фаза загрузки интерфейсов:**

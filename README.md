@@ -70,7 +70,17 @@ init = ["local", "none"]   # "none" = детерминированный реж�
 | `--ai -m qwen2.5:14b-ctx64k` | `[models.local] kind = "ollama"` + `--model local` |
 | `--ollama-url <URL>` | `endpoint = "<URL>"` в `[models.<alias>]` |
 | `--with-agents-md` (всегда включено) | по умолчанию включено, `--no-agents-md` отключает |
-| `.agents/knowledge/` в репозитории | центральное хранилище; перенос — `context-init migrate` |
+
+### Хранение базы
+
+По умолчанию база L0–L2 лежит в репозитории: `.context-init/knowledge/`. Её коммитят вместе с кодом, поэтому коллега, клонировав репозиторий, сразу получает рабочие MCP/`pack`/`check` без `init`.
+
+- **Рабочий процесс:** перед коммитом запускайте `context-init update`, изменения базы идут в том же PR. База меняется только при структурных изменениях (появился/исчез файл или подсистема, поменялись описание, команды, символы), поэтому дифф тихий; повторный `update` на неизменённом дереве ничего не пишет.
+- **Конфликт слияния в базе:** разрешите конфликт любым способом и выполните `context-init update`: формат детерминирован и пересоберётся.
+- **Диффы:** добавьте в `.gitattributes` строку `.context-init/knowledge/** linguist-generated=true`, чтобы схлопнуть диффы базы в ревью.
+- **Центральное хранилище (опция):** `storage = "central"` в `.context-init.toml` (или `CONTEXT_INIT_STORAGE=central`) кладёт базу в `~/.local/share/context-init/projects/<project-id>/`. Кэш, телеметрия и feedback централизованы всегда.
+- **Переключение режима:** `context-init migrate --to repo|central [--remove-source] [--dry-run] [--force]` копирует базу (включая ручные ADR) и записывает `storage` в `.context-init.toml`, сохраняя остальные ключи и комментарии.
+- **Старый формат:** базу схемы v2 и ниже нужно пересоздать: `context-init init --force`.
 
 ### 2. Проверка дрейфа архитектуры (`check`)
 

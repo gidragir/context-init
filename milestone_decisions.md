@@ -23,7 +23,8 @@
 
 | # | Решение |
 | :--- | :--- |
-| D1 | Центральное хранилище `~/.local/share/context-init/projects/<project-id>/`; `project-id` = нормализованный git remote + путь. Доступ агента — MCP. `AGENTS.md` не трогается по умолчанию |
+| D1 | **Пересмотрено (2026-10-24, D1a).** Центральное хранилище `~/.local/share/context-init/projects/<project-id>/`; `project-id` = нормализованный git remote + путь. Доступ агента — MCP. `AGENTS.md` не трогается по умолчанию |
+| D1a | База L0–L2 по умолчанию в репозитории (`<repo>/.context-init/knowledge/`, `storage = "repo"`), коммитится и общая для команды; `storage = "central"` — центральное хранилище; кэш, телеметрия, feedback всегда централизованы; формат детерминирован (schema v3 без `root_path`/счётчиков, запись только при изменениях) |
 | D2 | Ленивая stale-валидация: L1/L2-карточки хранят git blob SHA источников + commit генерации; при чтении — сверка с деревом, флаг `stale` + сжатый `git log/diff --stat` с момента генерации; `auto_refresh` перегенерирует только затронутые карточки моделью роли `update` |
 | D3 | Git — системный `git` (`-z`/`--porcelain`) за трейтом `GitBackend`; `gix` — точка расширения |
 
@@ -75,7 +76,7 @@
 | :--- | :--- |
 | D21 | Один глобальный `context-init mcp`; корень: аргумент `path/project` > MCP `roots` > cwd |
 | D22 | `context-init setup <antigravity|claude-code|claude-desktop|cursor|gemini-cli|codex> [--write]`: MCP-регистрация + короткий skill/rule, слияние с существующим конфигом, бэкап |
-| D23 | `context-init migrate`: перенос in-repo `.agents/knowledge` в центральное хранилище; чтение старого формата — одна минорная версия; `schema_version` в `L0_index.json`; «OpenViking» — внутренний термин |
+| D23 | **Отменено (2026-10-24):** поддержка legacy `.agents/knowledge` удалена. `context-init migrate`: перенос in-repo `.agents/knowledge` в центральное хранилище; чтение старого формата — одна минорная версия; `schema_version` в `L0_index.json`; «OpenViking» — внутренний термин |
 | D31 | Субагентный контекстный мост (Dual-Channel Context Protocol): Воркеры автономных субагентов (`DeepCoderWorker`, `research`) изолированы от MCP (`call_mcp_tool`). Доступ к OpenViking L0–L2 обеспечивается по двум каналам: (1) CLI-first: предписание `rtk context-init pack <id> --compress` в инструкциях вместо негативного запрета чтения файлов; (2) Supervisor Context Injection: супервайзер сам запрашивает AST-пакет через MCP `context_pack` и вставляет срез в секцию `**Context**` промпта субагента |
 
 ### 1.8 Сборка, CI/CD, дистрибуция

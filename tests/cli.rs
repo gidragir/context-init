@@ -125,6 +125,11 @@ fn cli_init_writes_repo_storage_by_default() {
         .is_file());
     assert!(central_indexes(&sb.data_home()).is_empty());
     assert!(!sb.project().join(".agents").exists());
+
+    let full = sb.run(&["init", ".", "--force"]);
+    assert!(full.status.success(), "{}{}", stdout(&full), stderr(&full));
+    let all = format!("{}{}", stdout(&full), stderr(&full));
+    assert!(all.contains("linguist-generated"), "{all}");
 }
 
 #[test]

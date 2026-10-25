@@ -6,7 +6,7 @@ use colored::Colorize;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use ci_core::config::RtkMode;
+use ci_core::config::{RtkMode, StorageMode};
 use ci_llm::enrich::cli_outcome_message;
 use ci_mcp::pipeline::{self, PipelineOptions};
 
@@ -136,6 +136,11 @@ pub fn run_init(global: &GlobalArgs, args: &InitArgs) -> Result<ExitCode> {
         out.subsystems.len(),
         out.knowledge_dir.display().to_string().cyan()
     );
+    if project.storage == StorageMode::Repo {
+        println!(
+            "Tip: add `.context-init/knowledge/** linguist-generated=true` to .gitattributes to collapse knowledge-base diffs."
+        );
+    }
     Ok(ExitCode::SUCCESS)
 }
 
