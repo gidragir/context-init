@@ -253,6 +253,39 @@ impl FromStr for RtkMode {
     }
 }
 
+/// Where the L0–L2 knowledge base lives: inside the repository or in the central data dir.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageMode {
+    /// `<repo>/.context-init/knowledge/`, committed with the code.
+    #[default]
+    Repo,
+    /// `~/.local/share/context-init/projects/<project-id>/`.
+    Central,
+}
+
+impl StorageMode {
+    /// Returns string representation (`"repo"`, `"central"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Repo => "repo",
+            Self::Central => "central",
+        }
+    }
+}
+
+impl FromStr for StorageMode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "repo" => Ok(Self::Repo),
+            "central" => Ok(Self::Central),
+            other => bail!("Invalid storage '{}': expected 'repo' or 'central'", other),
+        }
+    }
+}
+
 /// Checks whether a binary is available in the current process `PATH`, accounting for `.exe` on Windows (D12).
 pub fn is_binary_available(bin_name: &str) -> bool {
     let path_var = std::env::var_os("PATH");
@@ -657,6 +690,9 @@ pub struct Config {
     /// Whether to modify in-repo `AGENTS.md` by default (default `false`, D1).
     #[serde(default)]
     pub touch_agents_md: bool,
+    /// Knowledge base location (default `repo`).
+    #[serde(default)]
+    pub storage: StorageMode,
     /// External integrations configuration (`[integrations]`, D12).
     #[serde(default)]
     pub integrations: IntegrationsConfig,
@@ -685,6 +721,7 @@ impl Default for Config {
             max_response_tokens: default_max_response_tokens(),
             split_threshold_tokens: default_split_threshold_tokens(),
             touch_agents_md: false,
+            storage: StorageMode::default(),
             integrations: IntegrationsConfig::default(),
             models: BTreeMap::new(),
             roles: RolesConfig::default(),
@@ -736,6 +773,7 @@ struct PartialConfig {
     max_response_tokens: Option<usize>,
     split_threshold_tokens: Option<usize>,
     touch_agents_md: Option<bool>,
+    storage: Option<StorageMode>,
     integrations: Option<PartialIntegrationsConfig>,
     models: Option<BTreeMap<String, PartialModelConfig>>,
     roles: Option<PartialRolesConfig>,
@@ -846,6 +884,9 @@ impl Config {
         }
         if let Some(touch) = partial.touch_agents_md {
             self.touch_agents_md = touch;
+        }
+        if let Some(storage) = partial.storage {
+            self.storage = storage;
         }
         if let Some(integrations) = partial.integrations {
             if let Some(rtk) = integrations.rtk {
@@ -959,6 +1000,10 @@ impl Config {
 
         if let Some(touch_str) = non_empty("CONTEXT_INIT_TOUCH_AGENTS_MD") {
             self.touch_agents_md = parse_env_bool("CONTEXT_INIT_TOUCH_AGENTS_MD", &touch_str)?;
+        }
+
+        if let Some(storage_str) = non_empty("CONTEXT_INIT_STORAGE") {
+            self.storage = StorageMode::from_str(&storage_str)?;
         }
 
         if let Some(rtk_str) =
@@ -1306,5 +1351,48 @@ mod lint_tests {
         assert_eq!(c.loaded_sources().len(), 2, "{:?}", c.loaded_sources());
         assert!(c.loaded_sources()[1].ends_with(".context-init.toml"));
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn storage_defaults_to_repo() {
+        assert_eq!(Config::default().storage, StorageMode::Repo);
+    }
+
+    #[test]
+    fn storage_from_project_toml() {
+        let mut c = Config::default();
+        c.apply_toml_str("storage = \"central\"").unwrap();
+        assert_eq!(c.storage, StorageMode::Central);
+    }
+
+    #[test]
+    fn storage_env_overrides_file() {
+        let c = Config::from_layers(
+            None,
+            Some("storage = \"central\""),
+            |k| (k == "CONTEXT_INIT_STORAGE").then(|| "repo".to_string()),
+            &CliOverrides::default(),
+        )
+        .unwrap();
+        assert_eq!(c.storage, StorageMode::Repo);
+    }
+
+    #[test]
+    fn storage_invalid_value_errors() {
+        let mut c = Config::default();
+        assert!(c.apply_toml_str("storage = \"cloud\"").is_err());
+        let err = Config::from_layers(
+            None,
+            None,
+            |k| (k == "CONTEXT_INIT_STORAGE").then(|| "cloud".to_string()),
+            &CliOverrides::default(),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("cloud"));
     }
 }

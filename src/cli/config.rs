@@ -103,6 +103,7 @@ pub fn run(global: &GlobalArgs, args: &ConfigArgs) -> Result<ExitCode> {
                     .storage_paths
                     .format_paths(Some(&project.project_id))
             );
+            println!("storage: {}", project.config.storage.as_str());
             println!("knowledge_dir: {}", project.knowledge_dir.display());
             Ok(ExitCode::SUCCESS)
         }
