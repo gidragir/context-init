@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use ci_core::analysis::generator::{self, GenerateOptions};
 use ci_core::analysis::subsystems::build_deterministic;
 use ci_core::analysis::{detector, ProjectAnalysis};
-use ci_core::storage::{copy_missing_files, SubsystemInfo};
+use ci_core::config::StorageMode;
+use ci_core::storage::SubsystemInfo;
 use ci_llm::enrich::{enrich_subsystems, EnrichOutcome};
 use ci_llm::{PromptTemplateRegistry, RoleName, RoleRouter};
 
@@ -40,36 +41,25 @@ pub struct PipelineOutcome {
     pub added: usize,
     /// Existing subsystems refreshed (`update` only).
     pub updated: usize,
-    /// Files carried over from a legacy in-repo knowledge base (`init` only).
-    pub carried_over: Vec<String>,
 }
 
-/// Builds a fresh knowledge base in central storage (D1, D23).
+/// Builds a fresh knowledge base in the configured storage (`config.storage`).
 pub fn run_init(
     project: &ResolvedProject,
     router: &RoleRouter,
     opts: &PipelineOptions,
 ) -> Result<PipelineOutcome> {
     let (analysis, subsystems, enrich) = analyze(project, router, RoleName::Init, opts)?;
-    let knowledge_dir = project
-        .storage_paths
-        .project_knowledge_dir(&project.project_id);
+    let knowledge_dir = project.knowledge_dir.clone();
     let gen_opts = GenerateOptions {
         force: opts.force,
         dry_run: opts.dry_run,
         with_agents_md: opts.with_agents_md,
     };
     generator::generate(&analysis, &subsystems, &knowledge_dir, &gen_opts)?;
-    // Keep what the generator does not produce (hand-written ADRs, notes) from a legacy KB.
-    let carried_over = if !project.is_central && !opts.dry_run && project.knowledge_dir.is_dir() {
-        copy_missing_files(&project.knowledge_dir, &knowledge_dir)?
-    } else {
-        Vec::new()
-    };
     Ok(PipelineOutcome {
         added: subsystems.len(),
         updated: 0,
-        carried_over,
         analysis,
         subsystems,
         knowledge_dir,
@@ -94,39 +84,27 @@ pub fn run_update(
         enrich,
         added,
         updated,
-        carried_over: Vec::new(),
     })
 }
 
-/// Notice for files `init` carried over from a legacy knowledge base.
-pub fn carry_over_notice(out: &PipelineOutcome) -> Option<String> {
-    (!out.carried_over.is_empty()).then(|| {
-        format!(
-            "Copied {} file(s) that init does not generate (e.g. hand-written ADRs) from the in-repo knowledge base: {}",
-            out.carried_over.len(),
-            out.carried_over.join(", ")
-        )
-    })
-}
-
-/// Hint about a legacy in-repo knowledge base: either it is still the one being read
-/// (`central_active == false`), or central storage took over and the copy is stale.
-pub fn legacy_hint(project: &ResolvedProject, central_active: bool) -> Option<String> {
-    let legacy = project.root.join(".agents").join("knowledge");
-    let present =
-        legacy.join("L0_index.json").is_file() || project.knowledge_dir.starts_with(&legacy);
-    if !present {
+/// Hint for a project whose active knowledge dir has no index while the other storage mode
+/// holds one (the mode was switched or the base was created under a different setting).
+pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String> {
+    if project.knowledge_dir.join("L0_index.json").is_file() {
         return None;
     }
-    Some(if central_active {
+    let other = match project.storage {
+        StorageMode::Repo => StorageMode::Central,
+        StorageMode::Central => StorageMode::Repo,
+    };
+    let other_dir = project.knowledge_dir_for(other);
+    other_dir.join("L0_index.json").is_file().then(|| {
         format!(
-            "The in-repo knowledge base at {} is no longer read (central storage is used); you can delete it.",
-            legacy.display()
-        )
-    } else {
-        format!(
-            "Reading the legacy in-repo knowledge base at {}. Run `context-init migrate` to move it to central storage.",
-            legacy.display()
+            "Knowledge base found at {}, but storage = \"{}\". Run `context-init migrate --to {}` or set storage = \"{}\" in .context-init.toml.",
+            other_dir.display(),
+            project.storage.as_str(),
+            other.as_str(),
+            other.as_str()
         )
     })
 }

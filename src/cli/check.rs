@@ -23,7 +23,7 @@ pub struct CheckArgs {
 
 pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode> {
     let project = global.load_project(&args.path, None)?;
-    if let Some(hint) = pipeline::legacy_hint(&project, project.is_central) {
+    if let Some(hint) = pipeline::storage_mismatch_hint(&project) {
         output::notice(&hint);
     }
     let analysis = detector::analyze_project_with(

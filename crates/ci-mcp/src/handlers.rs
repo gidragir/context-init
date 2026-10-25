@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use ci_core::analysis::generator;
 use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
-use ci_core::analysis::{detector, resolve_knowledge_dir, KnowledgeLocation};
-use ci_core::config::{CliOverrides, Config, StoragePaths};
+use ci_core::analysis::{detector, resolve_knowledge_dir};
+use ci_core::config::{CliOverrides, Config, StorageMode, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
 use ci_core::storage::{
@@ -40,10 +40,10 @@ pub struct ResolvedProject {
     pub project_id: String,
     /// Resolved storage paths hierarchy.
     pub storage_paths: StoragePaths,
-    /// Active knowledge base directory (central storage or in-repo fallback).
+    /// Active knowledge base directory, chosen by `config.storage`.
     pub knowledge_dir: PathBuf,
-    /// Indicates whether `knowledge_dir` points to central storage (`~/.local/share/context-init/projects/...`).
-    pub is_central: bool,
+    /// Configured storage mode (`config.storage`).
+    pub storage: StorageMode,
 }
 
 impl ResolvedProject {
@@ -80,10 +80,9 @@ impl ResolvedProject {
         let project_id = compute_project_id(&canonical_root, remote.as_deref());
 
         let storage_paths = StoragePaths::resolve(Some(&canonical_root));
+        let storage = config.storage;
         let central_kb = storage_paths.project_knowledge_dir(&project_id);
-
-        let (knowledge_dir, location) = resolve_knowledge_dir(&canonical_root, &central_kb);
-        let is_central = location == KnowledgeLocation::Central;
+        let knowledge_dir = resolve_knowledge_dir(&canonical_root, storage, &central_kb);
 
         Self {
             root: canonical_root,
@@ -91,18 +90,32 @@ impl ResolvedProject {
             project_id,
             storage_paths,
             knowledge_dir,
-            is_central,
+            storage,
         }
+    }
+
+    /// Knowledge dir the project would use under `mode`.
+    pub fn knowledge_dir_for(&self, mode: StorageMode) -> PathBuf {
+        resolve_knowledge_dir(
+            &self.root,
+            mode,
+            &self.storage_paths.project_knowledge_dir(&self.project_id),
+        )
     }
 
     /// Loads the `L0Index` from the active knowledge base.
     pub fn load_l0_index(&self) -> Result<L0Index> {
         let index_path = self.knowledge_dir.join("L0_index.json");
         if !index_path.is_file() {
-            bail!(
+            let mut msg = format!(
                 "Knowledge base not found at {:?}. Run context_init first.",
                 index_path
             );
+            if let Some(hint) = pipeline::storage_mismatch_hint(self) {
+                msg.push('\n');
+                msg.push_str(&hint);
+            }
+            bail!(msg);
         }
         L0Index::load_from_file(&index_path)
     }
@@ -657,16 +670,14 @@ impl ContextHandler {
             with_agents_md: params.with_agents_md.unwrap_or(true),
             model_override: params.model.as_deref(),
         };
+        let hint = pipeline::storage_mismatch_hint(project);
         let out = pipeline::run_init(project, router, &opts)?;
         let mut text = format!(
             "Knowledge base initialized at {} ({} subsystems).",
             out.knowledge_dir.display(),
             out.subsystems.len()
         );
-        if let Some(notice) = pipeline::carry_over_notice(&out) {
-            text.push_str(&format!("\n{notice}"));
-        }
-        if let Some(hint) = pipeline::legacy_hint(project, true) {
+        if let Some(hint) = hint {
             text.push_str(&format!("\n{hint}"));
         }
         Ok(Self::finish_reply(project, text, out.enrich))
@@ -684,13 +695,17 @@ impl ContextHandler {
             model_override: params.model.as_deref(),
             ..PipelineOptions::default()
         };
+        let hint = pipeline::storage_mismatch_hint(project);
         let out = pipeline::run_update(project, router, &opts)?;
-        let text = format!(
+        let mut text = format!(
             "Knowledge base updated at {}: {} added, {} refreshed.",
             out.knowledge_dir.display(),
             out.added,
             out.updated
         );
+        if let Some(hint) = hint {
+            text.push_str(&format!("\n{hint}"));
+        }
         Ok(Self::finish_reply(project, text, out.enrich))
     }
 

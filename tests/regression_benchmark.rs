@@ -80,9 +80,29 @@ async fn test_regression_benchmark_and_generate_report() {
     let iterations = 10;
     let mut drift_durations = Vec::new();
     let mut last_check = None;
+    // The repository's own base may not be committed yet; fall back to one built in the sandbox.
+    let repo_kb = ResolvedProject::load(repo_root.clone())
+        .unwrap()
+        .knowledge_dir;
+    let repo_kb = if repo_kb.join("L0_index.json").is_file() {
+        repo_kb
+    } else {
+        let analysis = detector::analyze_project(&repo_root, false, false).unwrap();
+        let subs = ci_core::analysis::subsystems::build_deterministic(&analysis);
+        let dir = sandbox.join("repo-kb");
+        generator::generate(
+            &analysis,
+            &subs,
+            &dir,
+            &generator::GenerateOptions::default(),
+        )
+        .unwrap();
+        dir
+    };
     for _ in 0..iterations {
         let start = Instant::now();
-        let res = audit(&repo_root).expect("Failed to audit drift on context-init repo");
+        let res =
+            audit(&repo_root, Some(&repo_kb)).expect("Failed to audit drift on context-init repo");
         drift_durations.push(start.elapsed().as_secs_f64() * 1000.0);
         last_check = Some(res);
     }
@@ -290,7 +310,7 @@ async fn test_regression_benchmark_and_generate_report() {
         synth_dir
     });
 
-    let ext_check = audit(&test_repo).expect("Drift audit on benchmark fixture must succeed");
+    let ext_check = audit(&test_repo, None).expect("Drift audit on benchmark fixture must succeed");
     let project = ResolvedProject::load(test_repo.clone()).unwrap();
     let index = project.load_l0_index().expect("fixture index");
     let target_sub = index
@@ -374,10 +394,11 @@ struct AuditResult {
     up_to_date_count: usize,
 }
 
-fn audit(root: &Path) -> anyhow::Result<AuditResult> {
+fn audit(root: &Path, kb_override: Option<&Path>) -> anyhow::Result<AuditResult> {
     let project = ResolvedProject::load(root.to_path_buf())?;
     let analysis = detector::analyze_project(&project.root, false, false)?;
-    let report = generator::audit(&analysis, &project.knowledge_dir)?;
+    let kb = kb_override.unwrap_or(&project.knowledge_dir);
+    let report = generator::audit(&analysis, kb)?;
     Ok(AuditResult {
         has_drift: !report.missing_in_fs.is_empty() || !report.untracked_in_knowledge.is_empty(),
         up_to_date_count: report.up_to_date_count,
@@ -524,11 +545,11 @@ fn render_markdown_report(report: &BenchmarkReport) -> String {
     md.push_str("| Проект | Тип базы знаний | Подсистем | Статус pack |\n");
     md.push_str("| :--- | :--- | :--- | :--- |\n");
     md.push_str(&format!(
-        "| `context-init` | Плоская (`.agents/knowledge/`) | `{}` | ✅ OK |\n",
+        "| `context-init` | Плоская (`.context-init/knowledge/`) | `{}` | ✅ OK |\n",
         report.drift_metrics.up_to_date_count
     ));
     md.push_str(&format!(
-        "| `ai-dotfiles` | Вложенная (`.agents/knowledge/dotfiles/`) | `{}` | {} |\n\n",
+        "| `ai-dotfiles` | Вложенная (`.context-init/knowledge/dotfiles/`) | `{}` | {} |\n\n",
         report.cross_project.ai_dotfiles_subsystems, report.cross_project.ai_dotfiles_pack_status
     ));
 

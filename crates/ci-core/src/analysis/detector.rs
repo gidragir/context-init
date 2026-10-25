@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 const IGNORED_DIRS: &[&str] = &[
     ".git",
     ".agents",
+    ".context-init",
     ".gemini",
     "node_modules",
     "target",

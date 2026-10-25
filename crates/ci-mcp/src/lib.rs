@@ -215,100 +215,85 @@ mod tests {
         assert_eq!(r3, fs::canonicalize(&dir_c).unwrap());
     }
 
-    #[tokio::test]
-    async fn central_storage_and_lazy_fallback_resolution() {
-        let tmp = TempDirGuard::new("kb_store");
-        let repo_root = tmp.path().join("my_repo");
-        let src_dir = repo_root.join("src");
-        fs::create_dir_all(&src_dir).unwrap();
-        fs::write(repo_root.join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();
-
-        // 1. Unmigrated in-repo fallback: .agents/knowledge/L0_index.json
-        let in_repo_kb = repo_root.join(".agents").join("knowledge");
-        fs::create_dir_all(&in_repo_kb).unwrap();
-        let in_repo_index = L0Index {
-            schema_version: 1,
-            project: "my_repo".to_string(),
-            subsystems: vec![SubsystemInfo {
-                id: "core".to_string(),
-                name: "Core Logic".to_string(),
-                summary: "In-repo fallback subsystem".to_string(),
-                l1_path: "subsystems/core.md".to_string(),
-                tags: vec!["core".to_string()],
-                entrypoints: vec!["src/main.rs".to_string()],
-                key_files: vec!["src/lib.rs".to_string()],
-                files: vec![SubsystemFile {
-                    path: "src/lib.rs".to_string(),
-                    is_entrypoint: true,
-                    lines: 20,
-                }],
-                key_symbols: vec!["run".to_string()],
-                test_command: None,
-                tokens: 50,
-                parent: None,
-            }],
-            ..L0Index::default()
-        };
-        in_repo_index
-            .save_to_file(&in_repo_kb.join("L0_index.json"))
-            .unwrap();
-
-        let resolved_unmigrated = ResolvedProject::load(repo_root.clone()).unwrap();
-        assert!(!resolved_unmigrated.is_central);
-        assert_eq!(
-            resolved_unmigrated.knowledge_dir,
-            fs::canonicalize(&in_repo_kb).unwrap()
-        );
-        let loaded_fallback = resolved_unmigrated.load_l0_index().unwrap();
-        assert_eq!(
-            loaded_fallback.subsystems[0].summary,
-            "In-repo fallback subsystem"
-        );
-
-        // 2. Central storage resolution: when central storage directory exists and has L0_index.json
-        let central_dir = resolved_unmigrated
-            .storage_paths
-            .project_knowledge_dir(&resolved_unmigrated.project_id);
-        fs::create_dir_all(&central_dir).unwrap();
-        let central_index = L0Index {
+    fn write_index(dir: &Path, summary: &str) {
+        fs::create_dir_all(dir).unwrap();
+        let index = L0Index {
             schema_version: CURRENT_L0_SCHEMA_VERSION,
-            project: resolved_unmigrated.project_id.clone(),
+            project: "demo".to_string(),
             subsystems: vec![SubsystemInfo {
                 id: "core".to_string(),
                 name: "Core Logic".to_string(),
-                summary: "Central storage subsystem".to_string(),
+                summary: summary.to_string(),
                 l1_path: "subsystems/core.md".to_string(),
-                tags: vec!["central".to_string()],
+                tags: vec![],
                 entrypoints: vec![],
                 key_files: vec![],
                 files: vec![],
                 key_symbols: vec![],
                 test_command: None,
-                tokens: 80,
+                tokens: 0,
                 parent: None,
             }],
             ..L0Index::default()
         };
-        central_index
-            .save_to_file(&central_dir.join("L0_index.json"))
-            .unwrap();
+        index.save_to_file(&dir.join("L0_index.json")).unwrap();
+    }
 
-        let resolved_central = ResolvedProject::load(repo_root).unwrap();
-        assert!(resolved_central.is_central);
+    #[test]
+    fn resolved_project_uses_configured_storage() {
+        let tmp = TempDirGuard::new("kb_store");
+        std::env::set_var("XDG_DATA_HOME", tmp.path().join("xdg"));
+        let repo_root = tmp.path().join("my_repo");
+        fs::create_dir_all(&repo_root).unwrap();
+        fs::write(repo_root.join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();
+        let canonical = fs::canonicalize(&repo_root).unwrap();
+
+        let repo = ResolvedProject::load(repo_root.clone()).unwrap();
+        assert_eq!(repo.storage, ci_core::StorageMode::Repo);
         assert_eq!(
-            resolved_central.knowledge_dir,
-            fs::canonicalize(&central_dir).unwrap()
+            repo.knowledge_dir,
+            canonical.join(".context-init/knowledge")
         );
-        let loaded_central = resolved_central.load_l0_index().unwrap();
+
+        fs::write(
+            repo_root.join(".context-init.toml"),
+            "storage = \"central\"\n",
+        )
+        .unwrap();
+        let central = ResolvedProject::load(repo_root).unwrap();
+        assert_eq!(central.storage, ci_core::StorageMode::Central);
+        assert!(central.knowledge_dir.starts_with(tmp.path().join("xdg")));
+        write_index(&central.knowledge_dir, "Central storage subsystem");
         assert_eq!(
-            loaded_central.subsystems[0].summary,
+            central.load_l0_index().unwrap().subsystems[0].summary,
             "Central storage subsystem"
         );
     }
 
+    #[test]
+    fn storage_mismatch_hint_points_to_other_mode() {
+        let tmp = TempDirGuard::new("kb_mismatch");
+        std::env::set_var("XDG_DATA_HOME", tmp.path().join("xdg"));
+        let repo_root = tmp.path().join("my_repo");
+        fs::create_dir_all(&repo_root).unwrap();
+        let project = ResolvedProject::load(repo_root).unwrap();
+        assert_eq!(project.storage, ci_core::StorageMode::Repo);
+        assert!(pipeline::storage_mismatch_hint(&project).is_none());
+
+        write_index(
+            &project.knowledge_dir_for(ci_core::StorageMode::Central),
+            "elsewhere",
+        );
+        let hint = pipeline::storage_mismatch_hint(&project).expect("hint");
+        assert!(hint.contains("migrate --to central"), "{hint}");
+
+        write_index(&project.knowledge_dir, "here");
+        assert!(pipeline::storage_mismatch_hint(&project).is_none());
+    }
+
     /// Seeds an in-repo knowledge base (lazy fallback) with one `core` subsystem; returns its dir.
     fn seed_in_repo_knowledge(root: &Path) -> PathBuf {
-        let kd = root.join(".agents").join("knowledge");
+        let kd = root.join(".context-init").join("knowledge");
         fs::create_dir_all(kd.join("subsystems")).unwrap();
         let index = L0Index {
             subsystems: vec![SubsystemInfo {
@@ -448,7 +433,8 @@ mod tests {
         let resolved = server
             .resolve_context(Some(&tmp.path().to_string_lossy()), None)
             .await;
-        assert!(resolved.is_central, "init must write central storage");
+        assert_eq!(resolved.storage, ci_core::StorageMode::Repo);
+        assert!(resolved.knowledge_dir.join("L0_index.json").is_file());
         let index = resolved.load_l0_index().unwrap();
         assert!(index.subsystems.len() > 1, "{:?}", index.subsystems);
         assert!(!index
@@ -533,7 +519,7 @@ mod tests {
         write_fixture(tmp.path());
         fs::write(
             tmp.path().join(".context-init.toml"),
-            format!("max_response_tokens = 64\n{AGENT_CONFIG}"),
+            format!("max_response_tokens = 20\n{AGENT_CONFIG}"),
         )
         .unwrap();
         let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));

@@ -162,8 +162,8 @@ impl ContextInitServer {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "project".to_string()),
             storage_paths: StoragePaths::resolve(Some(&root)),
-            knowledge_dir: root.join(".agents").join("knowledge"),
-            is_central: false,
+            knowledge_dir: root.join(ci_core::analysis::REPO_KNOWLEDGE_DIR),
+            storage: ci_core::config::StorageMode::Repo,
         })
     }
 }
@@ -182,11 +182,9 @@ pub fn find_project_root_upward(start: &Path) -> Option<PathBuf> {
     while let Some(dir) = curr {
         let is_primary = dir.join(".context-init.toml").is_file()
             || dir
-                .join(".agents")
-                .join("knowledge")
+                .join(ci_core::analysis::REPO_KNOWLEDGE_DIR)
                 .join("L0_index.json")
                 .is_file()
-            || dir.join("L0_index.json").is_file()
             || dir.join(".git").exists()
             || dir.join("pnpm-workspace.yaml").is_file()
             || is_cargo_workspace(dir);

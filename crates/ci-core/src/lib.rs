@@ -23,11 +23,9 @@ pub use openviking::{
     CardGeneratedBy, CardSource, OkfCard, L0_ABSTRACT_MAX_CHARS,
 };
 pub use storage::{
-    compute_project_id, hash_project_id, migrate_in_repo_knowledge,
-    migrate_in_repo_knowledge_with_options, migrate_knowledge, normalize_git_remote,
-    normalize_line_endings, normalize_path, normalize_path_str, DriftReport, L0Index,
-    MigrateOptions, MigrationReport, ProjectCommands, ProjectType, SubsystemFile, SubsystemInfo,
-    CURRENT_L0_SCHEMA_VERSION, LEGACY_L0_SCHEMA_VERSION,
+    compute_project_id, hash_project_id, normalize_git_remote, normalize_line_endings,
+    normalize_path, normalize_path_str, DriftReport, L0Index, ProjectCommands, ProjectType,
+    SubsystemFile, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION, LEGACY_L0_SCHEMA_VERSION,
 };
 pub use telemetry::{
     read_jsonl_file, record_feedback, render_telemetry_report, EfficiencySignal, FeedbackSignal,
@@ -451,82 +449,6 @@ init = ["cli_helper", "local"]
         let truncated = extract_l0_abstract(&long_para);
         assert!(truncated.chars().count() <= L0_ABSTRACT_MAX_CHARS);
         assert!(truncated.ends_with("..."));
-    }
-
-    #[test]
-    fn legacy_l0_index_compatibility_and_migrate_in_repo_knowledge() {
-        let tmp = TempDirGuard::new("migrate");
-        let repo_root = tmp.path().join("repo");
-        let in_repo_kb = repo_root.join(".agents").join("knowledge");
-        let subsystems_dir = in_repo_kb.join("subsystems");
-        let target_central = tmp.path().join("central").join("my-proj-deadbeef");
-
-        fs::create_dir_all(&subsystems_dir).unwrap();
-
-        // Legacy L0_index.json without `schema_version` and with Windows backslashes
-        let legacy_json = r#"{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "project": "demo-app",
-  "description": "Legacy knowledge base",
-  "root_path": "C:\\Users\\dev\\demo-app\\",
-  "updated_at": "2026-10-19",
-  "project_type": "Rust (Cargo)",
-  "entrypoints": ["src\\main.rs"],
-  "commands": {
-    "build": "rtk cargo build"
-  },
-  "subsystems": [
-    {
-      "id": "src_core",
-      "name": "Core",
-      "summary": "Core module",
-      "l1_path": "subsystems\\src_core.md",
-      "tags": ["rust"],
-      "entrypoints": ["src\\main.rs"],
-      "key_files": ["src\\lib.rs"],
-      "files": [
-        {
-          "path": "src\\lib.rs",
-          "is_entrypoint": true,
-          "lines": 42
-        }
-      ],
-      "tokens": 120
-    }
-  ]
-}"#;
-
-        fs::write(in_repo_kb.join("L0_index.json"), legacy_json).unwrap();
-        fs::write(in_repo_kb.join("L0_index.md"), "# L0 Index\n").unwrap();
-        fs::write(subsystems_dir.join("src_core.md"), "# Core\n\nSummary.\n").unwrap();
-
-        let skills_dir = repo_root.join(".agents").join("skills");
-        fs::create_dir_all(&skills_dir).unwrap();
-        fs::write(skills_dir.join("SKILL.md"), "# Skill\n").unwrap();
-
-        let parsed_legacy = L0Index::from_json_str(legacy_json).unwrap();
-        assert_eq!(parsed_legacy.schema_version, LEGACY_L0_SCHEMA_VERSION);
-        assert!(parsed_legacy.is_legacy());
-
-        let report = migrate_in_repo_knowledge(&repo_root, &target_central).unwrap();
-        assert_eq!(report.previous_schema_version, LEGACY_L0_SCHEMA_VERSION);
-        assert_eq!(report.new_schema_version, CURRENT_L0_SCHEMA_VERSION);
-        assert_eq!(report.subsystems_count, 1);
-        assert!(report.removed_source);
-        assert!(!in_repo_kb.exists());
-        // Sibling .agents/skills must remain untouched
-        assert!(skills_dir.join("SKILL.md").is_file());
-        assert!(target_central.join("L0_index.json").is_file());
-        assert!(target_central.join("L0_index.md").is_file());
-        assert!(target_central.join("subsystems/src_core.md").is_file());
-
-        let migrated_l0 = L0Index::load_from_file(&target_central.join("L0_index.json")).unwrap();
-        assert_eq!(migrated_l0.schema_version, CURRENT_L0_SCHEMA_VERSION);
-        assert!(!migrated_l0.is_legacy());
-        assert_eq!(migrated_l0.root_path, "C:/Users/dev/demo-app");
-        assert_eq!(migrated_l0.entrypoints, vec!["src/main.rs".to_string()]);
-        assert_eq!(migrated_l0.subsystems[0].l1_path, "subsystems/src_core.md");
-        assert_eq!(migrated_l0.subsystems[0].files[0].path, "src/lib.rs");
     }
 
     #[test]

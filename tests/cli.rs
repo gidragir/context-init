@@ -114,47 +114,45 @@ fn cli_version_matches_cargo() {
 }
 
 #[test]
-fn cli_init_writes_central_storage() {
+fn cli_init_writes_repo_storage_by_default() {
     let sb = Sandbox::new("init");
     sb.write_fixture();
     let out = sb.run(&["init", ".", "--compact"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
-    assert_eq!(
-        central_indexes(&sb.data_home()).len(),
-        1,
-        "{}",
-        stdout(&out)
-    );
-    assert!(!sb.project().join(".agents/knowledge").exists());
+    assert!(sb
+        .project()
+        .join(".context-init/knowledge/L0_index.json")
+        .is_file());
+    assert!(central_indexes(&sb.data_home()).is_empty());
+    assert!(!sb.project().join(".agents").exists());
 }
 
 #[test]
-fn cli_check_reads_legacy_in_repo_knowledge() {
-    let sb = Sandbox::new("legacy");
+fn cli_init_central_mode_writes_central() {
+    let sb = Sandbox::new("init_central");
     sb.write_fixture();
-    let analysis =
-        ci_core::analysis::detector::analyze_project(&sb.project(), false, false).unwrap();
-    let subs = ci_core::analysis::subsystems::build_deterministic(&analysis);
-    ci_core::analysis::generator::generate(
-        &analysis,
-        &subs,
-        &sb.project().join(".agents/knowledge"),
-        &ci_core::analysis::generator::GenerateOptions::default(),
+    fs::write(
+        sb.project().join(".context-init.toml"),
+        "storage = \"central\"\n",
     )
     .unwrap();
-
-    let out = sb.run(&["check", "."]);
+    let out = sb.run(&["init", ".", "--compact"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
-    let all = format!("{}{}", stdout(&out), stderr(&out));
-    assert!(all.contains("migrate"), "{all}");
-    assert!(all.contains("Reading the legacy"), "{all}");
-    assert!(!all.contains("authoritative"), "{all}");
+    assert_eq!(central_indexes(&sb.data_home()).len(), 1);
+    assert!(!sb.project().join(".context-init/knowledge").exists());
+}
 
-    // After `init`, central storage is used and the in-repo copy is reported as stale.
+#[test]
+fn cli_check_hints_storage_mismatch() {
+    let sb = Sandbox::new("mismatch");
+    sb.write_fixture();
+    let toml = sb.project().join(".context-init.toml");
+    fs::write(&toml, "storage = \"central\"\n").unwrap();
     assert!(sb.run(&["init", ".", "--compact"]).status.success());
-    let after = sb.run(&["check", "."]);
-    let all = format!("{}{}", stdout(&after), stderr(&after));
-    assert!(all.contains("no longer read"), "{all}");
+    fs::remove_file(&toml).unwrap();
+    let out = sb.run(&["check", "."]);
+    let all = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(all.contains("migrate --to central"), "{all}");
 }
 
 #[test]
@@ -186,7 +184,7 @@ fn cli_pack_compress_outputs_xml() {
     let sb = Sandbox::new("pack");
     sb.write_fixture();
     assert!(sb.run(&["init", ".", "--compact"]).status.success());
-    let index_path = central_indexes(&sb.data_home()).remove(0);
+    let index_path = sb.project().join(".context-init/knowledge/L0_index.json");
     let index = ci_core::storage::L0Index::load_from_file(&index_path).unwrap();
     let id = index.subsystems[0].id.clone();
     let out = sb.run(&["pack", &id, ".", "--compress"]);
@@ -283,69 +281,6 @@ fn cli_config_path_lists_storage() {
         "{}",
         stdout(&out)
     );
-}
-
-/// Seeds a legacy in-repo knowledge base for the fixture project.
-fn seed_legacy(sb: &Sandbox) {
-    let analysis =
-        ci_core::analysis::detector::analyze_project(&sb.project(), false, false).unwrap();
-    let subs = ci_core::analysis::subsystems::build_deterministic(&analysis);
-    ci_core::analysis::generator::generate(
-        &analysis,
-        &subs,
-        &sb.project().join(".agents/knowledge"),
-        &ci_core::analysis::generator::GenerateOptions::default(),
-    )
-    .unwrap();
-}
-
-#[test]
-fn cli_migrate_copies_and_keeps_source() {
-    let sb = Sandbox::new("mig_copy");
-    sb.write_fixture();
-    seed_legacy(&sb);
-    let out = sb.run(&["migrate", "."]);
-    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
-    assert_eq!(central_indexes(&sb.data_home()).len(), 1);
-    assert!(sb
-        .project()
-        .join(".agents/knowledge/L0_index.json")
-        .is_file());
-}
-
-#[test]
-fn cli_migrate_dry_run_writes_nothing() {
-    let sb = Sandbox::new("mig_dry");
-    sb.write_fixture();
-    seed_legacy(&sb);
-    let out = sb.run(&["migrate", ".", "--dry-run"]);
-    assert!(out.status.success(), "{}", stderr(&out));
-    assert!(stdout(&out).contains("L0_index.json"), "{}", stdout(&out));
-    assert!(central_indexes(&sb.data_home()).is_empty());
-}
-
-#[test]
-fn cli_migrate_remove_source_deletes_after_copy() {
-    let sb = Sandbox::new("mig_rm");
-    sb.write_fixture();
-    seed_legacy(&sb);
-    let out = sb.run(&["migrate", ".", "--remove-source"]);
-    assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(central_indexes(&sb.data_home()).len(), 1);
-    assert!(!sb.project().join(".agents/knowledge").exists());
-}
-
-#[test]
-fn cli_migrate_twice_requires_force() {
-    let sb = Sandbox::new("mig_twice");
-    sb.write_fixture();
-    seed_legacy(&sb);
-    assert!(sb.run(&["migrate", "."]).status.success());
-    let again = sb.run(&["migrate", "."]);
-    assert_eq!(again.status.code(), Some(1));
-    assert!(stderr(&again).contains("--force"), "{}", stderr(&again));
-    assert!(stderr(&again).contains("replace"), "{}", stderr(&again));
-    assert!(sb.run(&["migrate", ".", "--force"]).status.success());
 }
 
 fn exe_path() -> PathBuf {
@@ -582,25 +517,4 @@ fn cli_feedback_disabled_reports_not_recorded() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(stdout(&out).contains("not recorded"), "{}", stdout(&out));
     assert!(!sb.data_home().join("context-init/telemetry").exists());
-}
-
-#[test]
-fn cli_init_on_legacy_carries_over_hand_written_files() {
-    let sb = Sandbox::new("carry");
-    sb.write_fixture();
-    seed_legacy(&sb);
-    let legacy_adr = sb
-        .project()
-        .join(".agents/knowledge/adr/0002_custom_decision.md");
-    fs::write(&legacy_adr, "# ADR 0002: hand-written\n").unwrap();
-
-    let out = sb.run(&["init", ".", "--compact"]);
-    assert!(out.status.success(), "{}", stderr(&out));
-    let index = central_indexes(&sb.data_home()).remove(0);
-    let central = index.parent().unwrap();
-    assert_eq!(
-        fs::read_to_string(central.join("adr/0002_custom_decision.md")).unwrap(),
-        "# ADR 0002: hand-written\n"
-    );
-    assert!(stderr(&out).contains("Copied 1 file"), "{}", stderr(&out));
 }

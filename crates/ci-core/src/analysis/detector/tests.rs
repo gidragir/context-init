@@ -318,6 +318,7 @@ fn test_ignored_dirs_in_subsystem_discovery() {
         ".svelte-kit",
         ".astro",
         ".parcel-cache",
+        ".context-init",
         "node_modules",
         "target",
     ];

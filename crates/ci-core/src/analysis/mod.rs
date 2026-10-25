@@ -9,43 +9,20 @@ pub mod types;
 
 use std::path::{Path, PathBuf};
 
+use crate::config::StorageMode;
+
 pub use types::{DiscoveredModule, McpCheckResult, ProjectAnalysis};
 
-/// Where the active knowledge base lives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KnowledgeLocation {
-    /// Central storage (`~/.local/share/context-init/projects/<id>/`, D1/D23).
-    Central,
-    /// Legacy in-repo `.agents/knowledge` (read via lazy fallback until migrated).
-    LegacyInRepo,
-}
+/// Repo-mode knowledge dir, relative to the project root.
+pub const REPO_KNOWLEDGE_DIR: &str = ".context-init/knowledge";
 
-/// Resolves the active knowledge dir for `root`: central storage if it holds an index,
-/// else a legacy in-repo index (direct, nested under `.agents/knowledge`, or a root
-/// `L0_index.json`), else central storage (where new knowledge bases are created).
-pub fn resolve_knowledge_dir(root: &Path, central_kb: &Path) -> (PathBuf, KnowledgeLocation) {
-    if central_kb.join("L0_index.json").is_file() {
-        return (central_kb.to_path_buf(), KnowledgeLocation::Central);
+/// Resolves the active knowledge dir from the configured storage mode only; the files on
+/// disk are never consulted.
+pub fn resolve_knowledge_dir(root: &Path, mode: StorageMode, central_kb: &Path) -> PathBuf {
+    match mode {
+        StorageMode::Repo => root.join(REPO_KNOWLEDGE_DIR),
+        StorageMode::Central => central_kb.to_path_buf(),
     }
-    let direct = root.join(".agents").join("knowledge");
-    if direct.join("L0_index.json").is_file() {
-        return (direct, KnowledgeLocation::LegacyInRepo);
-    }
-    if let Ok(entries) = std::fs::read_dir(&direct) {
-        let mut nested: Vec<PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.join("L0_index.json").is_file())
-            .collect();
-        nested.sort();
-        if let Some(first) = nested.into_iter().next() {
-            return (first, KnowledgeLocation::LegacyInRepo);
-        }
-    }
-    if root.join("L0_index.json").is_file() {
-        return (root.to_path_buf(), KnowledgeLocation::LegacyInRepo);
-    }
-    (central_kb.to_path_buf(), KnowledgeLocation::Central)
 }
 
 #[cfg(test)]
@@ -140,22 +117,24 @@ mod tests {
     }
 
     #[test]
-    fn resolve_knowledge_dir_prefers_central_then_legacy() {
+    fn resolve_knowledge_dir_follows_mode() {
         let root = temp_dir("resolve_root");
         let central = temp_dir("resolve_central").join("kb");
-
-        let (dir, loc) = resolve_knowledge_dir(&root, &central);
-        assert_eq!((dir, loc), (central.clone(), KnowledgeLocation::Central));
-
-        let legacy = root.join(".agents").join("knowledge");
-        fs::create_dir_all(&legacy).unwrap();
-        fs::write(legacy.join("L0_index.json"), "{}").unwrap();
-        let (dir, loc) = resolve_knowledge_dir(&root, &central);
-        assert_eq!((dir, loc), (legacy, KnowledgeLocation::LegacyInRepo));
+        let repo_kb = root.join(".context-init").join("knowledge");
 
         fs::create_dir_all(&central).unwrap();
         fs::write(central.join("L0_index.json"), "{}").unwrap();
-        let (dir, loc) = resolve_knowledge_dir(&root, &central);
-        assert_eq!((dir, loc), (central, KnowledgeLocation::Central));
+        assert_eq!(
+            resolve_knowledge_dir(&root, StorageMode::Repo, &central),
+            repo_kb
+        );
+
+        fs::create_dir_all(&repo_kb).unwrap();
+        fs::write(repo_kb.join("L0_index.json"), "{}").unwrap();
+        fs::remove_file(central.join("L0_index.json")).unwrap();
+        assert_eq!(
+            resolve_knowledge_dir(&root, StorageMode::Central, &central),
+            central
+        );
     }
 }

@@ -95,15 +95,12 @@ pub fn run_init(global: &GlobalArgs, args: &InitArgs) -> Result<ExitCode> {
         with_agents_md: !args.no_agents_md,
         model_override: None,
     };
+    if let Some(hint) = pipeline::storage_mismatch_hint(&project) {
+        output::notice(&hint);
+    }
     let out = pipeline::run_init(&project, &router, &opts)?;
     if let Some(msg) = cli_outcome_message(&out.enrich) {
         output::notice(&msg);
-    }
-    if let Some(notice) = pipeline::carry_over_notice(&out) {
-        output::notice(&notice);
-    }
-    if let Some(hint) = pipeline::legacy_hint(&project, true) {
-        output::notice(&hint);
     }
 
     let verb = if args.dry_run {
@@ -153,6 +150,9 @@ pub fn run_update(global: &GlobalArgs, args: &UpdateArgs) -> Result<ExitCode> {
         with_agents_md: !args.no_agents_md,
         ..PipelineOptions::default()
     };
+    if let Some(hint) = pipeline::storage_mismatch_hint(&project) {
+        output::notice(&hint);
+    }
     let out = pipeline::run_update(&project, &router, &opts)?;
     if let Some(msg) = cli_outcome_message(&out.enrich) {
         output::notice(&msg);
