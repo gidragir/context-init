@@ -233,7 +233,7 @@ pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftRe
 /// Quiet by design: everything is rendered in memory first, and when no file would
 /// change nothing is written (`updated_at` included). Only a real difference bumps
 /// `updated_at` and rewrites the files whose bytes changed. Cards that are not
-/// generator output (agent- or hand-written) are left alone.
+/// generator output (hand- or agent-edited) are left alone.
 pub fn update(
     analysis: &ProjectAnalysis,
     new_subsystems: &[SubsystemInfo],
@@ -254,6 +254,13 @@ pub fn update(
     }
 
     let mut index = L0Index::load_from_file(&l0_path)?;
+    // What the previous run would have rendered: a card still equal to it is untouched
+    // generator output and may be refreshed; anything else was edited by hand or by an agent.
+    let old_analysis = ProjectAnalysis {
+        commands: index.commands.clone(),
+        ..analysis.clone()
+    };
+    let mut pristine_ids: Vec<String> = Vec::new();
     index.commands = analysis.commands.clone();
     index.entrypoints = analysis.root_entrypoints.clone();
     index.core_rules = analysis.rules.clone();
@@ -272,6 +279,14 @@ pub fn update(
                         || new_sub.id == "main"
                         || new_sub.id == "src_main"))
         }) {
+            if let Some(card) = safe_join(&base_dir, &existing.l1_path) {
+                let pristine = fs::read_to_string(&card).map_or(true, |disk| {
+                    disk == render_subsystem_card(existing, &old_analysis)
+                });
+                if pristine {
+                    pristine_ids.push(existing.id.clone());
+                }
+            }
             // Обновляем технические поля, сохраняя ручное резюме если оно есть
             existing.files = new_sub.files.clone();
             existing.entrypoints = new_sub.entrypoints.clone();
@@ -316,8 +331,7 @@ pub fn update(
         let Some(card) = safe_join(&base_dir, &sub.l1_path) else {
             continue;
         };
-        let owned = new_ids.contains(&sub.id)
-            || fs::read_to_string(&card).map_or(true, |c| c.starts_with("# Подсистема:"));
+        let owned = new_ids.contains(&sub.id) || pristine_ids.contains(&sub.id);
         if owned {
             rendered.push((card, render_subsystem_card(sub, analysis)));
         }
@@ -1123,5 +1137,20 @@ mod tests {
         assert!(central.contains("вне репозитория"), "{central}");
         assert!(!central.contains("закоммитьте"), "{central}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_keeps_hand_edited_generated_card() {
+        let root = quiet_root("handcard");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+        let card = kd.join("subsystems").join(format!("{}.md", subs[0].id));
+        let mut text = fs::read_to_string(&card).unwrap();
+        text.push_str("\n## Notes\nhand-written\n");
+        fs::write(&card, &text).unwrap();
+        update(&analysis, &subs, &kd, None).unwrap();
+        assert_eq!(fs::read_to_string(&card).unwrap(), text);
+        let _ = fs::remove_dir_all(&root);
     }
 }

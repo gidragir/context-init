@@ -656,6 +656,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_subsystems_reports_live_tokens() {
+        let tmp = TempDirGuard::new("list_tokens");
+        let kd = seed_in_repo_knowledge(tmp.path());
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::write(tmp.path().join("src/lib.rs"), "pub fn a() {}\n".repeat(30)).unwrap();
+        let index = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        let root = fs::canonicalize(tmp.path()).unwrap();
+        let expected = ci_core::analysis::subsystems::subsystem_tokens(&root, &index.subsystems[0]);
+        assert!(expected > 0);
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let out = server
+            .get_subsystems(Parameters(McpGetSubsystemsParams {
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..McpGetSubsystemsParams::default()
+            }))
+            .await
+            .expect("get_subsystems");
+        let json_part = out.split("\n\n[").next().unwrap();
+        let v: serde_json::Value = serde_json::from_str(json_part).unwrap();
+        assert_eq!(v[0]["tokens"], expected);
+    }
+
+    #[tokio::test]
     async fn submit_rejects_traversal_ids() {
         let tmp = TempDirGuard::new("submit_traversal");
         let kd = seed_in_repo_knowledge(tmp.path());

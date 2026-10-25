@@ -246,7 +246,18 @@ impl ContextHandler {
             }
         }
 
-        let json_text = serde_json::to_string_pretty(&index.subsystems)?;
+        // Sizes are not stored in the base: count them live from the current sources.
+        let listing: Vec<serde_json::Value> = index
+            .subsystems
+            .iter()
+            .map(|sub| {
+                let mut v = serde_json::to_value(sub)?;
+                v["tokens"] =
+                    ci_core::analysis::subsystems::subsystem_tokens(&project.root, sub).into();
+                Ok(v)
+            })
+            .collect::<Result<_>>()?;
+        let json_text = serde_json::to_string_pretty(&listing)?;
         let paginated = paginate_content(
             &json_text,
             cursor,
