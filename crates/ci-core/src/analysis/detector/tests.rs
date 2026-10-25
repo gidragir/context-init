@@ -710,3 +710,27 @@ fn test_split_threshold_zero_disables_splitting() {
         .any(|m| m.id == "crates_foo"));
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn representative_files_sorted_by_path() {
+    let file = |path: &str, lines: usize, is_entrypoint: bool| SubsystemFile {
+        path: path.to_string(),
+        is_entrypoint,
+        lines,
+    };
+    let paths =
+        |files: Vec<SubsystemFile>| -> Vec<String> { files.into_iter().map(|f| f.path).collect() };
+    let order = vec!["main.rs", "a.rs", "b.rs"];
+    let before = representative_files(vec![
+        file("b.rs", 10, false),
+        file("a.rs", 500, false),
+        file("main.rs", 1, true),
+    ]);
+    assert_eq!(paths(before), order);
+    let after = representative_files(vec![
+        file("b.rs", 900, false),
+        file("a.rs", 500, false),
+        file("main.rs", 1, true),
+    ]);
+    assert_eq!(paths(after), order);
+}

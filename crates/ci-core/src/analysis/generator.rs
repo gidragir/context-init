@@ -72,7 +72,6 @@ pub fn generate(
         project_id: None,
         project: analysis.name.clone(),
         description: analysis.description.clone(),
-        root_path: analysis.root_dir.to_string_lossy().to_string(),
         updated_at: today.clone(),
         project_type: analysis.project_type.display_name().to_string(),
         entrypoints: analysis.root_entrypoints.clone(),
@@ -224,9 +223,6 @@ pub fn update(
     }
 
     let mut index = L0Index::load_from_file(&l0_path)?;
-    if index.is_legacy() {
-        index.upgrade_to_current();
-    }
 
     let today = chrono_like_date();
     index.updated_at = today.clone();
@@ -337,8 +333,8 @@ fn render_l0_markdown(index: &L0Index, date: &str) -> String {
     md.push_str("```\n\n");
 
     md.push_str("## 🧩 Каталог подсистем (L1)\n\n");
-    md.push_str("| Подсистема | Роль / Назначение | Точки входа | Токены (BPE) | L1 Карточка |\n");
-    md.push_str("| :--- | :--- | :--- | :--- | :--- |\n");
+    md.push_str("| Подсистема | Роль / Назначение | Точки входа | L1 Карточка |\n");
+    md.push_str("| :--- | :--- | :--- | :--- |\n");
 
     for s in &index.subsystems {
         let ep_str = if s.entrypoints.is_empty() {
@@ -346,14 +342,9 @@ fn render_l0_markdown(index: &L0Index, date: &str) -> String {
         } else {
             s.entrypoints.join(", ")
         };
-        let tokens_str = if s.tokens > 0 {
-            format!("~{}", s.tokens)
-        } else {
-            "-".to_string()
-        };
         md.push_str(&format!(
-            "| **{}** | {} | `{}` | {} | [{}]({}) |\n",
-            s.name, s.summary, ep_str, tokens_str, s.l1_path, s.l1_path
+            "| **{}** | {} | `{}` | [{}]({}) |\n",
+            s.name, s.summary, ep_str, s.l1_path, s.l1_path
         ));
     }
 
@@ -366,34 +357,25 @@ fn render_l0_markdown(index: &L0Index, date: &str) -> String {
 }
 
 fn render_subsystem_card(sub: &SubsystemInfo, analysis: &ProjectAnalysis) -> String {
-    let tokens_info = if sub.tokens > 0 {
-        format!(" | **Объем:** ~{} токенов BPE", sub.tokens)
-    } else {
-        String::new()
-    };
     let mut md = format!(
-        "# Подсистема: {} (L1)\n\n> **Идентификатор:** `{}`\n> **Теги:** {}{}\n\n## 🎯 Назначение и роль\n{}\n\n",
+        "# Подсистема: {} (L1)\n\n> **Идентификатор:** `{}`\n> **Теги:** {}\n\n## 🎯 Назначение и роль\n{}\n\n",
         sub.name,
         sub.id,
         sub.tags.join(", "),
-        tokens_info,
         sub.summary
     );
 
     // Точки входа и ключевые файлы
     md.push_str("## 📁 Точки входа и структура файлов\n\n");
     if !sub.files.is_empty() {
-        md.push_str("| Файл | Строк | Статус |\n| :--- | :--- | :--- |\n");
+        md.push_str("| Файл | Статус |\n| :--- | :--- |\n");
         for file in &sub.files {
             let badge = if file.is_entrypoint {
                 "⭐ Точка входа"
             } else {
                 "Исходный код"
             };
-            md.push_str(&format!(
-                "| `{}` | {} | {} |\n",
-                file.path, file.lines, badge
-            ));
+            md.push_str(&format!("| `{}` | {} |\n", file.path, badge));
         }
         md.push('\n');
     } else if !sub.key_files.is_empty() {

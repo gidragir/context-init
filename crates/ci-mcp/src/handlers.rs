@@ -292,12 +292,13 @@ impl ContextHandler {
             fs::read_to_string(&card)?
         } else {
             // Synthesize compact L1 card from L0 metadata
+            let tokens = ci_core::analysis::subsystems::subsystem_tokens(&project.root, sub);
             let mut card = format!(
                 "# Subsystem: {} (L1)\n\n> **ID:** `{}`\n> **Tags:** {} | **Tokens:** ~{} BPE\n\n## Summary\n{}\n\n",
                 sub.name,
                 sub.id,
                 sub.tags.join(", "),
-                sub.tokens,
+                tokens,
                 sub.summary
             );
             if !sub.entrypoints.is_empty() {

@@ -97,6 +97,39 @@ mod tests {
     }
 
     #[test]
+    fn l0_v3_omits_volatile_fields() {
+        let root = temp_dir("v3_root");
+        let kd = temp_dir("v3_kd").join("knowledge");
+        let mut sub = core_subsystem();
+        sub.tokens = 123;
+        sub.files = vec![crate::storage::SubsystemFile {
+            path: "src/lib.rs".to_string(),
+            is_entrypoint: true,
+            lines: 77,
+        }];
+        generator::generate(
+            &analysis_for(&root),
+            &[sub],
+            &kd,
+            &GenerateOptions::default(),
+        )
+        .unwrap();
+        let json = fs::read_to_string(kd.join("L0_index.json")).unwrap();
+        for forbidden in ["\"root_path\"", "\"lines\"", "\"tokens\""] {
+            assert!(!json.contains(forbidden), "{forbidden} in {json}");
+        }
+        let index = crate::storage::L0Index::from_json_str(&json).unwrap();
+        assert_eq!(index.schema_version, 3);
+        let mut texts = vec![fs::read_to_string(kd.join("L0_index.md")).unwrap()];
+        texts.push(fs::read_to_string(kd.join("subsystems/core.md")).unwrap());
+        for text in texts {
+            for forbidden in ["Строк", "токенов", "Токены"] {
+                assert!(!text.contains(forbidden), "{forbidden} in {text}");
+            }
+        }
+    }
+
+    #[test]
     fn sanitize_id_output_is_valid_subsystem_id() {
         let long = "a".repeat(100);
         for raw in [

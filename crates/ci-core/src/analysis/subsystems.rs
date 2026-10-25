@@ -70,7 +70,7 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
     }
 
     for sub in &mut subsystems {
-        compute_subsystem_tokens(&analysis.root_dir, sub);
+        sub.tokens = subsystem_tokens(&analysis.root_dir, sub);
     }
     subsystems
 }
@@ -98,24 +98,18 @@ fn module_summary(dir_path: &str, entrypoints: &[String], files: usize, is_file:
     }
 }
 
-fn compute_subsystem_tokens(root_dir: &Path, sub: &mut SubsystemInfo) {
-    let mut total_tokens = 0;
-    if !sub.files.is_empty() {
-        for f in &sub.files {
-            let path = root_dir.join(&f.path);
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                total_tokens += detector::count_tokens(&content);
-            }
-        }
+/// BPE token count of the subsystem's current sources, read from disk.
+pub fn subsystem_tokens(root_dir: &Path, sub: &SubsystemInfo) -> usize {
+    let paths: Vec<&str> = if sub.files.is_empty() {
+        sub.key_files.iter().map(String::as_str).collect()
     } else {
-        for path_str in &sub.key_files {
-            let path = root_dir.join(path_str);
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                total_tokens += detector::count_tokens(&content);
-            }
-        }
-    }
-    sub.tokens = total_tokens;
+        sub.files.iter().map(|f| f.path.as_str()).collect()
+    };
+    paths
+        .into_iter()
+        .filter_map(|p| std::fs::read_to_string(root_dir.join(p)).ok())
+        .map(|content| detector::count_tokens(&content))
+        .sum()
 }
 
 #[cfg(test)]

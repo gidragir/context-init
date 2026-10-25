@@ -626,6 +626,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn synthesized_card_counts_tokens_live() {
+        let tmp = TempDirGuard::new("card_tokens");
+        let kd = seed_in_repo_knowledge(tmp.path());
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            "pub fn answer() -> u32 { 42 }\n".repeat(20),
+        )
+        .unwrap();
+        let index = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        let root = fs::canonicalize(tmp.path()).unwrap();
+        let expected = ci_core::analysis::subsystems::subsystem_tokens(&root, &index.subsystems[0]);
+        assert!(expected > 0);
+
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let out = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: "core".to_string(),
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..McpGetSubsystemParams::default()
+            }))
+            .await
+            .expect("get_subsystem");
+        assert!(
+            out.contains(&format!("**Tokens:** ~{expected} BPE")),
+            "{out}"
+        );
+    }
+
+    #[tokio::test]
     async fn submit_rejects_traversal_ids() {
         let tmp = TempDirGuard::new("submit_traversal");
         let kd = seed_in_repo_knowledge(tmp.path());

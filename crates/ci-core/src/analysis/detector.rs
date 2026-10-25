@@ -894,20 +894,22 @@ fn contains_relevant_files(dir: &Path) -> bool {
     false
 }
 
-/// Orders `files` entrypoints-first, then by size, keeping the 15 most representative.
+/// Keeps the 15 most representative files (entrypoints first, then larger, then by path)
+/// and returns them ordered entrypoints first, then by path, so a file growing past
+/// another does not reorder the output.
 fn representative_files(mut files: Vec<SubsystemFile>) -> Vec<SubsystemFile> {
-    // Сортировка: точки входа первыми, затем по объему строк
     files.sort_by(|a, b| {
         b.is_entrypoint
             .cmp(&a.is_entrypoint)
             .then_with(|| b.lines.cmp(&a.lines))
+            .then_with(|| a.path.cmp(&b.path))
     });
-
-    // Ограничиваем список 15 наиболее репрезентативными файлами для компактности
-    if files.len() > 15 {
-        files.truncate(15);
-    }
-
+    files.truncate(15);
+    files.sort_by(|a, b| {
+        b.is_entrypoint
+            .cmp(&a.is_entrypoint)
+            .then_with(|| a.path.cmp(&b.path))
+    });
     files
 }
 

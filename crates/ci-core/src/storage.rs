@@ -14,11 +14,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Current `L0_index.json` schema version for central storage (D23).
-pub const CURRENT_L0_SCHEMA_VERSION: u32 = 2;
-
-/// Legacy `L0_index.json` schema version (when `schema_version` field is absent in old `.agents/knowledge/L0_index.json`, D23).
-pub const LEGACY_L0_SCHEMA_VERSION: u32 = 1;
+/// Current `L0_index.json` schema version (v3: no `root_path`, line or token counters).
+pub const CURRENT_L0_SCHEMA_VERSION: u32 = 3;
 
 /// Normalizes a path to use forward slashes (`/`) across all operating systems,
 /// stripping Windows verbatim prefixes (`\\?\`) and redundant `./` or trailing slashes.
@@ -241,6 +238,9 @@ impl ProjectType {
 pub struct SubsystemFile {
     pub path: String,
     pub is_entrypoint: bool,
+    /// Line count; in memory only (used to pick representative files), never serialized.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub lines: usize,
 }
 
@@ -263,7 +263,10 @@ pub struct SubsystemInfo {
     pub key_symbols: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_command: Option<String>,
-    #[serde(default)]
+    /// BPE token count of the subsystem sources; in memory only (split decisions), never
+    /// serialized: consumers compute it live with `analysis::subsystems::subsystem_tokens`.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub tokens: usize,
     /// Id of the subsystem this one was split off from (oversized crates).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -357,25 +360,17 @@ pub struct ProjectCommands {
     pub custom: HashMap<String, String>,
 }
 
-fn default_legacy_schema_version() -> u32 {
-    LEGACY_L0_SCHEMA_VERSION
-}
-
 fn default_json_schema_uri() -> String {
     "https://json-schema.org/draft/2020-12/schema".to_string()
 }
 
-/// Root L0 index structure stored in `L0_index.json` with `schema_version` support (D23).
-///
-/// When deserializing a legacy `.agents/knowledge/L0_index.json` that lacks `schema_version`,
-/// `schema_version` defaults to `LEGACY_L0_SCHEMA_VERSION` (`1`). New and migrated indexes use
-/// `CURRENT_L0_SCHEMA_VERSION` (`2`).
+/// Root L0 index structure stored in `L0_index.json` (D23). Only
+/// `CURRENT_L0_SCHEMA_VERSION` is readable; older bases must be rebuilt with `init --force`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct L0Index {
     #[serde(default = "default_json_schema_uri", rename = "$schema")]
     pub schema: String,
-    /// Schema format version (`2` for central storage v0.3+, `1` when reading legacy format without `schema_version`).
-    #[serde(default = "default_legacy_schema_version")]
+    /// Schema format version (`CURRENT_L0_SCHEMA_VERSION`).
     pub schema_version: u32,
     /// Optional computed `project-id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -383,7 +378,6 @@ pub struct L0Index {
     pub project: String,
     #[serde(default)]
     pub description: String,
-    pub root_path: String,
     pub updated_at: String,
     #[serde(default)]
     pub project_type: String,
@@ -407,7 +401,6 @@ impl Default for L0Index {
             project_id: None,
             project: String::new(),
             description: String::new(),
-            root_path: String::new(),
             updated_at: String::new(),
             project_type: String::new(),
             entrypoints: Vec::new(),
@@ -420,12 +413,22 @@ impl Default for L0Index {
 }
 
 impl L0Index {
-    /// Parses `L0Index` from a JSON string (supports both v2 with `schema_version` and legacy v1 without `schema_version`).
+    /// Parses `L0Index` from a JSON string; any `schema_version` other than the current one
+    /// (a missing field counts as `1`) is an error.
     pub fn from_json_str(json: &str) -> Result<Self> {
         let normalized = normalize_line_endings(json);
-        let idx: Self =
+        let value: serde_json::Value =
             serde_json::from_str(&normalized).context("Failed to deserialize L0_index.json")?;
-        Ok(idx)
+        let found = value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(1);
+        if found != u64::from(CURRENT_L0_SCHEMA_VERSION) {
+            bail!(
+                "knowledge base uses an outdated format (schema v{found}); rebuild it with `context-init init --force`"
+            );
+        }
+        serde_json::from_value(value).context("Failed to deserialize L0_index.json")
     }
 
     /// Loads `L0Index` from a file on disk.
@@ -451,35 +454,6 @@ impl L0Index {
         let content = self.to_json_pretty()?;
         fs::write(path, content)
             .with_context(|| format!("Failed to write L0_index.json to {:?}", path))
-    }
-
-    /// Returns `true` if this index was loaded from a legacy format (`schema_version < 2`).
-    pub fn is_legacy(&self) -> bool {
-        self.schema_version < CURRENT_L0_SCHEMA_VERSION
-    }
-
-    /// Upgrades the index to `CURRENT_L0_SCHEMA_VERSION` (`2`) and normalizes all embedded paths to `/`.
-    pub fn upgrade_to_current(&mut self) {
-        self.schema_version = CURRENT_L0_SCHEMA_VERSION;
-        if self.schema.is_empty() {
-            self.schema = default_json_schema_uri();
-        }
-        self.root_path = normalize_path(&self.root_path);
-        for ep in &mut self.entrypoints {
-            *ep = normalize_path(&*ep);
-        }
-        for sub in &mut self.subsystems {
-            sub.l1_path = normalize_path(&sub.l1_path);
-            for ep in &mut sub.entrypoints {
-                *ep = normalize_path(&*ep);
-            }
-            for kf in &mut sub.key_files {
-                *kf = normalize_path(&*kf);
-            }
-            for f in &mut sub.files {
-                f.path = normalize_path(&f.path);
-            }
-        }
     }
 }
 
@@ -536,6 +510,26 @@ mod subsystem_id_tests {
         let ts = now_rfc3339();
         assert_eq!(ts.len(), 20, "{ts}");
         assert!(ts.ends_with('Z') && ts.as_bytes()[10] == b'T', "{ts}");
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    #[test]
+    fn l0_old_schema_is_rejected() {
+        let err = L0Index::from_json_str(
+            r#"{"schema_version": 2, "project": "p", "updated_at": "2026-01-01"}"#,
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("schema v2"), "{msg}");
+        assert!(msg.contains("init --force"), "{msg}");
+
+        let missing =
+            L0Index::from_json_str(r#"{"project": "p", "updated_at": "2026-01-01"}"#).unwrap_err();
+        assert!(format!("{missing:#}").contains("schema v1"));
     }
 }
 

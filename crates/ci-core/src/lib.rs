@@ -25,7 +25,7 @@ pub use openviking::{
 pub use storage::{
     compute_project_id, hash_project_id, normalize_git_remote, normalize_line_endings,
     normalize_path, normalize_path_str, DriftReport, L0Index, ProjectCommands, ProjectType,
-    SubsystemFile, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION, LEGACY_L0_SCHEMA_VERSION,
+    SubsystemFile, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
 };
 pub use telemetry::{
     read_jsonl_file, record_feedback, render_telemetry_report, EfficiencySignal, FeedbackSignal,

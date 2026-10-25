@@ -155,6 +155,55 @@ fn cli_check_hints_storage_mismatch() {
     assert!(all.contains("migrate --to central"), "{all}");
 }
 
+fn copy_dir(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).unwrap();
+    for entry in fs::read_dir(src).unwrap().flatten() {
+        let to = dst.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_dir(&entry.path(), &to);
+        } else {
+            fs::copy(entry.path(), &to).unwrap();
+        }
+    }
+}
+
+#[test]
+fn cli_clone_at_other_path_works_without_init() {
+    let sb = Sandbox::new("clone");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let index = ci_core::storage::L0Index::load_from_file(
+        &sb.project().join(".context-init/knowledge/L0_index.json"),
+    )
+    .unwrap();
+    let id = index.subsystems[0].id.clone();
+
+    let clone = sb.dir.join("clone");
+    copy_dir(&sb.project(), &clone);
+    let run_in_clone = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_context-init"))
+            .args(args)
+            .current_dir(&clone)
+            .env("HOME", sb.home())
+            .env("XDG_CONFIG_HOME", sb.home().join(".config"))
+            .env("XDG_DATA_HOME", sb.data_home())
+            .env("NO_COLOR", "1")
+            .output()
+            .unwrap()
+    };
+    let pack = run_in_clone(&["pack", &id, ".", "--compress"]);
+    assert!(pack.status.success(), "{}{}", stdout(&pack), stderr(&pack));
+    let check = run_in_clone(&["check", ".", "--exit-code"]);
+    assert!(
+        check.status.success(),
+        "{}{}",
+        stdout(&check),
+        stderr(&check)
+    );
+    let all = format!("{}{}", stdout(&check), stderr(&check));
+    assert!(!all.contains("init"), "{all}");
+}
+
 #[test]
 fn cli_removed_ai_flag_errors() {
     let sb = Sandbox::new("ai_flag");
