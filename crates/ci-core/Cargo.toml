@@ -10,6 +10,7 @@ description = "Core types, configuration hierarchy, and storage primitives for c
 
 [dependencies]
 quote.workspace = true
+quick-xml.workspace = true
 syn.workspace = true
 tiktoken-rs.workspace = true
 anyhow.workspace = true

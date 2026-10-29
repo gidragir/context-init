@@ -1,6 +1,7 @@
 //! Language adapters (D7): symbol extraction and signature-level compression per language.
 
 mod bsl;
+pub mod mdo;
 mod python;
 mod rust;
 

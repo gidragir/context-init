@@ -594,6 +594,71 @@ mod tests {
         assert!(!again.contains("stale: true"), "{again}");
     }
 
+    #[tokio::test]
+    async fn detector_maps_configuration_subsystems_and_lazy_l2_object_cards() {
+        let tmp = TempDirGuard::new("mdo");
+        let write = |rel: &str, text: &str| {
+            let p = tmp.path().join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        };
+        write(
+            "src/Subsystems/Billing/Billing.mdo",
+            "<mdclass:Subsystem xmlns:mdclass=\"urn:example:mdclass\"><name>Billing</name><content>Catalog.Items</content></mdclass:Subsystem>",
+        );
+        write(
+            "src/Catalogs/Items/Items.mdo",
+            "<mdclass:Catalog xmlns:mdclass=\"urn:example:mdclass\"><name>Items</name><attributes><name>Price</name></attributes><tabularSections><name>Prices</name><attributes><name>Period</name></attributes></tabularSections></mdclass:Catalog>",
+        );
+        write(
+            "src/Catalogs/Items/ObjectModule.bsl",
+            "Procedure Recalculate(Val Mode) Export\n    Total = 1;\nEndProcedure\n\nProcedure Hidden()\nEndProcedure\n",
+        );
+        write(
+            "src/Catalogs/Orphans/Orphans.mdo",
+            "<mdclass:Catalog xmlns:mdclass=\"urn:example:mdclass\"><name>Orphans</name></mdclass:Catalog>",
+        );
+        write(
+            "src/CommonModules/Common/Module.bsl",
+            "Function Version() Export\n    Return 1;\nEndFunction\n",
+        );
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let path = Some(tmp.path().to_string_lossy().to_string());
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        let project = server.resolve_context(path.as_deref(), None).await;
+        let ids: Vec<String> = project
+            .load_l0_index()
+            .unwrap()
+            .subsystems
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+        assert!(ids.contains(&"subsystem_billing".to_string()), "{ids:?}");
+        assert!(ids.contains(&"metadata_catalog".to_string()), "{ids:?}");
+        assert!(
+            !ids.iter()
+                .any(|i| i == "src_subsystems" || i == "src_catalogs"),
+            "{ids:?}"
+        );
+
+        let l2 = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: "catalog_items".to_string(),
+                path: path.clone(),
+                project: None,
+                cursor: None,
+            }))
+            .await
+            .expect("lazy L2 card");
+        for needle in ["Price", "Prices", "Period", "Recalculate(Val Mode) Export"] {
+            assert!(l2.contains(needle), "{needle} missing in {l2}");
+        }
+        assert!(!l2.contains("Hidden"), "{l2}");
+    }
+
     #[test]
     fn check_drift_errors_on_missing_index_with_mismatch_hint() {
         let tmp = TempDirGuard::new("check_no_kb");

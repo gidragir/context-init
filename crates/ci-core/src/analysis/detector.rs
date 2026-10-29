@@ -1,4 +1,5 @@
 use crate::analysis::generator::sanitize_id;
+use crate::analysis::lang::mdo;
 use crate::analysis::scope::ScopeFilter;
 use crate::analysis::types::{DiscoveredModule, ProjectAnalysis};
 use crate::config::{ScopeConfig, DEFAULT_SPLIT_THRESHOLD_TOKENS};
@@ -121,7 +122,9 @@ pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<Projec
     } = opts.clone();
     let canonical = fs::canonicalize(root)
         .with_context(|| format!("Не удалось получить канонический путь для {:?}", root))?;
-    let _scope_guard = ScopeGuard::install(ScopeFilter::build(&canonical, &scope)?);
+    let scope_filter = ScopeFilter::build(&canonical, &scope)?;
+    let scoped_files: Vec<String> = scope_filter.files().to_vec();
+    let _scope_guard = ScopeGuard::install(scope_filter);
 
     let default_name = canonical
         .file_name()
@@ -134,7 +137,7 @@ pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<Projec
     let description = extract_description(&canonical, &name);
     let commands = detect_commands(&canonical, &project_type, with_rtk);
     let root_entrypoints = detect_root_entrypoints(&canonical);
-    let detected_modules = discover_subsystems(
+    let mut detected_modules = discover_subsystems(
         &canonical,
         &workspace_members,
         &project_type,
@@ -142,6 +145,15 @@ pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<Projec
         with_rtk,
         split_threshold_tokens,
     );
+    // Metadata projects (`.mdo`): configuration subsystems replace the directory modules
+    // whose files they fully cover (D8).
+    let (mdo_modules, covered) = mdo::discover_mdo_subsystems(&canonical, &scoped_files);
+    if !mdo_modules.is_empty() {
+        detected_modules
+            .retain(|m| m.files.is_empty() || !m.files.iter().all(|f| covered.contains(&f.path)));
+        detected_modules.extend(mdo_modules);
+        detected_modules.sort_by(|a, b| a.dir_path.cmp(&b.dir_path).then_with(|| a.id.cmp(&b.id)));
+    }
     let rules = generate_default_rules(&project_type, with_rtk);
 
     Ok(ProjectAnalysis {

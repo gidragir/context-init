@@ -264,6 +264,20 @@ impl ContextHandler {
         });
 
         let Some(sub) = matched else {
+            // Metadata objects have no L1 card: describe them lazily (L2, D8).
+            if let Some(card) = ci_core::analysis::lang::mdo::find_object_card(
+                &project.root,
+                &project.config.scope,
+                clean_id,
+            )? {
+                return Ok(paginate_content(
+                    &card,
+                    cursor,
+                    project.config.max_response_tokens,
+                    false,
+                )
+                .rendered);
+            }
             let available: Vec<&str> = index.subsystems.iter().map(|s| s.id.as_str()).collect();
             bail!(
                 "Subsystem '{}' not found in L0 index. Available subsystems: {}",
