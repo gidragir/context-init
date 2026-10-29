@@ -272,11 +272,21 @@ impl ContextHandler {
             );
         };
 
-        let (stale, diff_stat) = project.check_subsystem_staleness(sub);
+        let (mut stale, mut diff_stat) = project.check_subsystem_staleness(sub);
+        if stale && project.config.auto_refresh {
+            // Lazy refresh (D2): re-stamp the stale card; a failure leaves it reported as stale.
+            if pipeline::refresh_stale_card(project, sub).is_ok() {
+                (stale, diff_stat) = project.check_subsystem_staleness(sub);
+            }
+        }
 
-        // Try reading markdown card file
+        // Try reading markdown card file (provenance frontmatter is for tooling, not for agents)
         let mut card_content = if let Some(card) = project.card_file(sub) {
-            fs::read_to_string(&card)?
+            let text = fs::read_to_string(&card)?;
+            match OkfCard::parse(&text) {
+                Ok(parsed) => parsed.body,
+                Err(_) => text,
+            }
         } else {
             // Synthesize compact L1 card from L0 metadata
             let tokens = ci_core::analysis::subsystems::subsystem_tokens(&project.root, sub);
@@ -307,12 +317,10 @@ impl ContextHandler {
 
         if stale {
             if let Some(diff) = diff_stat {
-                if !card_content.contains("Warning: Stale Knowledge Card") {
-                    card_content.push_str(&format!(
-                        "\n\n> [!WARNING] **Stale Knowledge Card**\n> Git diff stat since card generation:\n```diff\n{}\n```\n",
-                        diff.trim()
-                    ));
-                }
+                card_content.push_str(&format!(
+                    "\n\n## Git Staleness (diff --stat)\n```text\n{}\n```\n",
+                    diff.trim()
+                ));
             }
         }
 

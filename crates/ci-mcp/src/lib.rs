@@ -513,6 +513,87 @@ mod tests {
         );
     }
 
+    fn git(root: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_get_subsystem_reports_stale_diff_stat_and_auto_refreshes() {
+        let tmp = TempDirGuard::new("stale_refresh");
+        write_fixture(tmp.path());
+        git(tmp.path(), &["init", "-q"]);
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "base"]);
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let path = Some(tmp.path().to_string_lossy().to_string());
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "kb"]);
+        async fn get(
+            server: &ContextInitServer,
+            path: &Option<String>,
+        ) -> Result<String, rmcp::ErrorData> {
+            server
+                .get_subsystem(Parameters(McpGetSubsystemParams {
+                    subsystem_id: "src_api".to_string(),
+                    path: path.clone(),
+                    project: None,
+                    cursor: None,
+                }))
+                .await
+        }
+
+        let fresh = get(&server, &path).await.expect("fresh card");
+        assert!(
+            fresh.contains("stale: false") || !fresh.contains("stale: true"),
+            "{fresh}"
+        );
+
+        fs::write(
+            tmp.path().join("src/api/mod.rs"),
+            "pub struct Thing;\npub fn run_api() -> u32 {\n    2\n}\n",
+        )
+        .unwrap();
+        git(tmp.path(), &["commit", "-q", "-am", "change api"]);
+
+        let stale = get(&server, &path).await.expect("stale card");
+        assert!(stale.contains("stale: true"), "{stale}");
+        assert!(stale.contains("## Git Staleness (diff --stat)"), "{stale}");
+        assert!(stale.contains("src/api/mod.rs"), "{stale}");
+
+        fs::write(
+            tmp.path().join(".context-init.toml"),
+            "auto_refresh = true\n",
+        )
+        .unwrap();
+        let refreshed = get(&server, &path).await.expect("refreshed card");
+        assert!(!refreshed.contains("stale: true"), "{refreshed}");
+        assert!(!refreshed.contains("Git Staleness"), "{refreshed}");
+        let again = get(&server, &path).await.expect("card after refresh");
+        assert!(!again.contains("stale: true"), "{again}");
+    }
+
     #[test]
     fn check_drift_errors_on_missing_index_with_mismatch_hint() {
         let tmp = TempDirGuard::new("check_no_kb");

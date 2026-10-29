@@ -151,6 +151,26 @@ pub fn validate_model_override(config: &Config, model_override: Option<&str>) ->
     Ok(())
 }
 
+/// Refreshes one Git-stale L1 card without LLM enrichment: re-detects the project, lets
+/// `generator::update` regenerate cards it owns, then re-stamps the card's provenance SHAs so
+/// that hand-edited cards stop being reported stale too.
+pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<()> {
+    let analysis = detector::analyze_project_with(
+        &project.root,
+        &detector::AnalyzeOptions {
+            deep: false,
+            with_rtk: project.config.integrations.resolve_rtk_active(),
+            split_threshold_tokens: project.config.split_threshold_tokens,
+        },
+    )?;
+    let subsystems = build_deterministic(&analysis);
+    generator::update(&analysis, &subsystems, &project.knowledge_dir, None)?;
+    if let Some(card) = project.card_file(sub) {
+        generator::restamp_card_source(&card, &project.root, None)?;
+    }
+    Ok(())
+}
+
 /// Hint for a project whose active knowledge dir has no index while the other storage mode
 /// holds one (the mode was switched or the base was created under a different setting).
 pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String> {

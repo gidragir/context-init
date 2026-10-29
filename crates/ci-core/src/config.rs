@@ -695,6 +695,9 @@ pub struct Config {
     /// Whether to modify in-repo `AGENTS.md` by default (default `false`, D1).
     #[serde(default)]
     pub touch_agents_md: bool,
+    /// Refresh a Git-stale L1 card on `context_get_subsystem` instead of only reporting it (default `false`, D2).
+    #[serde(default)]
+    pub auto_refresh: bool,
     /// Knowledge base location (default `repo`).
     #[serde(default)]
     pub storage: StorageMode,
@@ -726,6 +729,7 @@ impl Default for Config {
             max_response_tokens: default_max_response_tokens(),
             split_threshold_tokens: default_split_threshold_tokens(),
             touch_agents_md: false,
+            auto_refresh: false,
             storage: StorageMode::default(),
             integrations: IntegrationsConfig::default(),
             models: BTreeMap::new(),
@@ -778,6 +782,7 @@ struct PartialConfig {
     max_response_tokens: Option<usize>,
     split_threshold_tokens: Option<usize>,
     touch_agents_md: Option<bool>,
+    auto_refresh: Option<bool>,
     storage: Option<StorageMode>,
     integrations: Option<PartialIntegrationsConfig>,
     models: Option<BTreeMap<String, PartialModelConfig>>,
@@ -890,6 +895,9 @@ impl Config {
         if let Some(touch) = partial.touch_agents_md {
             self.touch_agents_md = touch;
         }
+        if let Some(refresh) = partial.auto_refresh {
+            self.auto_refresh = refresh;
+        }
         if let Some(storage) = partial.storage {
             self.storage = storage;
         }
@@ -1001,6 +1009,10 @@ impl Config {
                     threshold_str
                 )
             })?;
+        }
+
+        if let Some(refresh_str) = non_empty("CONTEXT_INIT_AUTO_REFRESH") {
+            self.auto_refresh = parse_env_bool("CONTEXT_INIT_AUTO_REFRESH", &refresh_str)?;
         }
 
         if let Some(touch_str) = non_empty("CONTEXT_INIT_TOUCH_AGENTS_MD") {
@@ -1218,6 +1230,7 @@ language = "ru"
 max_response_tokens = 4000
 split_threshold_tokens = 15000
 touch_agents_md = false
+auto_refresh = false
 
 [integrations]
 rtk = "auto"

@@ -1,6 +1,8 @@
 use crate::analysis::subsystems::GENERATED_SUMMARY_PREFIXES;
 use crate::analysis::ProjectAnalysis;
 use crate::config::StorageMode;
+use crate::git::{GitBackend, SystemGitBackend};
+use crate::openviking::{CardFreshness, CardFrontmatter, CardGeneratedBy, CardSource, OkfCard};
 use crate::storage::{
     now_rfc3339, safe_join, DriftReport, L0Index, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
 };
@@ -32,6 +34,151 @@ fn write_if_changed(path: &Path, content: &str) -> Result<bool> {
     }
     fs::write(path, content).with_context(|| format!("Не удалось записать {:?}", path))?;
     Ok(true)
+}
+
+/// Directory (or single file) a subsystem's L1 card tracks in Git: the common parent of its
+/// files, the file itself for single-file subsystems, else the subsystem id.
+fn subsystem_directory(sub: &SubsystemInfo) -> String {
+    let paths: Vec<String> = if sub.files.is_empty() {
+        sub.key_files.iter().map(|p| p.replace('\\', "/")).collect()
+    } else {
+        sub.files
+            .iter()
+            .map(|f| f.path.replace('\\', "/"))
+            .collect()
+    };
+    let Some(first) = paths.first() else {
+        return sub.id.clone();
+    };
+    if paths.len() == 1 {
+        return first.clone();
+    }
+    let mut common: Vec<&str> = first.split('/').collect();
+    common.pop();
+    for p in &paths[1..] {
+        let parts: Vec<&str> = p.split('/').collect();
+        let keep = common
+            .iter()
+            .zip(parts.iter().take(parts.len().saturating_sub(1)))
+            .take_while(|(a, b)| a == b)
+            .count();
+        common.truncate(keep);
+    }
+    if common.is_empty() {
+        ".".to_string()
+    } else {
+        common.join("/")
+    }
+}
+
+/// `(blob_sha, commit_sha)` of `directory` in the Git repository at `root`; `None` outside Git.
+fn git_source_shas(root: &Path, directory: &str) -> Option<(String, String)> {
+    let git = SystemGitBackend::new();
+    let commit = git.head_commit(root).ok()?;
+    let blob = git.blob_sha(root, Path::new(directory)).ok()??;
+    Some((blob, commit))
+}
+
+fn file_list_sha(sub: &SubsystemInfo) -> String {
+    let mut paths: Vec<&str> = sub.files.iter().map(|f| f.path.as_str()).collect();
+    paths.extend(sub.key_files.iter().map(String::as_str));
+    paths.sort_unstable();
+    let mut hasher = Sha256::new();
+    for p in paths {
+        hasher.update(p.as_bytes());
+        hasher.update(b"\n");
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+/// L1 card as an OpenViking OKF Sidecar: YAML frontmatter (`directory`, `source`, `generated_by`,
+/// `freshness`) followed by the card body. `source_shas` is `(blob_sha, commit_sha)`; without it
+/// (outside Git) the blob is a SHA-256 of the file list.
+pub fn render_subsystem_card_okf(
+    sub: &SubsystemInfo,
+    analysis: &ProjectAnalysis,
+    source_shas: Option<(String, String)>,
+    role: &str,
+    model: &str,
+) -> String {
+    let entries = sub.files.len().max(sub.key_files.len());
+    let source = match source_shas {
+        Some((blob_sha, commit_sha)) => CardSource {
+            kind: "git".to_string(),
+            blob_sha,
+            commit_sha,
+        },
+        None => CardSource {
+            kind: "fs".to_string(),
+            blob_sha: file_list_sha(sub),
+            commit_sha: String::new(),
+        },
+    };
+    let frontmatter = CardFrontmatter {
+        directory: subsystem_directory(sub),
+        source,
+        generated_by: CardGeneratedBy {
+            component: "context-init".to_string(),
+            role: role.to_string(),
+            model: model.to_string(),
+        },
+        freshness: CardFreshness {
+            total_entries: entries,
+            sampled_entries: entries,
+            ..CardFreshness::default()
+        },
+    };
+    OkfCard::new(frontmatter, render_subsystem_card(sub, analysis)).to_markdown()
+}
+
+fn render_card_for(sub: &SubsystemInfo, analysis: &ProjectAnalysis, role: &str) -> String {
+    let shas = git_source_shas(&analysis.root_dir, &subsystem_directory(sub));
+    render_subsystem_card_okf(sub, analysis, shas, role, "none")
+}
+
+/// Whether `disk` is the same card as `fresh` apart from provenance noise: body, directory and
+/// source blob must match. Keeps `commit_sha`/`generated_by` stable, so an unchanged tree
+/// rewrites nothing even after HEAD moved.
+fn same_card(disk: &str, fresh: &str) -> bool {
+    match (OkfCard::parse(disk), OkfCard::parse(fresh)) {
+        (Ok(a), Ok(b)) => {
+            a.body == b.body
+                && a.frontmatter.directory == b.frontmatter.directory
+                && a.frontmatter.source.blob_sha == b.frontmatter.source.blob_sha
+                && a.frontmatter.freshness == b.frontmatter.freshness
+        }
+        _ => false,
+    }
+}
+
+/// Whether the card on disk is untouched generator output for `expected_body` (legacy cards
+/// without frontmatter are compared whole).
+fn is_pristine_card(disk: &str, expected_body: &str) -> bool {
+    match OkfCard::parse(disk) {
+        Ok(card) => card.body == expected_body.trim(),
+        Err(_) => disk.trim() == expected_body.trim(),
+    }
+}
+
+/// Rewrites `source` of an existing OKF card to the current Git state, keeping its body.
+/// Returns whether the file changed. Cards without frontmatter are left alone.
+pub fn restamp_card_source(card_path: &Path, root: &Path, directory: Option<&str>) -> Result<bool> {
+    let disk = fs::read_to_string(card_path)?;
+    let Ok(mut card) = OkfCard::parse(&disk) else {
+        return Ok(false);
+    };
+    let dir = directory
+        .map(str::to_string)
+        .unwrap_or_else(|| card.frontmatter.directory.clone());
+    let Some((blob_sha, commit_sha)) = git_source_shas(root, &dir) else {
+        return Ok(false);
+    };
+    card.frontmatter.source = CardSource {
+        kind: "git".to_string(),
+        blob_sha,
+        commit_sha,
+    };
+    write_if_changed(card_path, &card.to_markdown())
 }
 
 /// Gives the index a stable order: subsystems by id; files, entrypoints, key files and
@@ -122,7 +269,7 @@ pub fn generate(
     for sub in &l0_index.subsystems {
         write_if_changed(
             &base_dir.join(&sub.l1_path),
-            &render_subsystem_card(sub, analysis),
+            &render_card_for(sub, analysis, "init"),
         )?;
     }
     write_if_changed(
@@ -281,7 +428,7 @@ pub fn update(
         }) {
             if let Some(card) = safe_join(&base_dir, &existing.l1_path) {
                 let pristine = fs::read_to_string(&card).map_or(true, |disk| {
-                    disk == render_subsystem_card(existing, &old_analysis)
+                    is_pristine_card(&disk, &render_subsystem_card(existing, &old_analysis))
                 });
                 if pristine {
                     pristine_ids.push(existing.id.clone());
@@ -333,7 +480,12 @@ pub fn update(
         };
         let owned = new_ids.contains(&sub.id) || pristine_ids.contains(&sub.id);
         if owned {
-            rendered.push((card, render_subsystem_card(sub, analysis)));
+            let fresh = render_card_for(sub, analysis, "update");
+            let content = match fs::read_to_string(&card) {
+                Ok(disk) if same_card(&disk, &fresh) => disk,
+                _ => fresh,
+            };
+            rendered.push((card, content));
         }
     }
     rendered.push((
@@ -427,11 +579,11 @@ fn render_l0_markdown(index: &L0Index, date: &str) -> String {
 
 fn render_subsystem_card(sub: &SubsystemInfo, analysis: &ProjectAnalysis) -> String {
     let mut md = format!(
-        "# Подсистема: {} (L1)\n\n> **Идентификатор:** `{}`\n> **Теги:** {}\n\n## 🎯 Назначение и роль\n{}\n\n",
+        "# Подсистема: {} (L1)\n\n{}\n\n> **Идентификатор:** `{}`\n> **Теги:** {}\n\n",
         sub.name,
+        sub.summary,
         sub.id,
-        sub.tags.join(", "),
-        sub.summary
+        sub.tags.join(", ")
     );
 
     // Точки входа и ключевые файлы
@@ -1151,6 +1303,78 @@ mod tests {
         fs::write(&card, &text).unwrap();
         update(&analysis, &subs, &kd, None).unwrap();
         assert_eq!(fs::read_to_string(&card).unwrap(), text);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn git(root: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn git_repo(tag: &str) -> std::path::PathBuf {
+        let root = quiet_root(tag);
+        git(&root, &["init", "-q"]);
+        git(&root, &["add", "-A"]);
+        git(&root, &["commit", "-q", "-m", "init"]);
+        root
+    }
+
+    #[test]
+    fn generated_l1_cards_parse_as_valid_okf_cards() {
+        for root in [git_repo("okf_git"), quiet_root("okf_plain")] {
+            let kd = root.join(".context-init/knowledge");
+            let (analysis, subs) = deterministic(&root);
+            generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+            for sub in &subs {
+                let text = fs::read_to_string(kd.join(&sub.l1_path)).unwrap();
+                let card = crate::openviking::OkfCard::parse(&text)
+                    .unwrap_or_else(|e| panic!("{}: {e:#}\n{text}", sub.id));
+                assert!(!card.frontmatter.directory.is_empty(), "{}", sub.id);
+                assert!(!card.frontmatter.source.blob_sha.is_empty(), "{}", sub.id);
+                assert!(card.body.starts_with("# Подсистема:"), "{}", card.body);
+                assert!(
+                    card.l0_abstract().contains(sub.summary.trim()),
+                    "{}",
+                    sub.id
+                );
+            }
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn update_twice_with_okf_cards_remains_noop() {
+        let root = git_repo("okf_noop");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+        update(&analysis, &subs, &kd, None).unwrap();
+        let before = snapshot(&kd, &[]);
+        // HEAD moves, but nothing under any subsystem changes.
+        fs::write(root.join("NOTES.md"), "unrelated\n").unwrap();
+        git(&root, &["add", "-A"]);
+        git(&root, &["commit", "-q", "-m", "docs"]);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let (analysis, subs) = deterministic(&root);
+        update(&analysis, &subs, &kd, None).unwrap();
+        assert!(before == snapshot(&kd, &[]), "update rewrote cards");
         let _ = fs::remove_dir_all(&root);
     }
 }

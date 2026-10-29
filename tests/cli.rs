@@ -596,6 +596,11 @@ fn cli_update_twice_leaves_git_clean() {
     assert!(sb.run(&["init", ".", "--compact"]).status.success());
     git(&["add", "-A"]);
     git(&["commit", "-q", "-m", "kb"]);
+    // The first update after the first commit stamps cards with real Git SHAs (they were
+    // created before any commit existed); from then on updates are no-ops.
+    assert!(sb.run(&["update", ".", "--compact"]).status.success());
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "kb stamped"]);
     let out = sb.run(&["update", ".", "--compact"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert_eq!(git(&["status", "--porcelain"]), "");
