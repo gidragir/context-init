@@ -220,6 +220,9 @@ pub struct McpTaskParams {
     /// Base Git reference to compute diff against (e.g. main, HEAD~1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_ref: Option<String>,
+    /// L2 drill-down: a method or metadata object name; returns only its changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     /// Pagination cursor for continuing output.
     #[serde(default)]
     pub cursor: Option<String>,

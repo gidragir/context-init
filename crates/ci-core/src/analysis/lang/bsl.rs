@@ -122,6 +122,46 @@ impl LanguageAdapter for BslAdapter {
         symbols
     }
 
+    fn method_bodies(&self, source: &str) -> Vec<(String, String)> {
+        let lines: Vec<&str> = source.lines().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            if starts_with_keyword(lines[i], &METHOD_STARTS) {
+                let end = signature_end(&lines, i);
+                let signature = joined_signature(&lines, i, end);
+                let name = signature
+                    .split_whitespace()
+                    .find(|w| {
+                        let l = w.to_lowercase();
+                        !(METHOD_STARTS.contains(&l.as_str()) || l == "асинх" || l == "async")
+                    })
+                    .unwrap_or("")
+                    .split('(')
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                let mut j = end + 1;
+                while j < lines.len()
+                    && !starts_with_keyword(lines[j], &METHOD_ENDS)
+                    && !starts_with_keyword(lines[j], &METHOD_STARTS)
+                {
+                    j += 1;
+                }
+                let last = if j < lines.len() && starts_with_keyword(lines[j], &METHOD_ENDS) {
+                    j
+                } else {
+                    j.saturating_sub(1)
+                };
+                out.push((name, lines[i..=last.max(i)].join("\n")));
+                i = last + 1;
+                continue;
+            }
+            i += 1;
+        }
+        out
+    }
+
     fn compress_source(&self, source: &str) -> String {
         let lines: Vec<&str> = source.lines().collect();
         let mut out: Vec<String> = Vec::new();

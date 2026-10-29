@@ -125,6 +125,59 @@ pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject> {
     Ok(obj)
 }
 
+/// Semantic difference between two versions of an object, one `+Kind: name` / `-Kind: name`
+/// line per added / removed attribute, tabular section, column, content reference or child
+/// subsystem. `old = None` lists everything as added.
+pub fn semantic_diff(old: Option<&MdoObject>, new: &MdoObject) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut diff = |label: &str, old: Vec<String>, new: Vec<String>| {
+        for n in new.iter().filter(|n| !old.contains(n)) {
+            out.push(format!("+{label}: {n}"));
+        }
+        for o in old.iter().filter(|o| !new.contains(o)) {
+            out.push(format!("-{label}: {o}"));
+        }
+    };
+    let columns = |o: &MdoObject| -> Vec<String> {
+        o.tabular_sections
+            .iter()
+            .flat_map(|(s, cols)| cols.iter().map(move |c| format!("{s}.{c}")))
+            .collect()
+    };
+    let sections = |o: &MdoObject| o.tabular_sections.iter().map(|(s, _)| s.clone()).collect();
+    let empty = MdoObject {
+        kind: new.kind.clone(),
+        name: new.name.clone(),
+        synonym: None,
+        attributes: Vec::new(),
+        tabular_sections: Vec::new(),
+        content_refs: Vec::new(),
+        child_subsystems: Vec::new(),
+        exported_methods: Vec::new(),
+    };
+    let old = old.unwrap_or(&empty);
+    diff("Attribute", old.attributes.clone(), new.attributes.clone());
+    diff("TabularSection", sections(old), sections(new));
+    diff("Column", columns(old), columns(new));
+    diff(
+        "Content",
+        old.content_refs.clone(),
+        new.content_refs.clone(),
+    );
+    diff(
+        "Subsystem",
+        old.child_subsystems.clone(),
+        new.child_subsystems.clone(),
+    );
+    if old.synonym != new.synonym {
+        out.push(format!(
+            "~Synonym: {}",
+            new.synonym.as_deref().unwrap_or("")
+        ));
+    }
+    out
+}
+
 /// Markdown L2 card of a metadata object.
 pub fn render_mdo_l2_card(obj: &MdoObject) -> String {
     let mut md = format!("# Объект метаданных: {}.{} (L2)\n\n", obj.kind, obj.name);

@@ -23,6 +23,8 @@ pub trait LanguageAdapter: Send + Sync {
     fn extract_symbols(&self, source: &str) -> Vec<String>;
     /// `source` with bodies elided, keeping signatures, directives and comments.
     fn compress_source(&self, source: &str) -> String;
+    /// `(name, full text)` of every method / function in `source`, in file order.
+    fn method_bodies(&self, source: &str) -> Vec<(String, String)>;
 }
 
 static RUST: RustAdapter = RustAdapter;

@@ -399,6 +399,7 @@ impl ContextInitServer {
             &resolved,
             p.paths.as_deref(),
             p.base_ref.as_deref(),
+            p.target.as_deref(),
             p.cursor.as_deref(),
         )
         .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))

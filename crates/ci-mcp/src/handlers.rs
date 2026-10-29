@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
 use ci_core::analysis::resolve_knowledge_dir;
 use ci_core::analysis::scan::{render_scan_markdown, scan_project};
+use ci_core::analysis::task::{build_task_digest, TaskDigestRequest};
 use ci_core::config::{CliOverrides, Config, StorageMode, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
@@ -701,71 +702,27 @@ impl ContextHandler {
         }
     }
 
-    /// Handler for `context_task` (D4, D5).
+    /// Handler for `context_task` (D4, D5): L1 digest, or the L2 hunk of `target`.
     pub fn task(
         project: &ResolvedProject,
         paths: Option<&[String]>,
         base_ref: Option<&str>,
+        target: Option<&str>,
         cursor: Option<&str>,
     ) -> Result<String> {
-        let backend = SystemGitBackend::new();
-        let current_head = backend.head_commit(&project.root).unwrap_or_default();
-        let target_base = base_ref.unwrap_or("HEAD~1");
-
-        let diff_names = backend
-            .diff_name_only(&project.root, target_base, &current_head)
-            .unwrap_or_default();
-
-        let l0_index = project.load_l0_index().ok();
-
-        let mut task_out = format!(
-            "# Task Context Digest\n\n- **Project:** `{}`\n- **Base Ref:** `{}`\n- **HEAD:** `{}`\n- **Modified Files:** {}\n\n",
-            project.project_id,
-            target_base,
-            current_head,
-            diff_names.len()
-        );
-
-        if !diff_names.is_empty() {
-            task_out.push_str("## Modified Files (Git Diff)\n");
-            for f in &diff_names {
-                let sub_tag = l0_index.as_ref().and_then(|idx| {
-                    idx.subsystems.iter().find(|s| {
-                        s.files.iter().any(|sf| sf.path == *f)
-                            || s.key_files.iter().any(|kf| kf == f)
-                    })
-                });
-                if let Some(sub) = sub_tag {
-                    task_out.push_str(&format!("- `{}` (subsystem: `{}`)\n", f, sub.id));
-                } else {
-                    task_out.push_str(&format!("- `{}`\n", f));
-                }
-            }
-            task_out.push('\n');
-        }
-
-        if let Some(user_paths) = paths {
-            if !user_paths.is_empty() {
-                task_out.push_str("## Task-Specified Paths\n");
-                for p in user_paths {
-                    let sub_tag = l0_index.as_ref().and_then(|idx| {
-                        idx.subsystems.iter().find(|s| {
-                            s.files.iter().any(|sf| sf.path == *p)
-                                || s.key_files.iter().any(|kf| kf == p)
-                        })
-                    });
-                    if let Some(sub) = sub_tag {
-                        task_out.push_str(&format!("- `{}` (subsystem: `{}`)\n", p, sub.id));
-                    } else {
-                        task_out.push_str(&format!("- `{}`\n", p));
-                    }
-                }
-                task_out.push('\n');
-            }
-        }
-
+        let digest = build_task_digest(
+            &project.root,
+            &SystemGitBackend::new(),
+            project.load_l0_index().ok().as_ref(),
+            &TaskDigestRequest {
+                paths: paths.unwrap_or(&[]),
+                base_ref,
+                target,
+                max_tokens: project.config.max_response_tokens,
+            },
+        )?;
         let paginated =
-            paginate_content(&task_out, cursor, project.config.max_response_tokens, false);
+            paginate_content(&digest, cursor, project.config.max_response_tokens, false);
         Ok(paginated.rendered)
     }
 

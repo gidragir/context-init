@@ -873,3 +873,43 @@ fn cli_init_with_invalid_glob_does_not_persist_scope() {
     assert!(!out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert!(!sb.project().join(".context-init.toml").exists());
 }
+
+#[test]
+fn cli_task_prints_l1_digest_and_l2_target() {
+    let sb = Sandbox::new("task_cli");
+    sb.write_fixture();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(sb.project())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    };
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "base"]);
+    fs::write(
+        sb.project().join("src/api/mod.rs"),
+        "pub struct Thing;\npub fn run_api() -> u32 {\n    2\n}\n",
+    )
+    .unwrap();
+    git(&["commit", "-q", "-am", "feat: change api"]);
+    let l1 = sb.run(&["task", ".", "--base", "HEAD~1"]);
+    assert!(l1.status.success(), "{}{}", stdout(&l1), stderr(&l1));
+    assert!(
+        stdout(&l1).contains("feat: change api") && stdout(&l1).contains("run_api"),
+        "{}",
+        stdout(&l1)
+    );
+    let l2 = sb.run(&["task", ".", "--base", "HEAD~1", "--target", "run_api"]);
+    assert!(stdout(&l2).contains("+    2"), "{}", stdout(&l2));
+}

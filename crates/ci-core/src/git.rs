@@ -80,6 +80,38 @@ pub trait GitBackend: Send + Sync {
         to_commit: &str,
         paths: &[String],
     ) -> Result<String>;
+
+    /// Best common ancestor of `a` and `b` (`git merge-base`).
+    fn merge_base(&self, _repo_root: &Path, _a: &str, _b: &str) -> Result<String> {
+        bail!("merge-base is not supported by this backend")
+    }
+
+    /// `git log --oneline from..to`, newest first, at most `limit` entries.
+    fn log_oneline(
+        &self,
+        _repo_root: &Path,
+        _from_commit: &str,
+        _to_commit: &str,
+        _limit: usize,
+    ) -> Result<Vec<String>> {
+        bail!("log is not supported by this backend")
+    }
+
+    /// Content of `path` at `rev` (`git show rev:path`); `None` when it does not exist there.
+    fn file_at(&self, _repo_root: &Path, _rev: &str, _path: &str) -> Result<Option<String>> {
+        bail!("show is not supported by this backend")
+    }
+
+    /// Unified diff (3 lines of context) of `path` between two commits.
+    fn diff_file(
+        &self,
+        _repo_root: &Path,
+        _from_commit: &str,
+        _to_commit: &str,
+        _path: &str,
+    ) -> Result<String> {
+        bail!("diff is not supported by this backend")
+    }
 }
 
 /// System `git` CLI implementation of `GitBackend` using `-z` / `--porcelain=v1 -z` (D3).
@@ -285,6 +317,76 @@ impl GitBackend for SystemGitBackend {
         }
         let text = String::from_utf8_lossy(&output.stdout);
         Ok(normalize_line_endings(&text).trim().to_string())
+    }
+
+    fn merge_base(&self, repo_root: &Path, a: &str, b: &str) -> Result<String> {
+        let output = self.run_git(repo_root, &["merge-base", a.trim(), b.trim()])?;
+        if !output.status.success() {
+            bail!(
+                "git merge-base failed in {:?}: {}",
+                repo_root,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn log_oneline(
+        &self,
+        repo_root: &Path,
+        from_commit: &str,
+        to_commit: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let range = format!("{}..{}", from_commit.trim(), to_commit.trim());
+        let max = format!("--max-count={limit}");
+        let output = self.run_git(repo_root, &["log", "--oneline", &max, &range])?;
+        if !output.status.success() {
+            bail!(
+                "git log {} failed in {:?}: {}",
+                range,
+                repo_root,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(
+            normalize_line_endings(&String::from_utf8_lossy(&output.stdout))
+                .lines()
+                .map(str::to_string)
+                .collect(),
+        )
+    }
+
+    fn file_at(&self, repo_root: &Path, rev: &str, path: &str) -> Result<Option<String>> {
+        let spec = format!("{}:{}", rev.trim(), normalize_path(path));
+        let output = self.run_git(repo_root, &["show", &spec])?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+    }
+
+    fn diff_file(
+        &self,
+        repo_root: &Path,
+        from_commit: &str,
+        to_commit: &str,
+        path: &str,
+    ) -> Result<String> {
+        let range = format!("{}..{}", from_commit.trim(), to_commit.trim());
+        let norm = normalize_path(path);
+        let output = self.run_git(repo_root, &["diff", "-U3", &range, "--", &norm])?;
+        if !output.status.success() {
+            bail!(
+                "git diff {} failed in {:?}: {}",
+                range,
+                repo_root,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(normalize_line_endings(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
     }
 }
 

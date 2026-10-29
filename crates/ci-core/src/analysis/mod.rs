@@ -8,6 +8,7 @@ pub mod pack;
 pub mod scan;
 pub mod scope;
 pub mod subsystems;
+pub mod task;
 pub mod types;
 
 use std::path::{Path, PathBuf};
