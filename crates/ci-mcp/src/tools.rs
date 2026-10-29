@@ -202,6 +202,17 @@ pub struct McpScanParams {
     pub cursor: Option<String>,
 }
 
+/// Parameters for `context_workspace` tool (D6).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct McpWorkspaceParams {
+    /// Workspace directory containing several Git repositories (default: the resolved root).
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Pagination cursor for continuing output.
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
 /// Parameters for `context_task` tool (D4, D5).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct McpTaskParams {

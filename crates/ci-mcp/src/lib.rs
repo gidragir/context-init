@@ -15,7 +15,7 @@ pub use server::{find_project_root_upward, run_mcp_server, ContextInitServer};
 pub use tools::{
     FeedbackResult, McpCheckParams, McpCheckResult, McpFeedbackParams, McpGetSubsystemParams,
     McpGetSubsystemsParams, McpInitParams, McpPackParams, McpScanParams, McpSearchParams,
-    McpSubmitParams, McpTaskParams, McpUpdateParams, SubmitResult,
+    McpSubmitParams, McpTaskParams, McpUpdateParams, McpWorkspaceParams, SubmitResult,
 };
 
 /// Current crate version synchronized with the workspace package metadata.
@@ -657,6 +657,49 @@ mod tests {
             assert!(l2.contains(needle), "{needle} missing in {l2}");
         }
         assert!(!l2.contains("Hidden"), "{l2}");
+    }
+
+    #[tokio::test]
+    async fn mcp_project_parameter_resolves_child_repo_by_name() {
+        let tmp = TempDirGuard::new("ws_project");
+        for name in ["billing-service", "gateway-service"] {
+            let repo = tmp.path().join(name);
+            fs::create_dir_all(repo.join("src")).unwrap();
+            git(&repo, &["init", "-q"]);
+            fs::write(repo.join("src/lib.rs"), "pub struct OrderDto;\n").unwrap();
+        }
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server.add_root(tmp.path().to_path_buf()).await;
+        let root = server
+            .resolve_project_root(None, Some("billing-service"))
+            .await;
+        assert_eq!(
+            root,
+            fs::canonicalize(tmp.path().join("billing-service")).unwrap()
+        );
+
+        let reply = server
+            .get_subsystems(Parameters(McpGetSubsystemsParams {
+                project: Some("billing-service".to_string()),
+                ..McpGetSubsystemsParams::default()
+            }))
+            .await;
+        // The child repo has no knowledge base yet: the error must name the child, not the workspace.
+        let err = format!("{:?}", reply.unwrap_err());
+        assert!(err.contains("billing-service"), "{err}");
+
+        let map = server
+            .workspace(Parameters(McpWorkspaceParams {
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                cursor: None,
+            }))
+            .await
+            .expect("workspace");
+        assert!(
+            map.contains("billing-service") && map.contains("gateway-service"),
+            "{map}"
+        );
+        assert!(map.contains("OrderDto"), "{map}");
     }
 
     #[test]

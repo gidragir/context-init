@@ -10,6 +10,7 @@ pub mod scope;
 pub mod subsystems;
 pub mod task;
 pub mod types;
+pub mod workspace;
 
 use std::path::{Path, PathBuf};
 

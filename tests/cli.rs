@@ -913,3 +913,25 @@ fn cli_task_prints_l1_digest_and_l2_target() {
     let l2 = sb.run(&["task", ".", "--base", "HEAD~1", "--target", "run_api"]);
     assert!(stdout(&l2).contains("+    2"), "{}", stdout(&l2));
 }
+
+#[test]
+fn cli_workspace_lists_child_repos() {
+    let sb = Sandbox::new("ws_cli");
+    for name in ["a-svc", "b-svc"] {
+        let repo = sb.project().join(name);
+        fs::create_dir_all(&repo).unwrap();
+        let out = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+    let out = sb.run(&["workspace", "."]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(
+        stdout(&out).contains("a-svc") && stdout(&out).contains("b-svc"),
+        "{}",
+        stdout(&out)
+    );
+}

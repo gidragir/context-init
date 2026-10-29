@@ -89,6 +89,15 @@ impl ContextInitServer {
             .filter(|s| !s.trim().is_empty())
             .or_else(|| arg_path.filter(|s| !s.trim().is_empty()));
 
+        if let Some(name) = arg_project
+            .map(str::trim)
+            .filter(|n| !n.is_empty() && !n.contains(['/', '\\']))
+        {
+            if let Some(child) = self.child_repo(name).await {
+                return child;
+            }
+        }
+
         if let Some(target) = candidate_arg {
             let p = PathBuf::from(target.trim());
             let abs_candidate = if p.is_absolute() {
@@ -130,6 +139,23 @@ impl ContextInitServer {
             return root;
         }
         normalize_existing_path(&cwd)
+    }
+
+    /// `<workspace>/<name>` for a bare repository name, looked up under the registered roots,
+    /// the default root, and their parents (D6).
+    async fn child_repo(&self, name: &str) -> Option<PathBuf> {
+        let mut bases: Vec<PathBuf> = self.roots.read().await.clone();
+        bases.extend(self.default_root.clone());
+        let parents: Vec<PathBuf> = bases
+            .iter()
+            .filter_map(|b| b.parent().map(Path::to_path_buf))
+            .collect();
+        bases.extend(parents);
+        bases
+            .into_iter()
+            .map(|b| b.join(name))
+            .find(|c| c.is_dir())
+            .map(|c| find_project_root_upward(&c).unwrap_or_else(|| normalize_existing_path(&c)))
     }
 
     /// Builds the model router for a project's configuration (D16).
@@ -369,6 +395,33 @@ impl ContextInitServer {
         let reply = ContextHandler::update(&resolved, &p, &router)
             .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))?;
         Ok(self.accept_reply(reply).await)
+    }
+
+    /// Map of the Git repositories inside a workspace directory.
+    #[tool(
+        name = "context_workspace",
+        description = "List the Git repositories of a multi-repo workspace with branches, dirty counts and cross-project shared symbols."
+    )]
+    pub async fn workspace(
+        &self,
+        params: Parameters<McpWorkspaceParams>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let p = params.0;
+        let resolved = self.resolve_context(p.path.as_deref(), None).await;
+        // An explicit directory is the workspace itself; otherwise use the resolved project root.
+        let root = p
+            .path
+            .as_deref()
+            .map(PathBuf::from)
+            .filter(|d| d.is_dir())
+            .map(|d| normalize_existing_path(&d))
+            .unwrap_or_else(|| resolved.root.clone());
+        ContextHandler::workspace(
+            &root,
+            resolved.config.max_response_tokens,
+            p.cursor.as_deref(),
+        )
+        .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
     }
 
     /// Scan project topology, directories, and file extensions without LLM.

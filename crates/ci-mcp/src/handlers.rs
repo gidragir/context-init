@@ -8,6 +8,7 @@ use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
 use ci_core::analysis::resolve_knowledge_dir;
 use ci_core::analysis::scan::{render_scan_markdown, scan_project};
 use ci_core::analysis::task::{build_task_digest, TaskDigestRequest};
+use ci_core::analysis::workspace::{analyze_workspace, render_workspace_l0};
 use ci_core::config::{CliOverrides, Config, StorageMode, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
@@ -620,6 +621,13 @@ impl ContextHandler {
         let paginated =
             paginate_content(&scan_out, cursor, project.config.max_response_tokens, false);
         Ok(paginated.rendered)
+    }
+
+    /// Handler for `context_workspace` (D6): the L0 map of a directory of Git repositories.
+    pub fn workspace(root: &Path, max_tokens: usize, cursor: Option<&str>) -> Result<String> {
+        let report = analyze_workspace(root, &SystemGitBackend::new())?;
+        let md = render_workspace_l0(&report);
+        Ok(paginate_content(&md, cursor, max_tokens, false).rendered)
     }
 
     /// Handler for `context_init` (pipeline in [`crate::pipeline::run_init`]).

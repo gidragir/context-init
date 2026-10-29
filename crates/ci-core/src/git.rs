@@ -81,6 +81,11 @@ pub trait GitBackend: Send + Sync {
         paths: &[String],
     ) -> Result<String>;
 
+    /// Current branch name (`HEAD` when detached).
+    fn current_branch(&self, _repo_root: &Path) -> Result<String> {
+        bail!("branch lookup is not supported by this backend")
+    }
+
     /// Best common ancestor of `a` and `b` (`git merge-base`).
     fn merge_base(&self, _repo_root: &Path, _a: &str, _b: &str) -> Result<String> {
         bail!("merge-base is not supported by this backend")
@@ -317,6 +322,18 @@ impl GitBackend for SystemGitBackend {
         }
         let text = String::from_utf8_lossy(&output.stdout);
         Ok(normalize_line_endings(&text).trim().to_string())
+    }
+
+    fn current_branch(&self, repo_root: &Path) -> Result<String> {
+        let output = self.run_git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+        if !output.status.success() {
+            bail!(
+                "git rev-parse --abbrev-ref HEAD failed in {:?}: {}",
+                repo_root,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
     fn merge_base(&self, repo_root: &Path, a: &str, b: &str) -> Result<String> {

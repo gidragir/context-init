@@ -12,6 +12,7 @@ mod scan;
 mod setup;
 mod task;
 mod telemetry;
+mod workspace;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -100,6 +101,8 @@ enum Commands {
     Scan(scan::ScanArgs),
     /// Digest of the changes since a base ref (L1 overview, L2 with --target)
     Task(task::TaskArgs),
+    /// Map the Git repositories inside a directory
+    Workspace(workspace::WorkspaceArgs),
     /// Pack a subsystem's files into compressed AI context
     Pack(pack::PackArgs),
     /// Run the MCP server on stdio
@@ -129,6 +132,7 @@ pub fn run() -> Result<ExitCode> {
         Some(Commands::Check(args)) => check::run(&cli.global, &args),
         Some(Commands::Scan(args)) => scan::run(&cli.global, &args),
         Some(Commands::Task(args)) => task::run(&cli.global, &args),
+        Some(Commands::Workspace(args)) => workspace::run(&cli.global, &args),
         Some(Commands::Pack(args)) => pack::run(&cli.global, &args),
         Some(Commands::Mcp(args)) => mcp::run(&args),
         Some(Commands::Config(args)) => config::run(&cli.global, &args),
