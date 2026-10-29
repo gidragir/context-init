@@ -2,8 +2,8 @@
 directory: crates/ci-core
 source:
   kind: git
-  blob_sha: f5a54ad2bc737aa7bf7d84a9c3c3af94d132bb25
-  commit_sha: ebcdb066e85279ae873a213c32310748678eefe2
+  blob_sha: 7547494990750dd175e67f0ee051420f89a949a9
+  commit_sha: 14efb361ef43dd6f73ad66906402e36beb29aa4a
 generated_by:
   component: context-init
   role: update
@@ -28,20 +28,15 @@ freshness:
 | :--- | :--- |
 | `crates/ci-core/Cargo.toml` | ⭐ Точка входа |
 | `crates/ci-core/src/lib.rs` | ⭐ Точка входа |
-| `crates/ci-core/src/openviking.rs` | Исходный код |
+| `crates/ci-core/src/search.rs` | Исходный код |
 
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub const VERSION: &str = env !("CARGO_PKG_VERSION")
 pub fn crate_info() -> &'static str
-pub const L0_ABSTRACT_MAX_CHARS: usize = 256
-pub struct CardSource
-pub struct CardGeneratedBy
-pub struct CardFreshness
-pub struct CardFrontmatter
-pub struct OkfCard
-pub fn extract_l0_abstract(markdown: &str) -> String
-pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String
+pub struct SearchHit
+pub trait Retriever
+pub struct Bm25Retriever
 ```
 
 ## 🧪 Запуск и тестирование

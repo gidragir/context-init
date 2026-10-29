@@ -37,6 +37,7 @@ rtk cargo run
 | **Ci Core Analysis Pack** | Модуль-файл `crates/ci-core/src/analysis/pack.rs` | `-` | [subsystems/crates_ci-core_analysis_pack.md](subsystems/crates_ci-core_analysis_pack.md) |
 | **Ci Core Config** | Модуль-файл `crates/ci-core/src/config.rs` | `-` | [subsystems/crates_ci-core_config.md](subsystems/crates_ci-core_config.md) |
 | **Ci Core Git** | Модуль-файл `crates/ci-core/src/git.rs` | `-` | [subsystems/crates_ci-core_git.md](subsystems/crates_ci-core_git.md) |
+| **Ci Core Openviking** | Модуль-файл `crates/ci-core/src/openviking.rs` | `-` | [subsystems/crates_ci-core_openviking.md](subsystems/crates_ci-core_openviking.md) |
 | **Ci Core Storage** | Модуль-файл `crates/ci-core/src/storage.rs` | `-` | [subsystems/crates_ci-core_storage.md](subsystems/crates_ci-core_storage.md) |
 | **Ci Core Telemetry** | Модуль-файл `crates/ci-core/src/telemetry.rs` | `-` | [subsystems/crates_ci-core_telemetry.md](subsystems/crates_ci-core_telemetry.md) |
 | **Ci Llm** | Подсистема `crates/ci-llm` с ключевыми точками входа: crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs | `crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs` | [subsystems/crates_ci-llm.md](subsystems/crates_ci-llm.md) |

@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased] — v0.4–v0.6
+
+### Added
+- v0.3 hardening: one `check` pipeline for CLI and MCP (missing index is an error, Git-stale cards count as drift), strict `--model` validation, atomic and pre-planned `setup` writes, `mise.toml` tasks, CI/release workflows, `context-audit` gate.
+- v0.4: L1 cards are OpenViking OKF sidecars (YAML frontmatter with `directory`, `source` SHAs, `generated_by`, `freshness`); lazy Git staleness in `context_get_subsystem` with optional `auto_refresh`; two-phase `scan`/`init` with `.gitignore` and `[scope]` (`--include`, `--exclude`, `--ext`); `LanguageAdapter` for Rust, Python, BSL and `.os`; `.mdo` metadata subsystems and lazy L2 object cards.
+- v0.5: `context_task` L1/L2 digest (`--target`) with semantic `.mdo` diff and changed methods; `context_workspace` and bare-name `project` addressing across repositories.
+- v0.6: tantivy BM25 search with Russian/English stemming (`context-init search`), optional `search`-role reranking, `recall@5` gate.
+
+### Breaking
+- L1 card layout: the summary follows the H1 and cards start with YAML frontmatter. Bases written by v0.3 are not migrated by `update`; rebuild them with `context-init init --force`.
+
 ## [Unreleased] — v0.3 «Фундамент»
 
 ### Breaking

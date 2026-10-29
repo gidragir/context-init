@@ -37,7 +37,7 @@
       "key_files": [
         "crates/ci-core/Cargo.toml",
         "crates/ci-core/src/lib.rs",
-        "crates/ci-core/src/openviking.rs"
+        "crates/ci-core/src/search.rs"
       ],
       "files": [
         {
@@ -49,21 +49,16 @@
           "is_entrypoint": true
         },
         {
-          "path": "crates/ci-core/src/openviking.rs",
+          "path": "crates/ci-core/src/search.rs",
           "is_entrypoint": false
         }
       ],
       "key_symbols": [
         "pub const VERSION: &str = env !(\"CARGO_PKG_VERSION\")",
         "pub fn crate_info() -> &'static str",
-        "pub const L0_ABSTRACT_MAX_CHARS: usize = 256",
-        "pub struct CardSource",
-        "pub struct CardGeneratedBy",
-        "pub struct CardFreshness",
-        "pub struct CardFrontmatter",
-        "pub struct OkfCard",
-        "pub fn extract_l0_abstract(markdown: &str) -> String",
-        "pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String"
+        "pub struct SearchHit",
+        "pub trait Retriever",
+        "pub struct Bm25Retriever"
       ],
       "test_command": "rtk cargo test -p ci-core"
     },
@@ -370,6 +365,37 @@
         "pub fn parse_nul_paths(bytes: &[u8]) -> Vec<String>",
         "pub fn check_card_staleness(backend: &dyn GitBackend, repo_root: &Path, card: &OkfCard, ) -> Result<StalenessReport>",
         "pub fn check_frontmatter_staleness(backend: &dyn GitBackend, repo_root: &Path, frontmatter: &CardFrontmatter, ) -> Result<StalenessReport>"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core"
+    },
+    {
+      "id": "crates_ci-core_openviking",
+      "name": "Ci Core Openviking",
+      "summary": "Модуль-файл `crates/ci-core/src/openviking.rs`",
+      "l1_path": "subsystems/crates_ci-core_openviking.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_openviking"
+      ],
+      "key_files": [
+        "crates/ci-core/src/openviking.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/openviking.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const L0_ABSTRACT_MAX_CHARS: usize = 256",
+        "pub struct CardSource",
+        "pub struct CardGeneratedBy",
+        "pub struct CardFreshness",
+        "pub struct CardFrontmatter",
+        "pub struct OkfCard",
+        "pub fn extract_l0_abstract(markdown: &str) -> String",
+        "pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core"
@@ -721,6 +747,7 @@
       "key_symbols": [
         "pub const PACK_ALL_MAX_PAGES: usize = 5",
         "pub struct ResolvedProject",
+        "pub const DEFAULT_SEARCH_TOP_K: usize = 10",
         "pub struct HandlerReply",
         "pub struct ContextHandler"
       ],
@@ -1034,6 +1061,7 @@
         "src/cli/output.rs",
         "src/cli/pack.rs",
         "src/cli/scan.rs",
+        "src/cli/search.rs",
         "src/cli/task.rs",
         "src/cli/telemetry.rs",
         "src/cli/workspace.rs"
@@ -1077,6 +1105,10 @@
         },
         {
           "path": "src/cli/scan.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/search.rs",
           "is_entrypoint": false
         },
         {

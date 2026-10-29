@@ -2,8 +2,8 @@
 directory: tests/regression_benchmark.rs
 source:
   kind: git
-  blob_sha: 537945cd8889e2dc3131678c5cd490022ef56b2b
-  commit_sha: ebcdb066e85279ae873a213c32310748678eefe2
+  blob_sha: 15ec845699f22bedca622915d3a78034474ac158
+  commit_sha: 73d1bea916ca9f6c918818322b36cbcaf7ddb8f7
 generated_by:
   component: context-init
   role: update

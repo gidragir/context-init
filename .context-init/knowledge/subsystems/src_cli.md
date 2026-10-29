@@ -2,15 +2,15 @@
 directory: src/cli
 source:
   kind: git
-  blob_sha: 0ad707ab5158de190029e2c770d41b5f995d830d
-  commit_sha: ebcdb066e85279ae873a213c32310748678eefe2
+  blob_sha: d7fd3d01c7f9aac9cbcd84006be94cbc7bfb17ef
+  commit_sha: 14efb361ef43dd6f73ad66906402e36beb29aa4a
 generated_by:
   component: context-init
   role: update
   model: none
 freshness:
-  total_entries: 13
-  sampled_entries: 13
+  total_entries: 14
+  sampled_entries: 14
   unsampled_entries: 0
   pending_child_changes: 0
 ---
@@ -36,6 +36,7 @@ freshness:
 | `src/cli/output.rs` | Исходный код |
 | `src/cli/pack.rs` | Исходный код |
 | `src/cli/scan.rs` | Исходный код |
+| `src/cli/search.rs` | Исходный код |
 | `src/cli/task.rs` | Исходный код |
 | `src/cli/telemetry.rs` | Исходный код |
 | `src/cli/workspace.rs` | Исходный код |

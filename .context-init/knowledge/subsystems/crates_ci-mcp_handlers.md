@@ -2,8 +2,8 @@
 directory: crates/ci-mcp/src/handlers.rs
 source:
   kind: git
-  blob_sha: f1870bea66341a3a5f4f15705579b2accb7f7c1a
-  commit_sha: ebcdb066e85279ae873a213c32310748678eefe2
+  blob_sha: cf66da9b7c4b7a32cff1c568ad996ef783a77990
+  commit_sha: 14efb361ef43dd6f73ad66906402e36beb29aa4a
 generated_by:
   component: context-init
   role: update
@@ -32,6 +32,7 @@ freshness:
 ```text
 pub const PACK_ALL_MAX_PAGES: usize = 5
 pub struct ResolvedProject
+pub const DEFAULT_SEARCH_TOP_K: usize = 10
 pub struct HandlerReply
 pub struct ContextHandler
 ```
