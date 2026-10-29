@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ci_core::analysis::generator;
 use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
-use ci_core::analysis::{detector, resolve_knowledge_dir};
+use ci_core::analysis::resolve_knowledge_dir;
 use ci_core::config::{CliOverrides, Config, StorageMode, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
