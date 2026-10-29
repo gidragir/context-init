@@ -38,7 +38,7 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: nextest
-        run: cargo nextest run --workspace -E 'not binary(regression_benchmark)'
+        run: cargo nextest run --workspace --no-fail-fast -E 'not binary(regression_benchmark)'
       - name: regression_benchmark
         run: cargo test --test regression_benchmark -- --nocapture
 
