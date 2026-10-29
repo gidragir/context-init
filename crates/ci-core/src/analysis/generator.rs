@@ -1421,4 +1421,29 @@ mod tests {
         }
         let _ = fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn update_restamps_cards_whose_recorded_commit_vanished() {
+        use crate::git::{check_card_staleness, SystemGitBackend};
+        let root = git_repo("vanished_commit");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+        // A rebase or shallow clone leaves cards pointing at a commit this repo no longer has.
+        for sub in &subs {
+            let path = kd.join(&sub.l1_path);
+            let text = fs::read_to_string(&path).unwrap();
+            let card = crate::openviking::OkfCard::parse(&text).unwrap();
+            let cut = text.replace(&card.frontmatter.source.commit_sha, &"deadbeef".repeat(5));
+            fs::write(&path, cut).unwrap();
+        }
+        update(&analysis, &subs, &kd, None).unwrap();
+        for sub in &subs {
+            let text = fs::read_to_string(kd.join(&sub.l1_path)).unwrap();
+            let card = crate::openviking::OkfCard::parse(&text).unwrap();
+            let report = check_card_staleness(&SystemGitBackend::new(), &root, &card).unwrap();
+            assert!(!report.stale, "{} stale: {report:?}", sub.id);
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
 }
