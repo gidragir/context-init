@@ -2,11 +2,11 @@
 directory: src/cli/setup
 source:
   kind: git
-  blob_sha: 88df1eb3b9c791ade3d96dab26e8cc68982bbf6a
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  blob_sha: da88a67208e5fb87dda23da0776d816d90d3ac17
+  commit_sha: 6ef401530ecaf2a5ec6c1476e8b34c2cdb8a29d7
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 5

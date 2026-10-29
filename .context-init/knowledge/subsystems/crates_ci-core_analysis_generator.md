@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/analysis/generator.rs
 source:
   kind: git
-  blob_sha: 168280c2ff22a6cf2de13dddf333566eccbcb059
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  blob_sha: c3f4aa5b36dabd09082bda4d1f9029c41f14ae71
+  commit_sha: ed9bb00a0c016bae0279c9cb4e0958b30c07e8c9
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
