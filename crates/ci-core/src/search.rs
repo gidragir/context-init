@@ -69,6 +69,19 @@ fn normalized(text: &str) -> String {
     stems(text).join(" ")
 }
 
+const MAX_CARD_BYTES: u64 = 256 * 1024;
+
+/// Reads an L1 card from inside `knowledge_dir` only: absolute paths, `..`, non-regular
+/// files (e.g. `/dev/zero`) and oversized files are ignored.
+fn read_card_text(knowledge_dir: &Path, rel: &str) -> Option<String> {
+    let path = crate::storage::safe_join(knowledge_dir, rel)?;
+    let meta = std::fs::metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_CARD_BYTES {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
 struct Entry {
     name: String,
     summary: String,
@@ -105,7 +118,7 @@ impl Bm25Retriever {
         let mut writer: IndexWriter = tindex.writer_with_num_threads(1, 15_000_000)?;
         let mut entries = HashMap::new();
         for sub in &index.subsystems {
-            let card = std::fs::read_to_string(knowledge_dir.join(&sub.l1_path))
+            let card = read_card_text(knowledge_dir, &sub.l1_path)
                 .map(|t| match OkfCard::parse(&t) {
                     Ok(c) => c.l0_abstract(),
                     Err(_) => extract_l0_abstract(&t),
@@ -258,6 +271,20 @@ mod tests {
             ],
             ..L0Index::default()
         }
+    }
+
+    #[test]
+    fn card_paths_cannot_escape_the_knowledge_dir() {
+        let mut idx = index();
+        idx.subsystems[0].l1_path = "/dev/zero".to_string();
+        idx.subsystems[1].l1_path = "../../etc/passwd".to_string();
+        // Must return promptly instead of reading unbounded or foreign files.
+        let r = Bm25Retriever::build(&idx, Path::new(".")).unwrap();
+        assert!(!r
+            .search("root", 3)
+            .unwrap()
+            .iter()
+            .any(|h| h.subsystem_id == "auth"));
     }
 
     #[test]

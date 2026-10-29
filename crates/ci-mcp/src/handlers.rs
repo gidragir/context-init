@@ -787,11 +787,40 @@ impl ContextHandler {
         let index = project.load_l0_index()?;
         let retriever = Bm25Retriever::build(&index, &project.knowledge_dir)?;
         let mut hits = retriever.search(query, top_k)?;
+        let budget = project.config.max_response_tokens;
+        let render = |hits: &[SearchHit]| -> String {
+            let mut out = format!(
+                "# Search Results for '{}'\n\nFound {} matching subsystems:\n\n",
+                query,
+                hits.len()
+            );
+            for h in hits {
+                let tags = index
+                    .subsystems
+                    .iter()
+                    .find(|s| s.id == h.subsystem_id)
+                    .map(|s| s.tags.join(", "))
+                    .unwrap_or_default();
+                out.push_str(&format!(
+                    "### `{}` ({})\n{}\n> **Score:** {:.2} | **Tags:** {}",
+                    h.subsystem_id, h.name, h.summary, h.score, tags
+                ));
+                if !h.matched_symbols.is_empty() {
+                    out.push_str(&format!(" | **Symbols:** {}", h.matched_symbols.join(", ")));
+                }
+                out.push_str("\n\n");
+            }
+            out
+        };
         let chain = &project.config.roles.search;
         let llm_enabled = !(chain.len() == 1 && chain[0].trim().eq_ignore_ascii_case(ROLE_NONE));
-        // Only the first page is reranked: a model may order differently per call, which would
-        // duplicate or skip results across pages.
-        if llm_enabled && cursor.is_none() && hits.len() > 1 {
+        // Rerank only when the whole result is a single page: a model may order differently
+        // per call, which would duplicate or skip results across pages.
+        if llm_enabled
+            && cursor.is_none()
+            && hits.len() > 1
+            && !paginate_content(&render(&hits), None, budget, false).truncated
+        {
             if let Some(order) = rerank_with_llm(router, query, &hits) {
                 hits.sort_by_key(|h| {
                     order
@@ -801,28 +830,7 @@ impl ContextHandler {
                 });
             }
         }
-
-        let mut out = format!(
-            "# Search Results for '{}'\n\nFound {} matching subsystems:\n\n",
-            query,
-            hits.len()
-        );
-        for h in &hits {
-            let tags = index
-                .subsystems
-                .iter()
-                .find(|s| s.id == h.subsystem_id)
-                .map(|s| s.tags.join(", "))
-                .unwrap_or_default();
-            out.push_str(&format!(
-                "### `{}` ({})\n{}\n> **Score:** {:.2} | **Tags:** {}",
-                h.subsystem_id, h.name, h.summary, h.score, tags
-            ));
-            if !h.matched_symbols.is_empty() {
-                out.push_str(&format!(" | **Symbols:** {}", h.matched_symbols.join(", ")));
-            }
-            out.push_str("\n\n");
-        }
-        Ok(paginate_content(&out, cursor, project.config.max_response_tokens, false).rendered)
+        let out = render(&hits);
+        Ok(paginate_content(&out, cursor, budget, false).rendered)
     }
 }

@@ -275,6 +275,7 @@ impl GitBackend for SystemGitBackend {
         from_commit: &str,
         to_commit: &str,
     ) -> Result<Vec<String>> {
+        reject_option_like(&[from_commit, to_commit])?;
         let range = format!("{}..{}", from_commit.trim(), to_commit.trim());
         let output = self.run_git(repo_root, &["diff", "--name-only", "-z", &range])?;
         if !output.status.success() {
@@ -296,6 +297,7 @@ impl GitBackend for SystemGitBackend {
         to_commit: &str,
         paths: &[String],
     ) -> Result<String> {
+        reject_option_like(&[from_commit, to_commit])?;
         let range = format!("{}..{}", from_commit.trim(), to_commit.trim());
         let mut args: Vec<String> = vec!["diff".to_string(), "--stat".to_string(), range];
 
@@ -337,6 +339,7 @@ impl GitBackend for SystemGitBackend {
     }
 
     fn merge_base(&self, repo_root: &Path, a: &str, b: &str) -> Result<String> {
+        reject_option_like(&[a, b])?;
         let output = self.run_git(repo_root, &["merge-base", a.trim(), b.trim()])?;
         if !output.status.success() {
             bail!(
@@ -355,6 +358,7 @@ impl GitBackend for SystemGitBackend {
         to_commit: &str,
         limit: usize,
     ) -> Result<Vec<String>> {
+        reject_option_like(&[from_commit, to_commit])?;
         let range = format!("{}..{}", from_commit.trim(), to_commit.trim());
         let max = format!("--max-count={limit}");
         let output = self.run_git(repo_root, &["log", "--oneline", &max, &range])?;
@@ -375,6 +379,7 @@ impl GitBackend for SystemGitBackend {
     }
 
     fn file_at(&self, repo_root: &Path, rev: &str, path: &str) -> Result<Option<String>> {
+        reject_option_like(&[rev])?;
         let spec = format!("{}:{}", rev.trim(), normalize_path(path));
         let output = self.run_git(repo_root, &["show", &spec])?;
         if !output.status.success() {
@@ -390,6 +395,7 @@ impl GitBackend for SystemGitBackend {
         to_commit: &str,
         path: &str,
     ) -> Result<String> {
+        reject_option_like(&[from_commit, to_commit])?;
         let range = format!("{}..{}", from_commit.trim(), to_commit.trim());
         let norm = normalize_path(path);
         let output = self.run_git(repo_root, &["diff", "-U3", &range, "--", &norm])?;
@@ -405,6 +411,22 @@ impl GitBackend for SystemGitBackend {
             &output.stdout,
         )))
     }
+}
+
+/// Refuses revisions that git would parse as options (`--output=...`): they can come from
+/// untrusted card frontmatter or tool arguments.
+fn reject_option_like(revs: &[&str]) -> Result<()> {
+    for r in revs {
+        if r.trim().starts_with('-') {
+            bail!("refusing option-like git revision {:?}", r);
+        }
+    }
+    Ok(())
+}
+
+/// A recorded commit/blob id: hex only, abbreviated or full.
+fn is_hex_sha(s: &str) -> bool {
+    (7..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Parses raw NUL-delimited `git status --porcelain=v1 -z` bytes into normalized `GitStatusEntry` items.
@@ -487,7 +509,11 @@ pub fn check_frontmatter_staleness(
     let mut commit_lookup_failed = false;
     let mut status_lookup_failed = false;
 
-    if !recorded_commit.is_empty() && recorded_commit != current_commit {
+    // Frontmatter comes from the repository (possibly untrusted): only hex ids reach git.
+    let recorded_commit_ok = recorded_commit.is_empty() || is_hex_sha(&recorded_commit);
+    if !recorded_commit_ok {
+        commit_lookup_failed = true;
+    } else if !recorded_commit.is_empty() && recorded_commit != current_commit {
         match backend.diff_name_only(repo_root, &recorded_commit, &current_commit) {
             Ok(diff_files) => {
                 for f in diff_files {
@@ -535,7 +561,10 @@ pub fn check_frontmatter_staleness(
             vec![dir.clone()]
         };
 
-        let stat_from_git = if !recorded_commit.is_empty() && recorded_commit != current_commit {
+        let stat_from_git = if recorded_commit_ok
+            && !recorded_commit.is_empty()
+            && recorded_commit != current_commit
+        {
             backend
                 .diff_stat(repo_root, &recorded_commit, &current_commit, &scope_paths)
                 .unwrap_or_default()

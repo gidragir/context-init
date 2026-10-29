@@ -1378,4 +1378,28 @@ mod tests {
         assert!(before == snapshot(&kd, &[]), "update rewrote cards");
         let _ = fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn one_edit_commit_update_cycle_leaves_cards_fresh() {
+        use crate::git::{check_card_staleness, SystemGitBackend};
+        let root = git_repo("fresh_cycle");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+        fs::write(
+            root.join("src/api/mod.rs"),
+            "pub fn run_api() -> u32 {\n    41\n}\n",
+        )
+        .unwrap();
+        git(&root, &["commit", "-q", "-am", "edit api"]);
+        let (analysis, subs) = deterministic(&root);
+        update(&analysis, &subs, &kd, None).unwrap();
+        for sub in &subs {
+            let text = fs::read_to_string(kd.join(&sub.l1_path)).unwrap();
+            let card = crate::openviking::OkfCard::parse(&text).unwrap();
+            let report = check_card_staleness(&SystemGitBackend::new(), &root, &card).unwrap();
+            assert!(!report.stale, "{} stale after update: {report:?}", sub.id);
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
 }

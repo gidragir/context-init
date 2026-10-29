@@ -1174,4 +1174,51 @@ command = []
         );
         assert_eq!(report_f5.diff_stat, "working tree status check failed");
     }
+
+    #[test]
+    fn staleness_ignores_option_like_shas_from_untrusted_frontmatter() {
+        let tmp = TempDirGuard::new("evil_sha");
+        let repo = tmp.path();
+        let run = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run(&["init", "-q"]);
+        fs::write(repo.join("a.txt"), "x").unwrap();
+        run(&["add", "-A"]);
+        run(&["commit", "-q", "-m", "c"]);
+        let pwned = repo.join("pwned");
+        let fm = CardFrontmatter {
+            directory: ".".to_string(),
+            source: CardSource {
+                kind: "git".to_string(),
+                blob_sha: String::new(),
+                commit_sha: format!("--output={}", pwned.display()),
+            },
+            ..CardFrontmatter::default()
+        };
+        let _ = check_frontmatter_staleness(&SystemGitBackend::new(), repo, &fm);
+        let leaked = fs::read_dir(repo)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with("pwned"));
+        assert!(!leaked, "git option injected through commit_sha");
+    }
 }

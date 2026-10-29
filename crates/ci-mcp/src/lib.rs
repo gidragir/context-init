@@ -816,6 +816,17 @@ mod tests {
         let paged = ContextHandler::search(&project, "run", Some("zz"), &router).unwrap();
         assert_ne!(first_id(&paged), promoted, "{paged}");
 
+        // A result that spans several pages is never reranked: page 1 must stay the head of
+        // the BM25 order, otherwise pages would duplicate or skip hits.
+        let mut tiny = project.clone();
+        tiny.config.max_response_tokens = 120;
+        let page1 = ContextHandler::search(&tiny, "run", None, &router).unwrap();
+        assert!(
+            page1.contains("next_cursor") || page1.contains("cursor"),
+            "{page1}"
+        );
+        assert_eq!(first_id(&page1), baseline_first, "{page1}");
+
         // A failing or garbage provider falls back to the BM25 order.
         for bad in [None, Some("not json at all")] {
             let router = search_router(&project, bad);

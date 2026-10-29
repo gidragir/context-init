@@ -947,3 +947,23 @@ fn cli_search_ranks_by_symbol_and_honors_top_k() {
     assert!(text.contains("engine"), "{text}");
     assert_eq!(text.matches("### `").count(), 1, "{text}");
 }
+
+#[test]
+fn cli_setup_all_keeps_the_original_of_a_shared_rules_file() {
+    let sb = Sandbox::new("setup_shared_rules");
+    let gemini = sb.home().join(".gemini");
+    fs::create_dir_all(gemini.join("config")).unwrap();
+    fs::write(gemini.join("GEMINI.md"), "ORIGINAL RULES\n").unwrap();
+    let out = sb.run(&["setup", "all", "--write"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let backups: Vec<String> = fs::read_dir(&gemini)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("GEMINI.md.bak"))
+        .map(|e| fs::read_to_string(e.path()).unwrap())
+        .collect();
+    assert!(
+        !backups.is_empty() && backups.iter().all(|b| b == "ORIGINAL RULES\n"),
+        "{backups:?}"
+    );
+}

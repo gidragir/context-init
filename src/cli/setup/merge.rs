@@ -160,16 +160,26 @@ impl PlannedWrite {
         if self.is_noop() {
             return Ok(None);
         }
+        // Re-check the disk: another planned write may have already produced this content
+        // (a file shared between targets, e.g. `GEMINI.md`).
+        if fs::read_to_string(&self.path).ok().as_deref() == Some(self.new.as_str()) {
+            return Ok(None);
+        }
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("Failed to create {:?}", parent))?;
         }
         let backup = match &self.old {
             Some(_) => {
                 let b = PathBuf::from(format!("{}.bak.{stamp}", self.path.display()));
-                // `copy` keeps the original's permission bits (configs may hold secrets).
-                fs::copy(&self.path, &b)
-                    .with_context(|| format!("Failed to write backup {:?}", b))?;
-                Some(b)
+                if b.exists() {
+                    // The backup of the original is already there; never overwrite it.
+                    None
+                } else {
+                    // `copy` keeps the original's permission bits (configs may hold secrets).
+                    fs::copy(&self.path, &b)
+                        .with_context(|| format!("Failed to write backup {:?}", b))?;
+                    Some(b)
+                }
             }
             None => None,
         };
