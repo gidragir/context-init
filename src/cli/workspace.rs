@@ -15,6 +15,9 @@ pub struct WorkspaceArgs {
     /// Directory holding the repositories
     #[arg(default_value = ".")]
     pub path: PathBuf,
+    /// Continue from the `next_cursor` of the previous page
+    #[arg(long)]
+    pub cursor: Option<String>,
 }
 
 pub fn run(global: &GlobalArgs, args: &WorkspaceArgs) -> Result<ExitCode> {
@@ -23,6 +26,9 @@ pub fn run(global: &GlobalArgs, args: &WorkspaceArgs) -> Result<ExitCode> {
         .overrides(None)?
         .max_response_tokens
         .unwrap_or(DEFAULT_MAX_RESPONSE_TOKENS);
-    println!("{}", ContextHandler::workspace(&root, budget, None)?);
+    println!(
+        "{}",
+        ContextHandler::workspace(&root, budget, args.cursor.as_deref())?
+    );
     Ok(ExitCode::SUCCESS)
 }

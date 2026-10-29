@@ -23,6 +23,9 @@ pub struct TaskArgs {
     /// Drill down into one method or metadata object (L2)
     #[arg(long, value_name = "SYMBOL_OR_OBJECT")]
     pub target: Option<String>,
+    /// Continue from the `next_cursor` of the previous page
+    #[arg(long)]
+    pub cursor: Option<String>,
 }
 
 pub fn run(global: &GlobalArgs, args: &TaskArgs) -> Result<ExitCode> {
@@ -32,7 +35,7 @@ pub fn run(global: &GlobalArgs, args: &TaskArgs) -> Result<ExitCode> {
         Some(&args.paths),
         args.base.as_deref(),
         args.target.as_deref(),
-        None,
+        args.cursor.as_deref(),
     )?;
     println!("{out}");
     Ok(ExitCode::SUCCESS)

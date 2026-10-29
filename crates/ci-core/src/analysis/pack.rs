@@ -98,7 +98,8 @@ pub fn pack_subsystem(
             .map(|f| &f.path)
             .chain(sub.key_files.iter());
         for path in candidates {
-            let inside = safe_join(root, path).is_some_and(|p| p.exists());
+            // The index is committed and may come from a clone: never pack secrets or databases.
+            let inside = !is_secret_path(path) && safe_join(root, path).is_some_and(|p| p.exists());
             if inside && !files.contains(path) {
                 files.push(path.clone());
             }
@@ -117,6 +118,21 @@ pub fn pack_subsystem(
         files,
         subsystems: matched.into_iter().cloned().collect(),
     })
+}
+
+/// Files that must never reach a pack: env files, keys, tokens, local secrets, databases.
+fn is_secret_path(path: &str) -> bool {
+    let name = path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase();
+    name == ".env"
+        || name.starts_with(".env.")
+        || name == "mise.local.toml"
+        || [".key", ".token", ".pem", ".db", ".sqlite", ".sqlite3"]
+            .iter()
+            .any(|ext| name.ends_with(ext))
 }
 
 /// Packs `files` (relative to `root`) of `subs` into one AI-ready context string,
@@ -680,6 +696,24 @@ mod pack_subsystem_tests {
     use super::*;
     use crate::storage::SubsystemFile;
     use std::fs;
+
+    #[test]
+    fn secrets_and_databases_are_never_packed() {
+        for p in [
+            ".env",
+            "cfg/.env.local",
+            "mise.local.toml",
+            "a\\b\\id.KEY",
+            "x/api.token",
+            "data/app.sqlite",
+            "d.db",
+        ] {
+            assert!(is_secret_path(p), "{p}");
+        }
+        for p in ["src/lib.rs", "environment.rs", "keys.rs", "README.md"] {
+            assert!(!is_secret_path(p), "{p}");
+        }
+    }
 
     #[test]
     fn pack_subsystem_falls_back_to_l1_card_without_files() {

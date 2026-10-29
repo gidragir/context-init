@@ -20,6 +20,9 @@ pub struct SearchArgs {
     /// Maximum number of results
     #[arg(long, default_value_t = DEFAULT_SEARCH_TOP_K)]
     pub top_k: usize,
+    /// Continue from the `next_cursor` of the previous page
+    #[arg(long)]
+    pub cursor: Option<String>,
 }
 
 pub fn run(global: &GlobalArgs, args: &SearchArgs) -> Result<ExitCode> {
@@ -27,7 +30,13 @@ pub fn run(global: &GlobalArgs, args: &SearchArgs) -> Result<ExitCode> {
     let router = router_for(&project)?;
     println!(
         "{}",
-        ContextHandler::search_top_k(&project, &args.query, None, &router, args.top_k)?
+        ContextHandler::search_top_k(
+            &project,
+            &args.query,
+            args.cursor.as_deref(),
+            &router,
+            args.top_k
+        )?
     );
     Ok(ExitCode::SUCCESS)
 }

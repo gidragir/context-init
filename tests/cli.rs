@@ -950,6 +950,29 @@ fn cli_search_ranks_by_symbol_and_honors_top_k() {
 }
 
 #[test]
+fn cli_search_follows_next_cursor_across_pages() {
+    let sb = Sandbox::new("search_cursor");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    fs::write(
+        sb.project().join(".context-init.toml"),
+        "max_response_tokens = 70\n",
+    )
+    .unwrap();
+    let first = stdout(&sb.run(&["search", "run", "."]));
+    let cursor = first
+        .split("next_cursor: \"")
+        .nth(1)
+        .and_then(|t| t.split('"').next())
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| panic!("no next_cursor in: {first}"))
+        .to_string();
+    let second = sb.run(&["search", "run", ".", "--cursor", &cursor]);
+    assert!(second.status.success(), "{}", stderr(&second));
+    assert_ne!(stdout(&second), first);
+}
+
+#[test]
 fn cli_setup_all_keeps_the_original_of_a_shared_rules_file() {
     let sb = Sandbox::new("setup_shared_rules");
     let gemini = sb.home().join(".gemini");
