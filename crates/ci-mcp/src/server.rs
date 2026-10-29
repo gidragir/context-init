@@ -175,16 +175,23 @@ impl ContextInitServer {
         arg_project: Option<&str>,
     ) -> ResolvedProject {
         let root = self.resolve_project_root(arg_path, arg_project).await;
-        ResolvedProject::load(root.clone()).unwrap_or_else(|_| ResolvedProject {
-            root: root.clone(),
-            config: Config::default(),
-            project_id: root
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "project".to_string()),
-            storage_paths: StoragePaths::resolve(Some(&root)),
-            knowledge_dir: root.join(ci_core::analysis::REPO_KNOWLEDGE_DIR),
-            storage: ci_core::config::StorageMode::Repo,
+        ResolvedProject::load(root.clone()).unwrap_or_else(|e| {
+            // stderr only: stdout carries the MCP protocol.
+            eprintln!(
+                "context-init: invalid config for {}, using defaults: {e:#}",
+                root.display()
+            );
+            ResolvedProject {
+                root: root.clone(),
+                config: Config::default(),
+                project_id: root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "project".to_string()),
+                storage_paths: StoragePaths::resolve(Some(&root)),
+                knowledge_dir: root.join(ci_core::analysis::REPO_KNOWLEDGE_DIR),
+                storage: ci_core::config::StorageMode::Repo,
+            }
         })
     }
 }

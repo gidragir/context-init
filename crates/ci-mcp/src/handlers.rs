@@ -791,7 +791,7 @@ impl ContextHandler {
         let render = |hits: &[SearchHit]| -> String {
             let mut out = format!(
                 "# Search Results for '{}'\n\nFound {} matching subsystems:\n\n",
-                query,
+                query.split_whitespace().collect::<Vec<_>>().join(" "),
                 hits.len()
             );
             for h in hits {

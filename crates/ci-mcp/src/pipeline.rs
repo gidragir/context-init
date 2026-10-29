@@ -122,6 +122,13 @@ pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport> {
         .filter(|s| project.check_subsystem_staleness(s).0)
         .map(|s| s.id.clone())
         .collect();
+    // A subsystem already counted as missing was never in `up_to_date_count`.
+    let up_to_date_count = report.up_to_date_count.saturating_sub(
+        stale_subsystems
+            .iter()
+            .filter(|id| !report.missing_in_fs.contains(id))
+            .count(),
+    );
     let has_drift = !report.missing_in_fs.is_empty()
         || !report.untracked_in_knowledge.is_empty()
         || !stale_subsystems.is_empty();
@@ -129,9 +136,7 @@ pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport> {
         has_drift,
         missing_in_fs: report.missing_in_fs,
         untracked_in_knowledge: report.untracked_in_knowledge,
-        up_to_date_count: report
-            .up_to_date_count
-            .saturating_sub(stale_subsystems.len()),
+        up_to_date_count,
         git_stale: !stale_subsystems.is_empty(),
         stale_subsystems,
     })

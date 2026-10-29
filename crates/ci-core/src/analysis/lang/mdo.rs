@@ -338,14 +338,16 @@ pub(crate) fn discover_mdo_subsystems(
                 rels.extend(files_in(dir));
             }
         }
-        covered.extend(rels.iter().cloned());
-        modules.push(module_of(
+        let module = module_of(
             subsystem_module_id(&obj.name),
             obj.name.clone(),
             parent_dir(rel).to_string(),
             rels,
             Some(rel.as_str()),
-        ));
+        );
+        // Only files kept after truncation count as covered; the rest stay with the generic scan.
+        covered.extend(module.files.iter().map(|f| f.path.clone()));
+        modules.push(module);
     }
 
     let mut by_kind: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -359,18 +361,19 @@ pub(crate) fn discover_mdo_subsystems(
             .extend(files_in(parent_dir(rel)));
     }
     for (kind, rels) in by_kind {
-        covered.extend(rels.iter().cloned());
         let dir = rels
             .first()
             .map(|r| parent_dir(parent_dir(r)).to_string())
             .unwrap_or_default();
-        modules.push(module_of(
+        let module = module_of(
             sanitize_id(&format!("metadata_{kind}")),
             format!("{kind} objects"),
             dir,
             rels,
             None,
-        ));
+        );
+        covered.extend(module.files.iter().map(|f| f.path.clone()));
+        modules.push(module);
     }
     (modules, covered)
 }
@@ -424,6 +427,32 @@ mod tests {
         assert_eq!(cat.id(), "catalog_items");
         assert!(parse_mdo_xml("<a><b></a>").is_err());
         assert!(parse_mdo_xml("").is_err());
+    }
+
+    #[test]
+    fn files_cut_by_the_module_cap_are_not_reported_as_covered() {
+        let root = std::env::temp_dir().join(format!("ci_mdo_cap_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let mut files = Vec::new();
+        for i in 0..20 {
+            let rel = format!("Catalogs/C{i:02}/C{i:02}.mdo");
+            fs::create_dir_all(root.join(&rel).parent().unwrap()).unwrap();
+            fs::write(
+                root.join(&rel),
+                format!("<m:Catalog xmlns:m=\"urn:x\"><name>C{i:02}</name></m:Catalog>"),
+            )
+            .unwrap();
+            files.push(rel);
+        }
+        let (modules, covered) = discover_mdo_subsystems(&root, &files);
+        let kept: usize = modules.iter().map(|m| m.files.len()).sum();
+        assert_eq!(kept, 15);
+        assert_eq!(
+            covered.len(),
+            kept,
+            "cut files must stay with the generic scan"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

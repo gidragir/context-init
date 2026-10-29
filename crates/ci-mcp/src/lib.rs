@@ -816,6 +816,12 @@ mod tests {
         let paged = ContextHandler::search(&project, "run", Some("zz"), &router).unwrap();
         assert_ne!(first_id(&paged), promoted, "{paged}");
 
+        // A multi-line query cannot inject Markdown structure into the header.
+        let injected =
+            ContextHandler::search(&baseline_project, "run\n## injected", None, &none_router)
+                .unwrap();
+        assert!(!injected.contains("\n## injected"), "{injected}");
+
         // A result that spans several pages is never reranked: page 1 must stay the head of
         // the BM25 order, otherwise pages would duplicate or skip hits.
         let mut tiny = project.clone();
