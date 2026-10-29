@@ -8,7 +8,13 @@ repository.workspace = true
 homepage.workspace = true
 description = "Core types, configuration hierarchy, and storage primitives for context-init"
 
+[features]
+default = ["search"]
+search = ["dep:tantivy", "dep:rust-stemmers"]
+
 [dependencies]
+tantivy = { workspace = true, optional = true }
+rust-stemmers = { workspace = true, optional = true }
 quote.workspace = true
 quick-xml.workspace = true
 syn.workspace = true

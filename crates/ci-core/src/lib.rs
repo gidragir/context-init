@@ -4,6 +4,8 @@ pub mod analysis;
 pub mod config;
 pub mod git;
 pub mod openviking;
+#[cfg(feature = "search")]
+pub mod search;
 pub mod storage;
 pub mod telemetry;
 

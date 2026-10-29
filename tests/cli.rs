@@ -935,3 +935,15 @@ fn cli_workspace_lists_child_repos() {
         stdout(&out)
     );
 }
+
+#[test]
+fn cli_search_ranks_by_symbol_and_honors_top_k() {
+    let sb = Sandbox::new("search_cli");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let out = sb.run(&["search", "run_engine", ".", "--top-k", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("engine"), "{text}");
+    assert_eq!(text.matches("### `").count(), 1, "{text}");
+}

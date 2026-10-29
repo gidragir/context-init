@@ -702,6 +702,126 @@ mod tests {
         assert!(map.contains("OrderDto"), "{map}");
     }
 
+    struct ScriptedSearch {
+        reply: Option<String>,
+    }
+
+    impl ci_llm::LlmProvider for ScriptedSearch {
+        fn complete(&self, req: &ci_llm::LlmRequest) -> anyhow::Result<ci_llm::LlmResponse> {
+            let content = self
+                .reply
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("scripted provider down"))?;
+            Ok(ci_llm::LlmResponse {
+                content,
+                model: "scripted".to_string(),
+                provider_kind: ci_core::config::ModelKind::Ollama,
+                alias: "scripted".to_string(),
+                tokens_in: req.prompt.len() / 4,
+                tokens_out: 1,
+                latency_ms: 1,
+                retries: 0,
+                fallback_used: false,
+                work_package: None,
+            })
+        }
+
+        fn capabilities(&self) -> ci_llm::ProviderCapabilities {
+            ci_llm::ProviderCapabilities::default()
+        }
+
+        fn kind(&self) -> ci_core::config::ModelKind {
+            ci_core::config::ModelKind::Ollama
+        }
+
+        fn alias(&self) -> &str {
+            "scripted"
+        }
+    }
+
+    fn search_router(project: &ResolvedProject, reply: Option<&str>) -> ci_llm::RoleRouter {
+        let mut cfg = project.config.clone();
+        cfg.models.insert(
+            "scripted".to_string(),
+            ci_core::config::ModelConfig {
+                kind: ci_core::config::ModelKind::Ollama,
+                model: Some("m".to_string()),
+                endpoint: None,
+                command: None,
+                timeout_ms: None,
+                max_input_tokens: None,
+            },
+        );
+        cfg.roles.search = vec!["scripted".to_string()];
+        let mut router = ci_llm::RoleRouter::new(cfg, None).unwrap();
+        router.register_provider(
+            "scripted",
+            ScriptedSearch {
+                reply: reply.map(str::to_string),
+            },
+        );
+        router
+    }
+
+    #[tokio::test]
+    async fn search_with_llm_role_reranks_top_hits() {
+        let tmp = TempDirGuard::new("search_rerank");
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        let mut project = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        project.config.roles.search = vec!["scripted".to_string()];
+
+        let plain = ci_llm::RoleRouter::new(project.config.clone(), None);
+        let _ = plain;
+        let first_id = |text: &str| -> String {
+            text.lines()
+                .find_map(|l| l.strip_prefix("### `"))
+                .and_then(|l| l.split('`').next())
+                .unwrap_or_default()
+                .to_string()
+        };
+
+        // Baseline order without LLM reranking (role = none).
+        let mut baseline_project = project.clone();
+        baseline_project.config.roles.search = vec!["none".to_string()];
+        let none_router = ci_llm::RoleRouter::new(baseline_project.config.clone(), None).unwrap();
+        let baseline =
+            ContextHandler::search(&baseline_project, "run", None, &none_router).unwrap();
+        let baseline_first = first_id(&baseline);
+        assert!(!baseline_first.is_empty(), "{baseline}");
+
+        // The scripted reranker puts another subsystem first.
+        let ids: Vec<String> = project
+            .load_l0_index()
+            .unwrap()
+            .subsystems
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+        let promoted = ids
+            .iter()
+            .find(|i| **i != baseline_first && i.contains("store"))
+            .unwrap()
+            .clone();
+        let reply = format!("{{\"ranked_ids\": [\"{promoted}\"]}}");
+        let router = search_router(&project, Some(&reply));
+        let reranked = ContextHandler::search(&project, "run", None, &router).unwrap();
+        assert_eq!(first_id(&reranked), promoted, "{reranked}");
+
+        // A failing or garbage provider falls back to the BM25 order.
+        for bad in [None, Some("not json at all")] {
+            let router = search_router(&project, bad);
+            let out = ContextHandler::search(&project, "run", None, &router).unwrap();
+            assert_eq!(first_id(&out), baseline_first, "{out}");
+        }
+    }
+
     #[test]
     fn check_drift_errors_on_missing_index_with_mismatch_hint() {
         let tmp = TempDirGuard::new("check_no_kb");

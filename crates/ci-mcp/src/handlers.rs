@@ -9,9 +9,11 @@ use ci_core::analysis::resolve_knowledge_dir;
 use ci_core::analysis::scan::{render_scan_markdown, scan_project};
 use ci_core::analysis::task::{build_task_digest, TaskDigestRequest};
 use ci_core::analysis::workspace::{analyze_workspace, render_workspace_l0};
+use ci_core::config::ROLE_NONE;
 use ci_core::config::{CliOverrides, Config, StorageMode, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
+use ci_core::search::{Bm25Retriever, Retriever, SearchHit};
 use ci_core::storage::{
     compute_project_id, now_rfc3339, safe_join, subsystem_card_path, L0Index, SubsystemInfo,
 };
@@ -20,7 +22,7 @@ use ci_core::telemetry::{
 };
 use ci_llm::enrich::{cli_outcome_message, EnrichOutcome};
 use ci_llm::providers::validate_agent_submission;
-use ci_llm::{AgentWorkPackage, RoleRouter};
+use ci_llm::{AgentWorkPackage, LlmRequest, RoleName, RoleRouter};
 
 use crate::pipeline::{self, PipelineOptions};
 
@@ -155,6 +157,35 @@ impl ResolvedProject {
 
         (false, None)
     }
+}
+
+/// Number of search results returned by default.
+pub const DEFAULT_SEARCH_TOP_K: usize = 10;
+
+/// Asks the `search` role to order the candidate ids; `None` when the role is unavailable
+/// or its reply is not a usable `{"ranked_ids": [...]}`.
+fn rerank_with_llm(router: &RoleRouter, query: &str, hits: &[SearchHit]) -> Option<Vec<String>> {
+    let facts = hits
+        .iter()
+        .map(|h| format!("- {}: {} — {}", h.subsystem_id, h.name, h.summary))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prompt = format!(
+        "Search query: {query}\n\nCandidates:\n{facts}\n\nReturn JSON {{\"ranked_ids\": [candidate ids, most relevant first]}}."
+    );
+    let req = LlmRequest::new(RoleName::Search, prompt);
+    let resp = router.complete_role(&req, None).ok()??;
+    let start = resp.content.find('{')?;
+    let end = resp.content.rfind('}')?;
+    let value: serde_json::Value = serde_json::from_str(&resp.content[start..=end]).ok()?;
+    let ids: Vec<String> = value
+        .get("ranked_ids")?
+        .as_array()?
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .filter(|id| hits.iter().any(|h| &h.subsystem_id == id))
+        .collect();
+    (!ids.is_empty()).then_some(ids)
 }
 
 /// Reply of a handler that may hand an agent work package to the server.
@@ -734,63 +765,62 @@ impl ContextHandler {
         Ok(paginated.rendered)
     }
 
-    /// Handler for `context_search` (D18).
-    pub fn search(project: &ResolvedProject, query: &str, cursor: Option<&str>) -> Result<String> {
-        let index = project.load_l0_index()?;
-        let query_lower = query.to_ascii_lowercase();
+    /// Handler for `context_search` (D18): BM25 retrieval, optionally reranked by the `search`
+    /// role; any LLM failure or unusable reply keeps the BM25 order.
+    pub fn search(
+        project: &ResolvedProject,
+        query: &str,
+        cursor: Option<&str>,
+        router: &RoleRouter,
+    ) -> Result<String> {
+        Self::search_top_k(project, query, cursor, router, DEFAULT_SEARCH_TOP_K)
+    }
 
-        let mut matches = Vec::new();
-        for sub in &index.subsystems {
-            if sub.id.to_ascii_lowercase().contains(&query_lower)
-                || sub.name.to_ascii_lowercase().contains(&query_lower)
-                || sub.summary.to_ascii_lowercase().contains(&query_lower)
-                || sub
-                    .tags
-                    .iter()
-                    .any(|t| t.to_ascii_lowercase().contains(&query_lower))
-                || sub
-                    .key_symbols
-                    .iter()
-                    .any(|s| s.to_ascii_lowercase().contains(&query_lower))
-                || sub
-                    .files
-                    .iter()
-                    .any(|f| f.path.to_ascii_lowercase().contains(&query_lower))
-                || sub
-                    .key_files
-                    .iter()
-                    .any(|kf| kf.to_ascii_lowercase().contains(&query_lower))
-                || sub
-                    .entrypoints
-                    .iter()
-                    .any(|ep| ep.to_ascii_lowercase().contains(&query_lower))
-            {
-                matches.push(sub);
+    /// [`ContextHandler::search`] with an explicit result count.
+    pub fn search_top_k(
+        project: &ResolvedProject,
+        query: &str,
+        cursor: Option<&str>,
+        router: &RoleRouter,
+        top_k: usize,
+    ) -> Result<String> {
+        let index = project.load_l0_index()?;
+        let retriever = Bm25Retriever::build(&index, &project.knowledge_dir)?;
+        let mut hits = retriever.search(query, top_k)?;
+        let chain = &project.config.roles.search;
+        let llm_enabled = !(chain.len() == 1 && chain[0].trim().eq_ignore_ascii_case(ROLE_NONE));
+        if llm_enabled && hits.len() > 1 {
+            if let Some(order) = rerank_with_llm(router, query, &hits) {
+                hits.sort_by_key(|h| {
+                    order
+                        .iter()
+                        .position(|id| *id == h.subsystem_id)
+                        .unwrap_or(usize::MAX)
+                });
             }
         }
 
-        let mut search_out = format!(
+        let mut out = format!(
             "# Search Results for '{}'\n\nFound {} matching subsystems:\n\n",
             query,
-            matches.len()
+            hits.len()
         );
-
-        for m in matches {
-            search_out.push_str(&format!(
-                "### `{}` ({})\n{}\n> **Tags:** {}\n\n",
-                m.id,
-                m.name,
-                m.summary,
-                m.tags.join(", ")
+        for h in &hits {
+            let tags = index
+                .subsystems
+                .iter()
+                .find(|s| s.id == h.subsystem_id)
+                .map(|s| s.tags.join(", "))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "### `{}` ({})\n{}\n> **Score:** {:.2} | **Tags:** {}",
+                h.subsystem_id, h.name, h.summary, h.score, tags
             ));
+            if !h.matched_symbols.is_empty() {
+                out.push_str(&format!(" | **Symbols:** {}", h.matched_symbols.join(", ")));
+            }
+            out.push_str("\n\n");
         }
-
-        let paginated = paginate_content(
-            &search_out,
-            cursor,
-            project.config.max_response_tokens,
-            false,
-        );
-        Ok(paginated.rendered)
+        Ok(paginate_content(&out, cursor, project.config.max_response_tokens, false).rendered)
     }
 }

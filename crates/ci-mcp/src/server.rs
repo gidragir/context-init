@@ -466,7 +466,8 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::search(&resolved, &p.query, p.cursor.as_deref())
+        let router = self.router_for(&resolved)?;
+        ContextHandler::search(&resolved, &p.query, p.cursor.as_deref(), &router)
             .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
     }
 }

@@ -9,6 +9,7 @@ mod migrate;
 mod output;
 mod pack;
 mod scan;
+mod search;
 mod setup;
 mod task;
 mod telemetry;
@@ -103,6 +104,8 @@ enum Commands {
     Task(task::TaskArgs),
     /// Map the Git repositories inside a directory
     Workspace(workspace::WorkspaceArgs),
+    /// Search the knowledge base (BM25, optional LLM rerank)
+    Search(search::SearchArgs),
     /// Pack a subsystem's files into compressed AI context
     Pack(pack::PackArgs),
     /// Run the MCP server on stdio
@@ -133,6 +136,7 @@ pub fn run() -> Result<ExitCode> {
         Some(Commands::Scan(args)) => scan::run(&cli.global, &args),
         Some(Commands::Task(args)) => task::run(&cli.global, &args),
         Some(Commands::Workspace(args)) => workspace::run(&cli.global, &args),
+        Some(Commands::Search(args)) => search::run(&cli.global, &args),
         Some(Commands::Pack(args)) => pack::run(&cli.global, &args),
         Some(Commands::Mcp(args)) => mcp::run(&args),
         Some(Commands::Config(args)) => config::run(&cli.global, &args),
