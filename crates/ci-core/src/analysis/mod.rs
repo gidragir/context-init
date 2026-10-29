@@ -3,6 +3,7 @@
 
 pub mod detector;
 pub mod generator;
+pub mod lang;
 pub mod pack;
 pub mod scan;
 pub mod scope;

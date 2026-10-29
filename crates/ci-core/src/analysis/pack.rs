@@ -183,14 +183,13 @@ pub fn pack_files(
     buffer
 }
 
-/// Compresses source text: Rust via AST (bodies stripped), others via whitespace normalization.
+/// Compresses source text through the language adapter of `ext` (D7: Rust via AST, BSL by
+/// signatures, ...); unknown languages get whitespace normalization.
 pub fn compress_source(content: &str, ext: &str) -> String {
-    if ext.eq_ignore_ascii_case("rs") {
-        if let Some(compressed) = compress_rust_ast(content) {
-            return compressed;
-        }
+    match crate::analysis::lang::adapter_for_ext(ext) {
+        Some(adapter) => adapter.compress_source(content),
+        None => compress_code(content),
     }
-    compress_code(content)
 }
 
 pub fn compress_rust_ast(content: &str) -> Option<String> {

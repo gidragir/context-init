@@ -43,7 +43,7 @@ pub(crate) const IGNORED_DIRS: &[&str] = &[
 
 const CODE_EXTENSIONS: &[&str] = &[
     "rs", "ts", "tsx", "js", "jsx", "py", "go", "c", "cpp", "h", "hpp", "java", "kt", "rb", "php",
-    "sh", "bash", "zsh", "sql", "yaml", "yml", "json", "toml",
+    "sh", "bash", "zsh", "sql", "yaml", "yml", "json", "toml", "bsl", "os",
 ];
 
 thread_local! {
@@ -1388,6 +1388,11 @@ fn extract_symbols_from_single_file(path: &Path, deep: bool) -> Vec<String> {
             let syms = extract_rust_symbols(content, deep);
             if !syms.is_empty() {
                 return syms;
+            }
+        }
+        if matches!(ext.as_str(), "bsl" | "os") {
+            if let Some(adapter) = crate::analysis::lang::adapter_for_ext(&ext) {
+                return adapter.extract_symbols(content);
             }
         }
         extract_multiline_symbols(content, &ext, deep)
