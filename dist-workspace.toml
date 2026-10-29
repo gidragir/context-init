@@ -1,0 +1,18 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.28.0"
+ci = "github"
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+installers = ["shell", "powershell", "homebrew"]
+tap = "gidragir/homebrew-tap"
+publish-jobs = ["homebrew"]
+pr-run-mode = "plan"
+install-path = "CARGO_HOME"

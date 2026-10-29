@@ -771,3 +771,42 @@ fn workspace_task_runner_and_packaging_metadata_invariants() {
         assert!(m.contains("repository.workspace = true"), "{krate}");
     }
 }
+
+#[test]
+fn ci_and_release_configuration_files_exist_and_cover_d26_d27() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml")).expect("ci.yml");
+    for needle in [
+        "ubuntu-latest",
+        "macos-latest",
+        "windows-latest",
+        "Swatinem/rust-cache",
+        "clippy",
+        "nextest",
+        "regression_benchmark",
+    ] {
+        assert!(ci.contains(needle), "ci.yml lacks {needle}");
+    }
+    let dist: toml::Value = fs::read_to_string(root.join("dist-workspace.toml"))
+        .expect("dist-workspace.toml")
+        .parse()
+        .unwrap();
+    let text = dist.to_string();
+    for needle in [
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "gidragir/homebrew-tap",
+    ] {
+        assert!(text.contains(needle), "dist-workspace.toml lacks {needle}");
+    }
+    fs::read_to_string(root.join("release-plz.toml"))
+        .expect("release-plz.toml")
+        .parse::<toml::Value>()
+        .unwrap();
+    for wf in ["release-plz.yml", "release.yml"] {
+        assert!(root.join(".github/workflows").join(wf).is_file(), "{wf}");
+    }
+}

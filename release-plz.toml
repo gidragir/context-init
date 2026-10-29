@@ -1,0 +1,27 @@
+[workspace]
+changelog_update = true
+git_release_enable = false
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+publish = true
+
+# One version for the whole workspace: the root package owns the tag and changelog.
+[[package]]
+name = "context-init"
+git_tag_enable = true
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "ci-core"
+git_tag_enable = false
+changelog_update = false
+
+[[package]]
+name = "ci-llm"
+git_tag_enable = false
+changelog_update = false
+
+[[package]]
+name = "ci-mcp"
+git_tag_enable = false
+changelog_update = false
