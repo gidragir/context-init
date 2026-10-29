@@ -62,6 +62,14 @@ struct V03Metrics {
 }
 
 #[derive(serde::Serialize, Debug, Clone)]
+struct V04Metrics {
+    bsl_tokens_saved_percent: f64,
+    scan_files: usize,
+    scan_ms: f64,
+    stale_check_avg_ms: f64,
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
 struct BenchmarkReport {
     timestamp: String,
     drift_metrics: DriftMetrics,
@@ -69,6 +77,7 @@ struct BenchmarkReport {
     mcp_latencies: Vec<McpToolLatency>,
     cross_project: CrossProjectMetrics,
     v03: V03Metrics,
+    v04: V04Metrics,
     overall_status: String,
 }
 
@@ -368,9 +377,11 @@ async fn test_regression_benchmark_and_generate_report() {
     // 5. v0.3 gate: cold start, router fallback latency, token-budget compliance
     println!("5/5 v0.3 context-audit gate...");
     let v03 = measure_v03(&sandbox, &temp_workspace).await;
+    println!("6/6 v0.4 context-audit gate...");
+    let v04 = measure_v04(&sandbox);
     let _ = fs::remove_dir_all(&sandbox);
 
-    // 6. Reports (written only on request, so test runs keep the tree clean)
+    // 7. Reports (written only on request, so test runs keep the tree clean)
     if std::env::var("CONTEXT_INIT_WRITE_BENCHMARK").as_deref() != Ok("1") {
         println!(
             "\nREGRESSION BENCHMARK PASSED (set CONTEXT_INIT_WRITE_BENCHMARK=1 to write reports)"
@@ -384,6 +395,7 @@ async fn test_regression_benchmark_and_generate_report() {
         mcp_latencies,
         cross_project,
         v03,
+        v04,
         overall_status: "PASSED (NO REGRESSIONS)".to_string(),
     };
     let reports_dir = repo_root.join("reports");
@@ -586,6 +598,120 @@ async fn measure_v03(sandbox: &Path, initialized_workspace: &Path) -> V03Metrics
     }
 }
 
+fn run_git(root: &Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "-c",
+            "user.name=bench",
+            "-c",
+            "user.email=b@b",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn measure_v04(sandbox: &Path) -> V04Metrics {
+    use ci_core::analysis::lang::adapter_for_ext;
+    use ci_core::analysis::scan::scan_project;
+    use ci_core::config::ScopeConfig;
+    use ci_core::git::{check_card_staleness, SystemGitBackend};
+    use ci_core::openviking::{CardFrontmatter, CardSource, OkfCard};
+
+    // BSL compression: signatures and directives stay, bodies go.
+    let mut module = String::from("&AtServer\nProcedure Process(Val Param) Export\n");
+    for i in 0..80 {
+        module.push_str(&format!(
+            "    Value{i} = Param + {i}; // step {i}\n    If Value{i} > 10 Then\n        Log(Value{i});\n    EndIf;\n"
+        ));
+    }
+    module.push_str("EndProcedure\n");
+    let bsl = adapter_for_ext("bsl")
+        .expect("bsl adapter")
+        .compress_source(&module);
+    let (before, after) = (count_tokens(&module), count_tokens(&bsl));
+    let bsl_tokens_saved_percent = (before - after) as f64 * 100.0 / before as f64;
+    println!(
+        "   bsl compression: {before} -> {after} tokens ({bsl_tokens_saved_percent:.1}% saved)"
+    );
+    assert!(
+        bsl_tokens_saved_percent >= 60.0,
+        "bsl compression regressed: {bsl_tokens_saved_percent:.1}%"
+    );
+
+    // Large synthetic repository: 40 directories x 10 files, committed to Git.
+    let repo = sandbox.join("large-repo");
+    for d in 0..40 {
+        let dir = repo.join(format!("pkg{d:02}"));
+        fs::create_dir_all(&dir).unwrap();
+        for f in 0..10 {
+            fs::write(
+                dir.join(format!("mod{f}.rs")),
+                format!("pub fn f{d}_{f}(x: u32) -> u32 {{\n    x + {f}\n}}\n").repeat(5),
+            )
+            .unwrap();
+        }
+    }
+    run_git(&repo, &["init", "-q"]);
+    run_git(&repo, &["add", "-A"]);
+    run_git(&repo, &["commit", "-q", "-m", "synthetic"]);
+
+    let t = Instant::now();
+    let report = scan_project(&repo, &ScopeConfig::default()).expect("scan");
+    let scan_ms = t.elapsed().as_secs_f64() * 1000.0;
+    println!("   scan: {} files in {scan_ms:.1}ms", report.total_files);
+    assert_eq!(report.total_files, 400);
+    assert!(
+        scan_ms < time_limit(1500.0),
+        "scan too slow: {scan_ms:.1}ms"
+    );
+
+    let git = SystemGitBackend::new();
+    let commit = ci_core::git::GitBackend::head_commit(&git, &repo).unwrap();
+    let blob = ci_core::git::GitBackend::blob_sha(&git, &repo, Path::new("pkg07"))
+        .unwrap()
+        .unwrap();
+    let card = OkfCard::new(
+        CardFrontmatter {
+            directory: "pkg07".to_string(),
+            source: CardSource {
+                kind: "git".to_string(),
+                blob_sha: blob,
+                commit_sha: commit,
+            },
+            ..CardFrontmatter::default()
+        },
+        "# card",
+    );
+    let iterations = 10;
+    let t = Instant::now();
+    for _ in 0..iterations {
+        let r = check_card_staleness(&git, &repo, &card).expect("staleness");
+        assert!(!r.stale);
+    }
+    let stale_check_avg_ms = t.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
+    println!("   stale check: avg={stale_check_avg_ms:.1}ms");
+    assert!(
+        stale_check_avg_ms < time_limit(150.0),
+        "stale check too slow: {stale_check_avg_ms:.1}ms"
+    );
+    V04Metrics {
+        bsl_tokens_saved_percent,
+        scan_files: report.total_files,
+        scan_ms,
+        stale_check_avg_ms,
+    }
+}
+
 struct AuditResult {
     has_drift: bool,
     up_to_date_count: usize,
@@ -758,6 +884,16 @@ fn render_markdown_report(report: &BenchmarkReport) -> String {
         report.v03.router_fallback_avg_ms,
         report.v03.budget_compliance_percent,
         report.v03.budget_calls
+    ));
+
+    md.push_str("## 🚦 6. Гейт v0.4 (context-audit)\n\n");
+    md.push_str("| Метрика | Значение | Порог |\n| :--- | :--- | :--- |\n");
+    md.push_str(&format!(
+        "| Сжатие `bsl` (токены) | `{:.1}%` | `>= 60%` |\n| `scan` ({} файлов) | `{:.1} ms` | `< 1500 ms` |\n| `stale`-валидация карточки (avg) | `{:.1} ms` | `< 150 ms` |\n\n",
+        report.v04.bsl_tokens_saved_percent,
+        report.v04.scan_files,
+        report.v04.scan_ms,
+        report.v04.stale_check_avg_ms
     ));
 
     md.push_str("## 🎯 Заключение и вердикт регрессионного контроля\n\n");

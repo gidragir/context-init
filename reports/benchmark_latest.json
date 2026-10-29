@@ -2,59 +2,65 @@
   "timestamp": "2026-10-29",
   "drift_metrics": {
     "iterations": 10,
-    "avg_ms": 15.012209100000002,
-    "min_ms": 4.3222570000000005,
-    "max_ms": 108.432574,
+    "avg_ms": 18.568174399999993,
+    "min_ms": 4.85383,
+    "max_ms": 121.22977999999999,
     "up_to_date_count": 31,
-    "has_drift": false
+    "has_drift": true
   },
   "compression_metrics": {
     "file_path": "crates/ci-core/src/analysis/detector.rs",
-    "uncompressed_bytes": 68098,
-    "uncompressed_tokens": 14912,
-    "compressed_bytes": 8443,
-    "compressed_tokens": 2399,
-    "tokens_saved_percent": 83.91228540772532,
-    "compression_duration_ms": 4.641338
+    "uncompressed_bytes": 70592,
+    "uncompressed_tokens": 15559,
+    "compressed_bytes": 9381,
+    "compressed_tokens": 2663,
+    "tokens_saved_percent": 82.88450414551065,
+    "compression_duration_ms": 5.189865
   },
   "mcp_latencies": [
     {
       "tool": "context_init",
-      "latency_ms": 33.333872,
+      "latency_ms": 33.500087,
       "status": "OK"
     },
     {
       "tool": "context_check",
-      "latency_ms": 2.175879,
+      "latency_ms": 2.6504630000000002,
       "status": "OK (0 drift)"
     },
     {
       "tool": "context_get_subsystems",
-      "latency_ms": 1.789723,
+      "latency_ms": 2.17235,
       "status": "OK (1 subsystems)"
     },
     {
       "tool": "context_pack",
-      "latency_ms": 1.6219629999999998,
+      "latency_ms": 2.251006,
       "status": "OK (AST compressed)"
     },
     {
       "tool": "context_update",
-      "latency_ms": 1.7211049999999999,
+      "latency_ms": 2.348187,
       "status": "OK (reconciled)"
     }
   ],
   "cross_project": {
-    "context_init_drift": false,
+    "context_init_drift": true,
     "ai_dotfiles_subsystems": 2,
     "ai_dotfiles_drift": false,
     "ai_dotfiles_pack_status": "OK (files=2, tokens~159)"
   },
   "v03": {
-    "mcp_cold_start_ms": 1.324297,
-    "router_fallback_avg_ms": 0.00533995,
+    "mcp_cold_start_ms": 1.443435,
+    "router_fallback_avg_ms": 0.0060176,
     "budget_compliance_percent": 100.0,
-    "budget_calls": 4
+    "budget_calls": 5
+  },
+  "v04": {
+    "bsl_tokens_saved_percent": 99.2621359223301,
+    "scan_files": 400,
+    "scan_ms": 26.911907999999997,
+    "stale_check_avg_ms": 7.150359400000001
   },
   "overall_status": "PASSED (NO REGRESSIONS)"
 }
