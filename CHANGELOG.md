@@ -2,6 +2,80 @@
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/gidragir/context-init/releases/tag/v0.3.0) - 2026-10-29
+
+### Added
+
+- *(search)* add tantivy BM25 retriever with Russian stemming and search role reranking (D18)
+- *(workspace)* add context_workspace multi-repo discovery, cross-project links, and project addressing (D6)
+- *(task)* two-level L1/L2 task digest with semantic .mdo diff and changed method detection (D4, D5)
+- *(mdo)* parse .mdo XML metadata, configuration subsystems, and lazy L2 object cards (D7, D8)
+- *(scan)* two-phase scan/init with .gitignore walker and persistent [scope] filters (D9)
+- *(kb)* emit OpenViking OKF frontmatter in L1 cards and support lazy git stale auto_refresh (D2)
+- *(migrate)* [**breaking**] copy knowledge base between repo and central storage
+- *(generator)* write only on change, stable order, mode-aware AGENTS.md
+- *(storage)* [**breaking**] schema v3 drops root_path, line and token counters
+- *(storage)* [**breaking**] resolve knowledge dir from storage mode, drop legacy .agents/knowledge
+- *(config)* storage = repo|central key (default repo)
+- *(detector)* split oversized crates into per-module subsystems
+- *(cli)* feedback command sharing ci-core recording with MCP (D29)
+- *(cli)* telemetry report and opt-in GitHub submission (D30)
+- *(setup)* rule/skill blocks and setup command for six harnesses
+- *(setup)* harness table and non-destructive config merge (D22)
+- *(cli)* migrate in-repo knowledge to central storage (D23)
+- *(cli)* config init/show/path/validate (D11)
+- *(workspace)* v0.3 steps 1-4 (ci-core, ci-llm, ci-mcp) + step 5 spec/plan
+- *(cli)* add check, update, pack and mcp subcommands
+- *(mcp)* implement context-init MCP server tools
+- *(core)* add deep module discovery, AST parsing and context service
+- initial commit for context-init OpenViking CLI tool
+
+### Fixed
+
+- *(test)* compile test helpers cleanly on windows
+- *(minors)* single Unreleased changelog, no double benchmark run, up_to_date_count, config warning, query header, mdo cap coverage
+- *(final-review)* validate card shas before git, confine search card reads, keep setup backups, paginate rerank safely
+- *(stage2)* digest ids for non-ASCII metadata names, validate scope globs before persisting, BSL BOM/async/unterminated methods, no full read of huge files in scan
+- *(stage1)* validate --model like the router, split --model chains, write through symlinked configs, drop duplicate crates.io publish
+- *(setup,telemetry)* atomic config writes, pre-plan setup all, inline TOML tables, secure temp file
+- *(check,cli)* unify CLI/MCP drift check, reject unknown --model alias, add rtk fallback in AGENTS.md
+- *(setup)* detect claude-code by ~/.claude for 'setup all'; cap preview diff size
+- *(init)* carry over hand-written files from a legacy knowledge base; clearer migrate --force warning
+- *(setup)* backups keep the original file's permissions
+- *(cli)* accurate legacy knowledge-base hint for check vs init
+- *(ci-mcp)* enforce pack-all budget limit (D19), saturate cursor page
+
+### Other
+
+- *(plan)* add v0.3-v0.6 implementation plan
+- *(kb)* restamp knowledge base
+- *(kb)* refresh knowledge base after final-review fixes
+- *(kb)* finalize v0.3-v0.6 knowledge base and changelog
+- *(audit)* add v0.6 search latency and recall@k metrics
+- *(kb)* refresh knowledge base after v0.5 changes
+- *(audit)* add v0.5 context-audit metrics (task digest token savings and workspace-L0 latency)
+- *(kb)* regenerate repo knowledge base with OKF frontmatter cards (stage 2 gate)
+- *(audit)* add v0.4 context-audit metrics (bsl compression, scan and staleness latency)
+- *(audit)* add v0.3 context-audit metrics (MCP cold start, router fallback, token budget compliance)
+- *(release)* add multi-OS CI workflow, cargo-dist config, and release-plz pipeline (D26, D27)
+- *(build)* add mise.toml tasks, binstall/crates.io metadata, drop lefthook sync-binary (D26, D27)
+- dogfood repo storage for context-init
+- repo storage mode
+- *(plan)* repo storage implementation plan
+- *(spec)* repo storage design
+- *(agents)* sorted navigation map with file-module wording
+- *(agents)* refresh navigation map after per-module subsystem split
+- *(reports)* step 5 final review report
+- *(reports)* step 5 summary, handoff status, refreshed AGENTS.md map
+- *(cli)* [**breaking**] thin binary over ci-* crates; add --model/--role/--config
+- *(ci-core)* generator, deterministic subsystems and AST packer in analysis
+- *(ci-core)* move project detector into ci_core::analysis
+- *(agents)* initialize OpenViking knowledge base and AGENTS.md navigation
+- *(benchmark)* add context audit and performance benchmark reports
+- expand README and add CLI cheatsheet
+- add integration test suite for CLI and AST packing
+- add lefthook with rust check, fmt and host binary sync
+
 ### Added
 - v0.3 hardening: one `check` pipeline for CLI and MCP (missing index is an error, Git-stale cards count as drift), strict `--model` validation, atomic and pre-planned `setup` writes, `mise.toml` tasks, CI/release workflows, `context-audit` gate.
 - v0.4: L1 cards are OpenViking OKF sidecars (YAML frontmatter with `directory`, `source` SHAs, `generated_by`, `freshness`); lazy Git staleness in `context_get_subsystem` with optional `auto_refresh`; two-phase `scan`/`init` with `.gitignore` and `[scope]` (`--include`, `--exclude`, `--ext`); `LanguageAdapter` for Rust, Python, BSL and `.os`; `.mdo` metadata subsystems and lazy L2 object cards.
