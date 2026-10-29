@@ -1,6 +1,6 @@
 # =============================================================================
 # Lefthook Git Pre-Commit Configuration for context-init
-# Focus: Rust syntax check, formatting, binary release build & host sync (~/.local/bin)
+# Focus: Rust syntax check and formatting (build/test/dist live in mise.toml)
 # =============================================================================
 pre-commit:
   parallel: false
@@ -13,8 +13,3 @@ pre-commit:
       glob: "{src,crates}/**/*.rs"
       run: cargo fmt --all
       stage_fixed: true
-
-    sync-binary:
-      glob: "{src/**/*.rs,crates/**/*.rs,Cargo.toml}"
-      # --remove-destination: replace the binary even while an MCP server is running it
-      run: cargo build --release --quiet && cp --remove-destination target/release/context-init ~/.local/bin/context-init

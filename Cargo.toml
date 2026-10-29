@@ -11,6 +11,9 @@ members = [
 version = "0.3.0"
 edition = "2021"
 authors = ["gidragir"]
+license = "MIT"
+repository = "https://github.com/gidragir/context-init"
+homepage = "https://github.com/gidragir/context-init"
 
 [workspace.dependencies]
 ci-core = { path = "crates/ci-core", version = "0.3.0" }
@@ -39,6 +42,15 @@ version.workspace = true
 edition.workspace = true
 description = "CLI tool to initialize OpenViking hierarchical L0-L2 context for AI in any project"
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
 
 [dependencies]
 ci-core.workspace = true

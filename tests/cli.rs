@@ -748,3 +748,26 @@ fn cli_setup_all_write_aborts_before_any_write_if_one_harness_config_is_invalid(
         .collect();
     assert_eq!(siblings.len(), 1, "unexpected files: {siblings:?}");
 }
+
+#[test]
+fn workspace_task_runner_and_packaging_metadata_invariants() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mise: toml::Value = fs::read_to_string(root.join("mise.toml"))
+        .expect("mise.toml must exist")
+        .parse()
+        .expect("mise.toml is valid TOML");
+    for task in ["build", "test", "lint", "fmt", "check", "dist", "audit"] {
+        assert!(mise["tasks"].get(task).is_some(), "missing mise task {task}");
+    }
+    let lefthook = fs::read_to_string(root.join("lefthook.yml")).unwrap();
+    assert!(!lefthook.contains("sync-binary"), "{lefthook}");
+
+    let manifest = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert!(manifest.contains("[package.metadata.binstall]"));
+    assert!(manifest.contains("license = \"MIT\""));
+    for krate in ["ci-core", "ci-llm", "ci-mcp"] {
+        let m = fs::read_to_string(root.join("crates").join(krate).join("Cargo.toml")).unwrap();
+        assert!(m.contains("license.workspace = true"), "{krate}");
+        assert!(m.contains("repository.workspace = true"), "{krate}");
+    }
+}

@@ -1,0 +1,33 @@
+# Единственный таск-раннер проекта (`mise run <task>`).
+[tools]
+rust = "stable"
+"cargo:cargo-nextest" = "latest"
+
+[tasks.build]
+description = "Release build of the whole workspace"
+run = "cargo build --workspace --release"
+
+[tasks.test]
+description = "Run the workspace test suite"
+run = "cargo nextest run --workspace"
+
+[tasks.lint]
+description = "clippy with warnings denied"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks.fmt]
+description = "Format all crates"
+run = "cargo fmt --all"
+
+[tasks.check]
+description = "Knowledge-base drift check of this repository"
+run = "cargo run --quiet -- check . --exit-code --compact"
+
+[tasks.dist]
+description = "Build the distributable binary with the dist profile"
+run = "cargo build --profile dist --bin context-init"
+
+[tasks.audit]
+description = "Regression benchmark (context-audit gate); writes reports with CONTEXT_INIT_WRITE_BENCHMARK=1"
+env = { CONTEXT_INIT_WRITE_BENCHMARK = "1" }
+run = "cargo test --test regression_benchmark -- --nocapture"

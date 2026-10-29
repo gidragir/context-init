@@ -3,6 +3,9 @@ name = "ci-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Core types, configuration hierarchy, and storage primitives for context-init"
 
 [dependencies]
