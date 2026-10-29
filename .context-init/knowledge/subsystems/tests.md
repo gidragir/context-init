@@ -2,11 +2,11 @@
 directory: tests/cli.rs
 source:
   kind: git
-  blob_sha: e150136c01243c24f2c3f7a30524c7af9ac5fa17
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  blob_sha: 100a8fa32c4fe441faee96cd87000cc385cbcdb2
+  commit_sha: ebcdb066e85279ae873a213c32310748678eefe2
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1

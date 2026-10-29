@@ -36,8 +36,8 @@
       ],
       "key_files": [
         "crates/ci-core/Cargo.toml",
-        "crates/ci-core/src/git.rs",
-        "crates/ci-core/src/lib.rs"
+        "crates/ci-core/src/lib.rs",
+        "crates/ci-core/src/openviking.rs"
       ],
       "files": [
         {
@@ -45,74 +45,50 @@
           "is_entrypoint": true
         },
         {
-          "path": "crates/ci-core/src/git.rs",
-          "is_entrypoint": false
-        },
-        {
           "path": "crates/ci-core/src/lib.rs",
           "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-core/src/openviking.rs",
+          "is_entrypoint": false
         }
       ],
       "key_symbols": [
         "pub const VERSION: &str = env !(\"CARGO_PKG_VERSION\")",
         "pub fn crate_info() -> &'static str",
-        "pub struct GitStatusEntry",
-        "pub struct StalenessReport",
-        "pub trait GitBackend",
-        "pub struct SystemGitBackend",
-        "pub fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitStatusEntry>",
-        "pub fn parse_nul_paths(bytes: &[u8]) -> Vec<String>",
-        "pub fn check_card_staleness(backend: &dyn GitBackend, repo_root: &Path, card: &OkfCard, ) -> Result<StalenessReport>",
-        "pub fn check_frontmatter_staleness(backend: &dyn GitBackend, repo_root: &Path, frontmatter: &CardFrontmatter, ) -> Result<StalenessReport>"
+        "pub const L0_ABSTRACT_MAX_CHARS: usize = 256",
+        "pub struct CardSource",
+        "pub struct CardGeneratedBy",
+        "pub struct CardFreshness",
+        "pub struct CardFrontmatter",
+        "pub struct OkfCard",
+        "pub fn extract_l0_abstract(markdown: &str) -> String",
+        "pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core"
     },
     {
       "id": "crates_ci-core_analysis",
       "name": "Ci Core Analysis",
-      "summary": "Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs, crates/ci-core/src/analysis/mod.rs",
+      "summary": "Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs",
       "l1_path": "subsystems/crates_ci-core_analysis.md",
       "tags": [
         "Rust (Cargo)",
         "crates_ci-core_analysis"
       ],
       "entrypoints": [
-        "crates/ci-core/src/analysis/lang/mod.rs",
         "crates/ci-core/src/analysis/mod.rs"
       ],
       "key_files": [
-        "crates/ci-core/src/analysis/lang/bsl.rs",
-        "crates/ci-core/src/analysis/lang/mdo.rs",
-        "crates/ci-core/src/analysis/lang/mod.rs",
-        "crates/ci-core/src/analysis/lang/python.rs",
-        "crates/ci-core/src/analysis/lang/rust.rs",
         "crates/ci-core/src/analysis/mod.rs",
         "crates/ci-core/src/analysis/scan.rs",
         "crates/ci-core/src/analysis/scope.rs",
         "crates/ci-core/src/analysis/subsystems.rs",
-        "crates/ci-core/src/analysis/types.rs"
+        "crates/ci-core/src/analysis/task.rs",
+        "crates/ci-core/src/analysis/types.rs",
+        "crates/ci-core/src/analysis/workspace.rs"
       ],
       "files": [
-        {
-          "path": "crates/ci-core/src/analysis/lang/bsl.rs",
-          "is_entrypoint": false
-        },
-        {
-          "path": "crates/ci-core/src/analysis/lang/mdo.rs",
-          "is_entrypoint": false
-        },
-        {
-          "path": "crates/ci-core/src/analysis/lang/mod.rs",
-          "is_entrypoint": true
-        },
-        {
-          "path": "crates/ci-core/src/analysis/lang/python.rs",
-          "is_entrypoint": false
-        },
-        {
-          "path": "crates/ci-core/src/analysis/lang/rust.rs",
-          "is_entrypoint": false
-        },
         {
           "path": "crates/ci-core/src/analysis/mod.rs",
           "is_entrypoint": true
@@ -130,20 +106,29 @@
           "is_entrypoint": false
         },
         {
+          "path": "crates/ci-core/src/analysis/task.rs",
+          "is_entrypoint": false
+        },
+        {
           "path": "crates/ci-core/src/analysis/types.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/workspace.rs",
           "is_entrypoint": false
         }
       ],
       "key_symbols": [
         "pub const REPO_KNOWLEDGE_DIR: &str = \".context-init/knowledge\"",
         "pub fn resolve_knowledge_dir(root: &Path, mode: StorageMode, central_kb: &Path) -> PathBuf",
-        "pub struct BslAdapter",
-        "pub struct MdoObject",
-        "pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject>",
-        "pub fn render_mdo_l2_card(obj: &MdoObject) -> String",
-        "pub(crate) fn discover_mdo_subsystems(root: &Path, files: &[String], ) -> (Vec<DiscoveredModule>, BTreeSet<String>)",
-        "pub fn find_object_card(root: &Path, scope: &ScopeConfig, id: &str) -> Result<Option<String>>",
-        "pub struct PythonAdapter"
+        "pub struct ScanStat",
+        "pub struct ScanReport",
+        "pub fn scan_project(root: &Path, scope: &ScopeConfig) -> Result<ScanReport>",
+        "pub fn render_scan_markdown(project_id: &str, root: &Path, report: &ScanReport) -> String",
+        "pub fn validate_scope(scope: &ScopeConfig) -> Result<()>",
+        "pub struct ScopeFilter",
+        "pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo>",
+        "pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 3] = [\"Подсистема `\", \"Модуль и компоненты директории `\", \"Модуль-файл `\", ]"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core"
@@ -238,6 +223,62 @@
       "parent": "crates_ci-core_analysis"
     },
     {
+      "id": "crates_ci-core_analysis_lang",
+      "name": "Ci Core Analysis Lang",
+      "summary": "Подсистема `crates/ci-core/src/analysis/lang` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs",
+      "l1_path": "subsystems/crates_ci-core_analysis_lang.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_lang"
+      ],
+      "entrypoints": [
+        "crates/ci-core/src/analysis/lang/mod.rs"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/lang/bsl.rs",
+        "crates/ci-core/src/analysis/lang/mdo.rs",
+        "crates/ci-core/src/analysis/lang/mod.rs",
+        "crates/ci-core/src/analysis/lang/python.rs",
+        "crates/ci-core/src/analysis/lang/rust.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/lang/bsl.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/lang/mdo.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/lang/mod.rs",
+          "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-core/src/analysis/lang/python.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/lang/rust.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const ELIDED_BODY: &str = \"⋮----\"",
+        "pub trait LanguageAdapter",
+        "pub fn adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter>",
+        "pub fn adapter_for_path(path: &Path) -> Option<&'static dyn LanguageAdapter>",
+        "pub struct BslAdapter",
+        "pub struct MdoObject",
+        "pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject>",
+        "pub fn semantic_diff(old: Option<&MdoObject>, new: &MdoObject) -> Vec<String>",
+        "pub fn render_mdo_l2_card(obj: &MdoObject) -> String",
+        "pub(crate) fn discover_mdo_subsystems(root: &Path, files: &[String], ) -> (Vec<DiscoveredModule>, BTreeSet<String>)"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis"
+    },
+    {
       "id": "crates_ci-core_analysis_pack",
       "name": "Ci Core Analysis Pack",
       "summary": "Модуль-файл `crates/ci-core/src/analysis/pack.rs`",
@@ -303,32 +344,32 @@
       "parent": "crates_ci-core"
     },
     {
-      "id": "crates_ci-core_openviking",
-      "name": "Ci Core Openviking",
-      "summary": "Модуль-файл `crates/ci-core/src/openviking.rs`",
-      "l1_path": "subsystems/crates_ci-core_openviking.md",
+      "id": "crates_ci-core_git",
+      "name": "Ci Core Git",
+      "summary": "Модуль-файл `crates/ci-core/src/git.rs`",
+      "l1_path": "subsystems/crates_ci-core_git.md",
       "tags": [
         "Rust (Cargo)",
-        "crates_ci-core_openviking"
+        "crates_ci-core_git"
       ],
       "key_files": [
-        "crates/ci-core/src/openviking.rs"
+        "crates/ci-core/src/git.rs"
       ],
       "files": [
         {
-          "path": "crates/ci-core/src/openviking.rs",
+          "path": "crates/ci-core/src/git.rs",
           "is_entrypoint": false
         }
       ],
       "key_symbols": [
-        "pub const L0_ABSTRACT_MAX_CHARS: usize = 256",
-        "pub struct CardSource",
-        "pub struct CardGeneratedBy",
-        "pub struct CardFreshness",
-        "pub struct CardFrontmatter",
-        "pub struct OkfCard",
-        "pub fn extract_l0_abstract(markdown: &str) -> String",
-        "pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String"
+        "pub struct GitStatusEntry",
+        "pub struct StalenessReport",
+        "pub trait GitBackend",
+        "pub struct SystemGitBackend",
+        "pub fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitStatusEntry>",
+        "pub fn parse_nul_paths(bytes: &[u8]) -> Vec<String>",
+        "pub fn check_card_staleness(backend: &dyn GitBackend, repo_root: &Path, card: &OkfCard, ) -> Result<StalenessReport>",
+        "pub fn check_frontmatter_staleness(backend: &dyn GitBackend, repo_root: &Path, frontmatter: &CardFrontmatter, ) -> Result<StalenessReport>"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core"
@@ -993,7 +1034,9 @@
         "src/cli/output.rs",
         "src/cli/pack.rs",
         "src/cli/scan.rs",
-        "src/cli/telemetry.rs"
+        "src/cli/task.rs",
+        "src/cli/telemetry.rs",
+        "src/cli/workspace.rs"
       ],
       "files": [
         {
@@ -1037,7 +1080,15 @@
           "is_entrypoint": false
         },
         {
+          "path": "src/cli/task.rs",
+          "is_entrypoint": false
+        },
+        {
           "path": "src/cli/telemetry.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/workspace.rs",
           "is_entrypoint": false
         }
       ],

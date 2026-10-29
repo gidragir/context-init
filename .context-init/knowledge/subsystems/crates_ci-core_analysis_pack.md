@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis/pack.rs
 source:
   kind: git
   blob_sha: 58581e25cc2dfe9a8577924ae5899af9b34914fd
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  commit_sha: ebcdb066e85279ae873a213c32310748678eefe2
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1

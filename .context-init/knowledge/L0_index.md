@@ -29,13 +29,14 @@ rtk cargo run
 | Подсистема | Роль / Назначение | Точки входа | L1 Карточка |
 | :--- | :--- | :--- | :--- |
 | **Ci Core** | Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs | `crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs` | [subsystems/crates_ci-core.md](subsystems/crates_ci-core.md) |
-| **Ci Core Analysis** | Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs, crates/ci-core/src/analysis/mod.rs | `crates/ci-core/src/analysis/lang/mod.rs, crates/ci-core/src/analysis/mod.rs` | [subsystems/crates_ci-core_analysis.md](subsystems/crates_ci-core_analysis.md) |
+| **Ci Core Analysis** | Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs | `crates/ci-core/src/analysis/mod.rs` | [subsystems/crates_ci-core_analysis.md](subsystems/crates_ci-core_analysis.md) |
 | **Ci Core Analysis Detector** | Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (1 файлов) | `-` | [subsystems/crates_ci-core_analysis_detector.md](subsystems/crates_ci-core_analysis_detector.md) |
 | **Ci Core Analysis Detector Tests** | Модуль-файл `crates/ci-core/src/analysis/detector/tests.rs` | `-` | [subsystems/crates_ci-core_analysis_detector_tests.md](subsystems/crates_ci-core_analysis_detector_tests.md) |
 | **Ci Core Analysis Generator** | Модуль-файл `crates/ci-core/src/analysis/generator.rs` | `-` | [subsystems/crates_ci-core_analysis_generator.md](subsystems/crates_ci-core_analysis_generator.md) |
+| **Ci Core Analysis Lang** | Подсистема `crates/ci-core/src/analysis/lang` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs | `crates/ci-core/src/analysis/lang/mod.rs` | [subsystems/crates_ci-core_analysis_lang.md](subsystems/crates_ci-core_analysis_lang.md) |
 | **Ci Core Analysis Pack** | Модуль-файл `crates/ci-core/src/analysis/pack.rs` | `-` | [subsystems/crates_ci-core_analysis_pack.md](subsystems/crates_ci-core_analysis_pack.md) |
 | **Ci Core Config** | Модуль-файл `crates/ci-core/src/config.rs` | `-` | [subsystems/crates_ci-core_config.md](subsystems/crates_ci-core_config.md) |
-| **Ci Core Openviking** | Модуль-файл `crates/ci-core/src/openviking.rs` | `-` | [subsystems/crates_ci-core_openviking.md](subsystems/crates_ci-core_openviking.md) |
+| **Ci Core Git** | Модуль-файл `crates/ci-core/src/git.rs` | `-` | [subsystems/crates_ci-core_git.md](subsystems/crates_ci-core_git.md) |
 | **Ci Core Storage** | Модуль-файл `crates/ci-core/src/storage.rs` | `-` | [subsystems/crates_ci-core_storage.md](subsystems/crates_ci-core_storage.md) |
 | **Ci Core Telemetry** | Модуль-файл `crates/ci-core/src/telemetry.rs` | `-` | [subsystems/crates_ci-core_telemetry.md](subsystems/crates_ci-core_telemetry.md) |
 | **Ci Llm** | Подсистема `crates/ci-llm` с ключевыми точками входа: crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs | `crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs` | [subsystems/crates_ci-llm.md](subsystems/crates_ci-llm.md) |

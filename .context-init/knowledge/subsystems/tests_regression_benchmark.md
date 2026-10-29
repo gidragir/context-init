@@ -2,11 +2,11 @@
 directory: tests/regression_benchmark.rs
 source:
   kind: git
-  blob_sha: 3ed63498d183efef80da26fc424b28ee22453e86
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  blob_sha: 537945cd8889e2dc3131678c5cd490022ef56b2b
+  commit_sha: ebcdb066e85279ae873a213c32310748678eefe2
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1

@@ -17,13 +17,14 @@
 
 ### 📦 Доступные подсистемы:
 - `crates_ci-core` (Ci Core) — Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs
-- `crates_ci-core_analysis` (Ci Core Analysis) — Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs, crates/ci-core/src/analysis/mod.rs
+- `crates_ci-core_analysis` (Ci Core Analysis) — Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs
 - `crates_ci-core_analysis_detector` (Ci Core Analysis Detector) — Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (1 файлов)
 - `crates_ci-core_analysis_detector_tests` (Ci Core Analysis Detector Tests) — Модуль-файл `crates/ci-core/src/analysis/detector/tests.rs`
 - `crates_ci-core_analysis_generator` (Ci Core Analysis Generator) — Модуль-файл `crates/ci-core/src/analysis/generator.rs`
+- `crates_ci-core_analysis_lang` (Ci Core Analysis Lang) — Подсистема `crates/ci-core/src/analysis/lang` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs
 - `crates_ci-core_analysis_pack` (Ci Core Analysis Pack) — Модуль-файл `crates/ci-core/src/analysis/pack.rs`
 - `crates_ci-core_config` (Ci Core Config) — Модуль-файл `crates/ci-core/src/config.rs`
-- `crates_ci-core_openviking` (Ci Core Openviking) — Модуль-файл `crates/ci-core/src/openviking.rs`
+- `crates_ci-core_git` (Ci Core Git) — Модуль-файл `crates/ci-core/src/git.rs`
 - `crates_ci-core_storage` (Ci Core Storage) — Модуль-файл `crates/ci-core/src/storage.rs`
 - `crates_ci-core_telemetry` (Ci Core Telemetry) — Модуль-файл `crates/ci-core/src/telemetry.rs`
 - `crates_ci-llm` (Ci Llm) — Подсистема `crates/ci-llm` с ключевыми точками входа: crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs

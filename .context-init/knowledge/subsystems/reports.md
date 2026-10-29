@@ -2,11 +2,11 @@
 directory: reports
 source:
   kind: git
-  blob_sha: f171af380eed77a6dd2e260c364725332113377e
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  blob_sha: 391d4a7b3ab1dca5989c7959a9a62aac43f0bf05
+  commit_sha: ebcdb066e85279ae873a213c32310748678eefe2
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 2
