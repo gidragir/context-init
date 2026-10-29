@@ -23,10 +23,10 @@ pub struct PipelineOptions<'a>
 pub struct PipelineOutcome
 pub fn run_init(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>
 pub fn run_update(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>
+pub struct FullDriftReport
+pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport>
+pub fn validate_model_override(config: &Config, model_override: Option<&str>) -> Result<()>
 pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>
-pub struct McpCheckParams
-pub struct McpCheckResult
-pub struct McpGetSubsystemsParams
 ```
 
 ## 🧪 Запуск и тестирование

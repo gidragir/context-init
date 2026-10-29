@@ -1,11 +1,12 @@
 # 🗺 Карта архитектуры: context-init (L0)
 
-> **Стек:** Rust (Cargo) | **Обновлено:** 2026-10-25
+> **Стек:** Rust (Cargo) | **Обновлено:** 2026-10-29
 > **Описание:** CLI-утилита на Rust для автоматической инициализации и поддержания трехуровневой базы знаний (**OpenViking L0-L2**) для автономных ИИ-ассистентов (Antigravity, Hermes, Claude Code, Cursor, Aider).
 
 ## 🚪 Точки входа (Root Entrypoints)
 - `src/main.rs`
 - `Cargo.toml`
+- `mise.toml`
 
 ## ⚡️ Быстрые команды
 ```bash

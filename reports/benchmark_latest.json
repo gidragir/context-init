@@ -1,54 +1,60 @@
 {
-  "timestamp": "2026-10-23",
+  "timestamp": "2026-10-29",
   "drift_metrics": {
     "iterations": 10,
-    "avg_ms": 28.402673200000002,
-    "min_ms": 26.255382,
-    "max_ms": 43.995607,
-    "up_to_date_count": 9,
-    "has_drift": true
+    "avg_ms": 15.012209100000002,
+    "min_ms": 4.3222570000000005,
+    "max_ms": 108.432574,
+    "up_to_date_count": 31,
+    "has_drift": false
   },
   "compression_metrics": {
-    "file_path": "src/service.rs",
-    "uncompressed_bytes": 32850,
-    "uncompressed_tokens": 6919,
-    "compressed_bytes": 3530,
-    "compressed_tokens": 979,
-    "tokens_saved_percent": 85.85055643879174,
-    "compression_duration_ms": 2.281717
+    "file_path": "crates/ci-core/src/analysis/detector.rs",
+    "uncompressed_bytes": 68098,
+    "uncompressed_tokens": 14912,
+    "compressed_bytes": 8443,
+    "compressed_tokens": 2399,
+    "tokens_saved_percent": 83.91228540772532,
+    "compression_duration_ms": 4.641338
   },
   "mcp_latencies": [
     {
       "tool": "context_init",
-      "latency_ms": 0.165762,
+      "latency_ms": 33.333872,
       "status": "OK"
     },
     {
       "tool": "context_check",
-      "latency_ms": 0.07080499999999999,
+      "latency_ms": 2.175879,
       "status": "OK (0 drift)"
     },
     {
       "tool": "context_get_subsystems",
-      "latency_ms": 0.006585,
+      "latency_ms": 1.789723,
       "status": "OK (1 subsystems)"
     },
     {
       "tool": "context_pack",
-      "latency_ms": 0.094956,
+      "latency_ms": 1.6219629999999998,
       "status": "OK (AST compressed)"
     },
     {
       "tool": "context_update",
-      "latency_ms": 0.08366799999999999,
+      "latency_ms": 1.7211049999999999,
       "status": "OK (reconciled)"
     }
   ],
   "cross_project": {
-    "context_init_drift": true,
-    "ai_dotfiles_subsystems": 6,
-    "ai_dotfiles_drift": true,
-    "ai_dotfiles_pack_status": "OK (files=1, tokens~685)"
+    "context_init_drift": false,
+    "ai_dotfiles_subsystems": 2,
+    "ai_dotfiles_drift": false,
+    "ai_dotfiles_pack_status": "OK (files=2, tokens~159)"
+  },
+  "v03": {
+    "mcp_cold_start_ms": 1.324297,
+    "router_fallback_avg_ms": 0.00533995,
+    "budget_compliance_percent": 100.0,
+    "budget_calls": 4
   },
   "overall_status": "PASSED (NO REGRESSIONS)"
 }

@@ -3,18 +3,22 @@
   "schema_version": 3,
   "project": "context-init",
   "description": "CLI-утилита на Rust для автоматической инициализации и поддержания трехуровневой базы знаний (**OpenViking L0-L2**) для автономных ИИ-ассистентов (Antigravity, Hermes, Claude Code, Cursor, Aider).",
-  "updated_at": "2026-10-25",
+  "updated_at": "2026-10-29",
   "project_type": "Rust (Cargo)",
   "entrypoints": [
     "src/main.rs",
-    "Cargo.toml"
+    "Cargo.toml",
+    "mise.toml"
   ],
   "commands": {
     "build": "rtk cargo build",
     "test": "rtk cargo test",
     "lint": "rtk cargo clippy",
     "fmt": "rtk cargo fmt --check",
-    "run": "rtk cargo run"
+    "run": "rtk cargo run",
+    "custom": {
+      "runner": "mise (task runner)"
+    }
   },
   "subsystems": [
     {
@@ -589,10 +593,10 @@
         "pub struct PipelineOutcome",
         "pub fn run_init(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>",
         "pub fn run_update(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>",
-        "pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>",
-        "pub struct McpCheckParams",
-        "pub struct McpCheckResult",
-        "pub struct McpGetSubsystemsParams"
+        "pub struct FullDriftReport",
+        "pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport>",
+        "pub fn validate_model_override(config: &Config, model_override: Option<&str>) -> Result<()>",
+        "pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>"
       ],
       "test_command": "rtk cargo test -p ci-mcp"
     },

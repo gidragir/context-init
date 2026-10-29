@@ -13,7 +13,7 @@
 3. `context_pack(subsystem_id, compress=true)` — AST-сжатый код подсистемы.
 4. `context_check` — проверка архитектурного дрейфа перед сдачей задачи.
 
-Без доступа к MCP (субагенты, скрипты): `context-init pack <subsystem_id> --compress` и `context-init check --compact`.
+Без доступа к MCP (субагенты, скрипты): `rtk context-init pack <subsystem_id> --compress` и `rtk context-init check --compact`.
 
 ### 📦 Доступные подсистемы:
 - `crates_ci-core` (Ci Core) — Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs

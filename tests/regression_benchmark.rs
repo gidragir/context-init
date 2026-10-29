@@ -7,12 +7,14 @@ use rmcp::handler::server::wrapper::Parameters;
 use ci_core::analysis::detector::{self, count_tokens};
 use ci_core::analysis::generator;
 use ci_core::analysis::pack::{compress_code, format_rust_items, pack_subsystem, PackStyle};
+use ci_core::config::{Config, ModelConfig, ModelKind};
 use ci_core::storage::SubsystemInfo;
-use ci_llm::RoleRouter;
+use ci_llm::{LlmRequest, RoleName, RoleRouter};
+use ci_mcp::pagination::count_tokens as count_reply_tokens;
 use ci_mcp::pipeline::{self, PipelineOptions};
 use ci_mcp::{
-    ContextInitServer, McpCheckParams, McpGetSubsystemsParams, McpInitParams, McpPackParams,
-    McpUpdateParams, ResolvedProject,
+    ContextInitServer, McpCheckParams, McpGetSubsystemParams, McpGetSubsystemsParams,
+    McpInitParams, McpPackParams, McpUpdateParams, ResolvedProject,
 };
 
 #[derive(serde::Serialize, Debug, Clone)]
@@ -52,12 +54,21 @@ struct CrossProjectMetrics {
 }
 
 #[derive(serde::Serialize, Debug, Clone)]
+struct V03Metrics {
+    mcp_cold_start_ms: f64,
+    router_fallback_avg_ms: f64,
+    budget_compliance_percent: f64,
+    budget_calls: usize,
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
 struct BenchmarkReport {
     timestamp: String,
     drift_metrics: DriftMetrics,
     compression_metrics: CompressionMetrics,
     mcp_latencies: Vec<McpToolLatency>,
     cross_project: CrossProjectMetrics,
+    v03: V03Metrics,
     overall_status: String,
 }
 
@@ -353,9 +364,13 @@ async fn test_regression_benchmark_and_generate_report() {
         ai_dotfiles_drift: ext_check.has_drift,
         ai_dotfiles_pack_status: pack_status,
     };
+
+    // 5. v0.3 gate: cold start, router fallback latency, token-budget compliance
+    println!("5/5 v0.3 context-audit gate...");
+    let v03 = measure_v03(&sandbox, &temp_workspace).await;
     let _ = fs::remove_dir_all(&sandbox);
 
-    // 5. Reports (written only on request, so test runs keep the tree clean)
+    // 6. Reports (written only on request, so test runs keep the tree clean)
     if std::env::var("CONTEXT_INIT_WRITE_BENCHMARK").as_deref() != Ok("1") {
         println!(
             "\nREGRESSION BENCHMARK PASSED (set CONTEXT_INIT_WRITE_BENCHMARK=1 to write reports)"
@@ -368,6 +383,7 @@ async fn test_regression_benchmark_and_generate_report() {
         compression_metrics,
         mcp_latencies,
         cross_project,
+        v03,
         overall_status: "PASSED (NO REGRESSIONS)".to_string(),
     };
     let reports_dir = repo_root.join("reports");
@@ -387,6 +403,177 @@ async fn test_regression_benchmark_and_generate_report() {
         "\nREGRESSION BENCHMARK PASSED; reports written to {}",
         reports_dir.display()
     );
+}
+
+/// Multiplier for wall-clock limits in unoptimized (debug) test builds.
+fn time_limit(release_ms: f64) -> f64 {
+    if cfg!(debug_assertions) {
+        release_ms * 4.0
+    } else {
+        release_ms
+    }
+}
+
+async fn measure_v03(sandbox: &Path, initialized_workspace: &Path) -> V03Metrics {
+    // MCP cold start: server construction + first project resolution.
+    let t = Instant::now();
+    let cold = ContextInitServer::new(Some(initialized_workspace.to_path_buf()));
+    let resolved = cold
+        .resolve_context(Some(&initialized_workspace.to_string_lossy()), None)
+        .await;
+    let mcp_cold_start_ms = t.elapsed().as_secs_f64() * 1000.0;
+    assert!(resolved.load_l0_index().is_ok());
+    println!("   MCP cold start: {mcp_cold_start_ms:.2}ms");
+    assert!(
+        mcp_cold_start_ms < time_limit(50.0),
+        "MCP cold start too slow: {mcp_cold_start_ms:.2}ms"
+    );
+
+    // RoleRouter: 2-step fallback chains (failing -> fallback model, failing -> none).
+    let mut cfg = Config::default();
+    cfg.models.insert(
+        "broken".to_string(),
+        ModelConfig {
+            kind: ModelKind::OpenaiCompat, // unimplemented provider: fails immediately
+            model: Some("gpt-ext".to_string()),
+            endpoint: None,
+            command: None,
+            timeout_ms: None,
+            max_input_tokens: None,
+        },
+    );
+    cfg.models.insert(
+        "backup".to_string(),
+        ModelConfig {
+            kind: ModelKind::Agent,
+            model: Some("harness".to_string()),
+            endpoint: None,
+            command: None,
+            timeout_ms: None,
+            max_input_tokens: None,
+        },
+    );
+    cfg.roles.init = vec!["broken".to_string(), "backup".to_string()];
+    cfg.roles.task = vec!["broken".to_string(), "none".to_string()];
+    let router = RoleRouter::new(cfg, None).expect("router");
+    let iterations = 10;
+    let t = Instant::now();
+    for _ in 0..iterations {
+        let o = router
+            .execute(&LlmRequest::new(RoleName::Init, "bench"), None)
+            .expect("failing -> fallback");
+        assert!(o.fallback_used());
+        let o = router
+            .execute(&LlmRequest::new(RoleName::Task, "bench"), None)
+            .expect("failing -> none");
+        assert!(o.is_deterministic() && o.fallback_used());
+    }
+    let router_fallback_avg_ms = t.elapsed().as_secs_f64() * 1000.0 / (2.0 * iterations as f64);
+    println!("   router fallback: avg={router_fallback_avg_ms:.3}ms");
+    assert!(
+        router_fallback_avg_ms < time_limit(5.0),
+        "router fallback too slow: {router_fallback_avg_ms:.3}ms"
+    );
+
+    // Token budget: every tool reply stays within max_response_tokens = 256.
+    let budget = 256;
+    let ws = sandbox.join("budget-ws");
+    fs::create_dir_all(ws.join("src")).unwrap();
+    fs::write(
+        ws.join("Cargo.toml"),
+        "[package]\nname = \"budget\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        ws.join(".context-init.toml"),
+        format!("max_response_tokens = {budget}\n"),
+    )
+    .unwrap();
+    fs::write(
+        ws.join("src/main.rs"),
+        "mod a;\nmod b;\nmod c;\nfn main() {}\n",
+    )
+    .unwrap();
+    for m in ["a", "b", "c"] {
+        fs::create_dir_all(ws.join("src").join(m)).unwrap();
+        let body = (0..60)
+            .map(|i| format!("pub fn {m}_func_{i}(x: u32) -> u32 {{\n    x + {i}\n}}\n"))
+            .collect::<String>();
+        fs::write(ws.join("src").join(m).join("mod.rs"), body).unwrap();
+    }
+    let path = Some(ws.to_string_lossy().to_string());
+    let server = ContextInitServer::new(Some(ws.clone()));
+    server
+        .init(Parameters(McpInitParams {
+            path: path.clone(),
+            force: Some(true),
+            ..McpInitParams::default()
+        }))
+        .await
+        .expect("budget init");
+
+    let mut replies: Vec<(&str, String)> = Vec::new();
+    let subs = server
+        .get_subsystems(Parameters(McpGetSubsystemsParams {
+            path: path.clone(),
+            ..McpGetSubsystemsParams::default()
+        }))
+        .await
+        .expect("get_subsystems");
+    replies.push(("context_get_subsystems", subs));
+    let project = server.resolve_context(path.as_deref(), None).await;
+    let first = project.load_l0_index().unwrap().subsystems[0].id.clone();
+    replies.push((
+        "context_get_subsystem",
+        server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: first.clone(),
+                path: path.clone(),
+                project: None,
+                cursor: None,
+            }))
+            .await
+            .expect("get_subsystem"),
+    ));
+    replies.push((
+        "context_pack",
+        server
+            .pack(Parameters(McpPackParams {
+                subsystem_id: first,
+                path: path.clone(),
+                compress: Some(false),
+                ..McpPackParams::default()
+            }))
+            .await
+            .expect("pack"),
+    ));
+    replies.push((
+        "context_check",
+        server
+            .check_drift(Parameters(McpCheckParams {
+                path: path.clone(),
+                ..McpCheckParams::default()
+            }))
+            .await
+            .expect("check"),
+    ));
+    // Later milestones append their tools here (scan v0.4, task v0.5, workspace v0.5, search v0.6).
+    let ok = replies
+        .iter()
+        .filter(|(tool, text)| {
+            let n = count_reply_tokens(text);
+            println!("   budget {tool}: {n}/{budget} tokens");
+            n <= budget
+        })
+        .count();
+    let budget_compliance_percent = ok as f64 * 100.0 / replies.len() as f64;
+    assert_eq!(budget_compliance_percent, 100.0, "token budget exceeded");
+    V03Metrics {
+        mcp_cold_start_ms,
+        router_fallback_avg_ms,
+        budget_compliance_percent,
+        budget_calls: replies.len(),
+    }
 }
 
 struct AuditResult {
@@ -551,6 +738,16 @@ fn render_markdown_report(report: &BenchmarkReport) -> String {
     md.push_str(&format!(
         "| `ai-dotfiles` | Вложенная (`.context-init/knowledge/dotfiles/`) | `{}` | {} |\n\n",
         report.cross_project.ai_dotfiles_subsystems, report.cross_project.ai_dotfiles_pack_status
+    ));
+
+    md.push_str("## 🚦 5. Гейт v0.3 (context-audit)\n\n");
+    md.push_str("| Метрика | Значение | Порог |\n| :--- | :--- | :--- |\n");
+    md.push_str(&format!(
+        "| Холодный старт MCP | `{:.2} ms` | `< 50 ms` |\n| Fallback `RoleRouter` (avg) | `{:.3} ms` | `< 5 ms` |\n| Соблюдение `max_response_tokens` (256) | `{:.0}%` ({} вызовов) | `100%` |\n\n",
+        report.v03.mcp_cold_start_ms,
+        report.v03.router_fallback_avg_ms,
+        report.v03.budget_compliance_percent,
+        report.v03.budget_calls
     ));
 
     md.push_str("## 🎯 Заключение и вердикт регрессионного контроля\n\n");

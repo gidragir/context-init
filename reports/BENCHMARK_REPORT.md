@@ -1,42 +1,50 @@
 # 📈 context-init: Регрессионный отчет и бенчмарк-замеры
 
-> **Дата замера:** `2026-10-23`  
+> **Дата замера:** `2026-10-29`  
 > **Общий статус:** **PASSED (NO REGRESSIONS)**
 
 ## ⏱ 1. Скорость аудита архитектурного дрейфа (Drift Audit Latency)
 
 | Метрика | Значение | Порог допуска | Статус |
 | :--- | :--- | :--- | :--- |
-| Среднее время (`avg`) | `28.40 ms` | `< 25.0 ms` | ⚠️ WARN |
-| Мин. время (`min`) | `26.26 ms` | - | - |
-| Макс. время (`max`) | `44.00 ms` | `< 50.0 ms` | ✅ PASS |
+| Среднее время (`avg`) | `15.01 ms` | `< 25.0 ms` | ✅ PASS |
+| Мин. время (`min`) | `4.32 ms` | - | - |
+| Макс. время (`max`) | `108.43 ms` | `< 50.0 ms` | ⚠️ WARN |
 | Итераций | `10` | `10` | ✅ PASS |
-| Актуальных подсистем | `9` | `> 0` | ✅ PASS |
+| Актуальных подсистем | `31` | `> 0` | ✅ PASS |
 
 ## 🗜 2. Эффективность AST-сжатия кода (Token Optimization)
 
 | Параметр | Исходный файл | AST-сжатый | Экономия (%) |
 | :--- | :--- | :--- | :--- |
-| **Токены (BPE)** | `6919` | `979` | **85.9%** (порог $\ge 60\%$) |
-| **Размер (байты)** | `32850 B` | `3530 B` | 89.3% |
-| **Время парсинга/сжатия** | `2.28 ms` | - | ✅ Быстрее 100 ms |
+| **Токены (BPE)** | `14912` | `2399` | **83.9%** (порог $\ge 60\%$) |
+| **Размер (байты)** | `68098 B` | `8443 B` | 87.6% |
+| **Время парсинга/сжатия** | `4.64 ms` | - | ✅ Быстрее 100 ms |
 
 ## 🔌 3. Инспекция MCP инструментов (Full Protocol Cycle)
 
 | MCP Tool | Время ответа | Результат вызова |
 | :--- | :--- | :--- |
-| `context_init` | `0.17 ms` | OK |
-| `context_check` | `0.07 ms` | OK (0 drift) |
-| `context_get_subsystems` | `0.01 ms` | OK (1 subsystems) |
-| `context_pack` | `0.09 ms` | OK (AST compressed) |
-| `context_update` | `0.08 ms` | OK (reconciled) |
+| `context_init` | `33.33 ms` | OK |
+| `context_check` | `2.18 ms` | OK (0 drift) |
+| `context_get_subsystems` | `1.79 ms` | OK (1 subsystems) |
+| `context_pack` | `1.62 ms` | OK (AST compressed) |
+| `context_update` | `1.72 ms` | OK (reconciled) |
 
 ## 🌐 4. Межпроектная совместимость (Flat vs Nested Knowledge)
 
 | Проект | Тип базы знаний | Подсистем | Статус pack |
 | :--- | :--- | :--- | :--- |
-| `context-init` | Плоская (`.agents/knowledge/`) | `9` | ✅ OK |
-| `ai-dotfiles` | Вложенная (`.agents/knowledge/dotfiles/`) | `6` | OK (files=1, tokens~685) |
+| `context-init` | Плоская (`.context-init/knowledge/`) | `31` | ✅ OK |
+| `ai-dotfiles` | Вложенная (`.context-init/knowledge/dotfiles/`) | `2` | OK (files=2, tokens~159) |
+
+## 🚦 5. Гейт v0.3 (context-audit)
+
+| Метрика | Значение | Порог |
+| :--- | :--- | :--- |
+| Холодный старт MCP | `1.32 ms` | `< 50 ms` |
+| Fallback `RoleRouter` (avg) | `0.005 ms` | `< 5 ms` |
+| Соблюдение `max_response_tokens` (256) | `100%` (4 вызовов) | `100%` |
 
 ## 🎯 Заключение и вердикт регрессионного контроля
 

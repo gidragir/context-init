@@ -757,7 +757,10 @@ fn workspace_task_runner_and_packaging_metadata_invariants() {
         .parse()
         .expect("mise.toml is valid TOML");
     for task in ["build", "test", "lint", "fmt", "check", "dist", "audit"] {
-        assert!(mise["tasks"].get(task).is_some(), "missing mise task {task}");
+        assert!(
+            mise["tasks"].get(task).is_some(),
+            "missing mise task {task}"
+        );
     }
     let lefthook = fs::read_to_string(root.join("lefthook.yml")).unwrap();
     assert!(!lefthook.contains("sync-binary"), "{lefthook}");
