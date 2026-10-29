@@ -744,7 +744,6 @@ fn detector_honors_gitignore_scope_and_symlinks() {
         .as_nanos();
     let base = std::env::temp_dir().join(format!("det_scope_{}_{nanos}", std::process::id()));
     let root = base.join("proj");
-    let outside = base.join("outside");
     for (rel, text) in [
         ("proj/.gitignore", "generated/\n"),
         ("proj/src/api/mod.rs", "pub fn api() {}\n"),
@@ -757,7 +756,7 @@ fn detector_honors_gitignore_scope_and_symlinks() {
         fs::write(p, text).unwrap();
     }
     #[cfg(unix)]
-    std::os::unix::fs::symlink(outside.join("leak"), root.join("linked")).unwrap();
+    std::os::unix::fs::symlink(base.join("outside/leak"), root.join("linked")).unwrap();
 
     let analysis = analyze_project(&root, false, false).unwrap();
     let ids: Vec<&str> = analysis
