@@ -776,7 +776,7 @@ fn discover_subsystems(
                         .strip_prefix(root)
                         .unwrap_or(&file_path)
                         .to_string_lossy()
-                        .to_string();
+                        .replace('\\', "/");
                     let is_ep = is_file_entrypoint(&format!(
                         "{}.{}",
                         stem,
@@ -859,7 +859,7 @@ fn discover_subsystems(
             .strip_prefix(root)
             .unwrap_or(&dir)
             .to_string_lossy()
-            .to_string();
+            .replace('\\', "/");
         let module_name = dir
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -1180,7 +1180,8 @@ impl SplitContext<'_> {
                         let rel = file
                             .strip_prefix(self.root)
                             .unwrap_or(file)
-                            .to_string_lossy();
+                            .to_string_lossy()
+                            .replace('\\', "/");
                         let files: Vec<SubsystemFile> = child
                             .files
                             .iter()
@@ -1248,7 +1249,7 @@ impl SplitContext<'_> {
                 .strip_prefix(self.root)
                 .unwrap_or(path)
                 .to_string_lossy()
-                .to_string(),
+                .replace('\\', "/"),
             name: name.to_string(),
             files,
             entrypoints,
@@ -1303,7 +1304,7 @@ fn subsystem_file(path: &Path, name: &str, root: &Path) -> Option<SubsystemFile>
             .strip_prefix(root)
             .unwrap_or(path)
             .to_string_lossy()
-            .to_string(),
+            .replace('\\', "/"),
         is_entrypoint: is_file_entrypoint(name),
         lines: count_lines(path),
     })

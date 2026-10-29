@@ -85,7 +85,7 @@ pub fn pack_subsystem(
                     .strip_prefix(root)
                     .unwrap_or(&card)
                     .to_string_lossy()
-                    .into_owned();
+                    .replace('\\', "/");
                 if !files.contains(&path) {
                     files.push(path);
                 }
