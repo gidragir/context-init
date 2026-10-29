@@ -693,3 +693,33 @@ fn cli_migrate_dry_run_writes_nothing() {
     assert!(central_indexes(&sb.data_home()).is_empty());
     assert!(!sb.project().join(".context-init.toml").exists());
 }
+
+#[test]
+fn cli_init_rejects_unknown_model_alias() {
+    let sb = Sandbox::new("bad_model");
+    sb.write_fixture();
+    let out = sb.run(&["init", ".", "--model", "nosuch"]);
+    assert!(!out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(
+        stderr(&out).contains("Unknown model alias 'nosuch'"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn cli_agents_md_contains_rtk_fallback_commands() {
+    let sb = Sandbox::new("agents_rtk");
+    sb.write_fixture();
+    let out = sb.run(&["init", ".", "--compact"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let agents = fs::read_to_string(sb.project().join("AGENTS.md")).unwrap();
+    assert!(
+        agents.contains("rtk context-init pack <subsystem_id> --compress"),
+        "{agents}"
+    );
+    assert!(
+        agents.contains("rtk context-init check --compact"),
+        "{agents}"
+    );
+}

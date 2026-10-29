@@ -6,7 +6,6 @@ use colored::Colorize;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use ci_core::analysis::{detector, generator};
 use ci_mcp::pipeline;
 
 use super::{output, GlobalArgs};
@@ -23,27 +22,17 @@ pub struct CheckArgs {
 
 pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode> {
     let project = global.load_project(&args.path, None)?;
-    if let Some(hint) = pipeline::storage_mismatch_hint(&project) {
-        output::notice(&hint);
-    }
-    let analysis = detector::analyze_project_with(
-        &project.root,
-        &detector::AnalyzeOptions {
-            deep: false,
-            with_rtk: false,
-            split_threshold_tokens: project.config.split_threshold_tokens,
-        },
-    )?;
-    let report = generator::audit(&analysis, &project.knowledge_dir)?;
-    let has_drift = !report.missing_in_fs.is_empty() || !report.untracked_in_knowledge.is_empty();
+    let report = pipeline::run_check(&project)?;
+    let has_drift = report.has_drift;
 
     if global.compact {
         if has_drift {
             println!(
-                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}]",
+                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}], git_stale={}",
                 report.up_to_date_count,
                 report.missing_in_fs.join(", "),
-                report.untracked_in_knowledge.join(", ")
+                report.untracked_in_knowledge.join(", "),
+                report.git_stale
             );
         } else {
             println!("OK: {} subsystems up-to-date", report.up_to_date_count);
@@ -66,6 +55,13 @@ pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode> {
                 println!("      - {}", u.yellow());
             }
             println!("\nRun `context-init update` to sync them.");
+        }
+        if !report.stale_subsystems.is_empty() {
+            println!("   ! Cards older than their sources in Git:");
+            for st in &report.stale_subsystems {
+                println!("      - {}", st.yellow());
+            }
+            println!("\nRun `context-init update` to refresh them.");
         }
         if !has_drift {
             println!(

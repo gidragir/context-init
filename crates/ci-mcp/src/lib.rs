@@ -513,6 +513,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn check_drift_errors_on_missing_index_with_mismatch_hint() {
+        let tmp = TempDirGuard::new("check_no_kb");
+        write_fixture(tmp.path());
+        let project = ResolvedProject::load(tmp.path().to_path_buf()).unwrap();
+        let err = ContextHandler::check_drift(&project, None).unwrap_err();
+        assert!(
+            err.to_string().contains("Knowledge base not found"),
+            "{err}"
+        );
+
+        // Base exists under the other storage mode: the error carries the migrate hint.
+        let other = project.knowledge_dir_for(ci_core::config::StorageMode::Central);
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("L0_index.json"), "{}").unwrap();
+        let err = ContextHandler::check_drift(&project, None).unwrap_err();
+        assert!(err.to_string().contains("migrate --to"), "{err}");
+        let _ = fs::remove_dir_all(&other);
+    }
+
     #[tokio::test]
     async fn init_update_replies_have_footer_when_paged() {
         let tmp = TempDirGuard::new("init_paged");

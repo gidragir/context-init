@@ -572,7 +572,7 @@ fn update_or_create_root_agents_md(
 2. `context_get_subsystem(subsystem_id)` — компактная L1-карточка подсистемы.\n\
 3. `context_pack(subsystem_id, compress=true)` — AST-сжатый код подсистемы.\n\
 4. `context_check` — проверка архитектурного дрейфа перед сдачей задачи.\n\n\
-Без доступа к MCP (субагенты, скрипты): `context-init pack <subsystem_id> --compress` и `context-init check --compact`.\n\n\
+Без доступа к MCP (субагенты, скрипты): `rtk context-init pack <subsystem_id> --compress` и `rtk context-init check --compact`.\n\n\
 ### 📦 Доступные подсистемы:\n",
         section_header, project_name, storage_note
     );

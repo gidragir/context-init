@@ -171,37 +171,14 @@ pub struct ContextHandler;
 impl ContextHandler {
     /// Handler for `context_check`.
     pub fn check_drift(project: &ResolvedProject, cursor: Option<&str>) -> Result<String> {
-        let (has_drift, missing_in_fs, untracked_in_knowledge, up_to_date_count, git_stale) = match (
-            project.load_l0_index(),
-            detector::analyze_project_with(
-                &project.root,
-                &detector::AnalyzeOptions {
-                    deep: false,
-                    with_rtk: false,
-                    split_threshold_tokens: project.config.split_threshold_tokens,
-                },
-            ),
-        ) {
-            (Ok(index), Ok(analysis)) => {
-                let report = generator::audit(&analysis, &project.knowledge_dir)?;
-                let stale_count = index
-                    .subsystems
-                    .iter()
-                    .filter(|s| project.check_subsystem_staleness(s).0)
-                    .count();
-                let drift = !report.missing_in_fs.is_empty()
-                    || !report.untracked_in_knowledge.is_empty()
-                    || stale_count > 0;
-                (
-                    drift,
-                    report.missing_in_fs,
-                    report.untracked_in_knowledge,
-                    report.up_to_date_count.saturating_sub(stale_count),
-                    stale_count > 0,
-                )
-            }
-            _ => (true, Vec::new(), Vec::new(), 0, false),
-        };
+        let pipeline::FullDriftReport {
+            has_drift,
+            missing_in_fs,
+            untracked_in_knowledge,
+            up_to_date_count,
+            git_stale,
+            ..
+        } = pipeline::run_check(project)?;
 
         let message = if !has_drift {
             format!("OK: {} subsystems verified up-to-date", up_to_date_count)

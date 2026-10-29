@@ -71,11 +71,13 @@ impl GlobalArgs {
 
     /// Loads the project at `path` with the full configuration cascade.
     pub fn load_project(&self, path: &Path, rtk: Option<RtkMode>) -> Result<ResolvedProject> {
-        ResolvedProject::load_with(
+        let project = ResolvedProject::load_with(
             path.to_path_buf(),
             &self.overrides(rtk)?,
             self.config.as_deref(),
-        )
+        )?;
+        ci_mcp::pipeline::validate_model_override(&project.config, self.model.as_deref())?;
+        Ok(project)
     }
 }
 
