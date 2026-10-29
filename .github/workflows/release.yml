@@ -106,18 +106,3 @@ jobs:
           git add context-init.json
           git commit -m "context-init ${GITHUB_REF_NAME}" || exit 0
           git push
-
-  crates-io:
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Publish workspace crates
-        run: |
-          cargo publish -p ci-core --locked || true
-          cargo publish -p ci-llm --locked || true
-          cargo publish -p ci-mcp --locked || true
-          cargo publish -p context-init --locked || true
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

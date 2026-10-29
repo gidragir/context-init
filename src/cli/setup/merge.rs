@@ -182,6 +182,9 @@ impl PlannedWrite {
 /// leaves a half-written config. Permissions of an existing `path` are kept.
 pub fn atomic_write_str(path: &Path, content: &str) -> Result<()> {
     use std::io::Write;
+    // Write through a symlinked config (e.g. managed by GNU Stow) instead of replacing the link.
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = resolved.as_path();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -420,6 +423,24 @@ mod tests {
         );
         let leftovers = fs::read_dir(&dir).unwrap().flatten().count();
         assert_eq!(leftovers, 1, "temp file must be renamed away");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_str_writes_through_symlink() {
+        let dir = std::env::temp_dir().join(format!("ci_atomic_link_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("real.json");
+        let link = dir.join("link.json");
+        fs::write(&target, "old").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        atomic_write_str(&link, "new").unwrap();
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         let _ = fs::remove_dir_all(&dir);
     }
 }

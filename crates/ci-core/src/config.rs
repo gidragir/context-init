@@ -579,7 +579,12 @@ impl RolesConfig {
 
     /// Overrides all roles to use a single model alias (`--model <alias>`).
     pub fn set_all(&mut self, alias: &str) {
-        let chain = vec![alias.trim().to_string()];
+        let chain: Vec<String> = alias
+            .split(',')
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .map(str::to_string)
+            .collect();
         self.init.clone_from(&chain);
         self.update.clone_from(&chain);
         self.task.clone_from(&chain);

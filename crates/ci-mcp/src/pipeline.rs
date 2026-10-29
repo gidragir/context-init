@@ -142,7 +142,8 @@ pub fn validate_model_override(config: &Config, model_override: Option<&str>) ->
     let Some(ovr) = model_override else {
         return Ok(());
     };
-    for alias in ovr.split(',').map(str::trim) {
+    // Empty elements are skipped, exactly like `RoleRouter::resolve_chain`.
+    for alias in ovr.split(',').map(str::trim).filter(|a| !a.is_empty()) {
         if !(alias.eq_ignore_ascii_case(ROLE_NONE) || config.models.contains_key(alias)) {
             bail!("Unknown model alias '{}' in --model override", alias);
         }
@@ -198,4 +199,34 @@ fn analyze(
         opts.model_override,
     );
     Ok((analysis, subsystems, enrich))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ci_core::config::{ModelConfig, ModelKind};
+
+    fn cfg_with(alias: &str) -> Config {
+        let mut c = Config::default();
+        c.models.insert(
+            alias.to_string(),
+            ModelConfig {
+                kind: ModelKind::Agent,
+                model: None,
+                endpoint: None,
+                command: None,
+                timeout_ms: None,
+                max_input_tokens: None,
+            },
+        );
+        c
+    }
+
+    #[test]
+    fn model_override_ignores_empty_elements_like_the_router() {
+        let c = cfg_with("a");
+        assert!(validate_model_override(&c, Some("a,")).is_ok());
+        assert!(validate_model_override(&c, Some("a, none")).is_ok());
+        assert!(validate_model_override(&c, Some("a,typo")).is_err());
+    }
 }
