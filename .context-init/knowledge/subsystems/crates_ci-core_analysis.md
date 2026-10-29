@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/analysis
 source:
   kind: git
-  blob_sha: b1cee54dc3ec2bbdd8ebe9304ca7d2fbbf06734b
-  commit_sha: 6ef401530ecaf2a5ec6c1476e8b34c2cdb8a29d7
+  blob_sha: eb04fc3255ca89cb1643e7431b3b2d7388efde15
+  commit_sha: 1727f5aedb34b29bd1ead5d44dd9c3398d8d4dba
 generated_by:
   component: context-init
   role: update
