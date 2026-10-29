@@ -111,12 +111,14 @@ async fn instrumented<F>(&self, tool: &'static str, f: F) -> Result<String, rmcp
 `SubsystemInfo` (L0 schema v4) получает:
 
 ```rust
-pub summary_source: SummarySource,      // heuristic | llm | agent
+pub summary_source: SummarySource,      // heuristic | llm | agent | manual
 pub summary_model: Option<String>,      // alias модели
 pub needs_review: bool,                 // набор файлов изменился после не-эвристической сводки
 ```
 
-Слияние в `update`: сводка с `summary_source ≠ heuristic` детектором не перезаписывается; если набор файлов подсистемы изменился — `needs_review = true`. Миграция v3 → v4: все сводки → `heuristic`, `needs_review = false`.
+Слияние в `update`: сводка с `summary_source ≠ heuristic` детектором не перезаписывается; если набор файлов подсистемы изменился — `needs_review = true`. Миграция v3 → v4: сводка, начинающаяся с `GENERATED_SUMMARY_PREFIXES`, → `heuristic`, иначе → `manual` (ручную правку нельзя затирать); `needs_review = false`.
+
+Причина дефекта №2 (уточнено при планировании): `generator::update` считает карточку ручной, если она не совпадает с рендером из *текущего* индекса; после `submit` индекс уже содержит новую сводку, карточка на диске — старую, и карточка замораживается навсегда. Поэтому применение сводок (`apply_summaries`) проверяет «нетронутость» карточки против рендера *до* слияния.
 
 ### B2. Единая точка рендера
 
