@@ -2,8 +2,8 @@
 directory: tests/cli.rs
 source:
   kind: git
-  blob_sha: 6f9c05d8c81d981ec34404d2463c8e029aa70786
-  commit_sha: 1727f5aedb34b29bd1ead5d44dd9c3398d8d4dba
+  blob_sha: 4f3ea47bc7c24af1ee58ef883fa8dc936e7a0837
+  commit_sha: 9048360bdc3d59b7d897b5cfe7eea7df1cd818a8
 generated_by:
   component: context-init
   role: update

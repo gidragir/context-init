@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/analysis/detector.rs
 source:
   kind: git
-  blob_sha: 9b802423c0c493e9cd8b76796f195f34f70e74ee
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  blob_sha: f549ac7cf0925c2fac31ac71e7ae888e388c9443
+  commit_sha: 9048360bdc3d59b7d897b5cfe7eea7df1cd818a8
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1

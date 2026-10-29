@@ -2,8 +2,8 @@
 directory: crates/ci-mcp
 source:
   kind: git
-  blob_sha: 3771c2dd58a8cfe9a3f4864b9ed220322ca24b3f
-  commit_sha: 6ef401530ecaf2a5ec6c1476e8b34c2cdb8a29d7
+  blob_sha: 91c3a42511050390d85e8d416301a8b0fce6694d
+  commit_sha: 9048360bdc3d59b7d897b5cfe7eea7df1cd818a8
 generated_by:
   component: context-init
   role: update

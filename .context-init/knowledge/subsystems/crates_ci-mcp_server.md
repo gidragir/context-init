@@ -2,8 +2,8 @@
 directory: crates/ci-mcp/src/server.rs
 source:
   kind: git
-  blob_sha: 03e89a3a0c5922563c6e8324a9d15f8e5a2109fe
-  commit_sha: 14efb361ef43dd6f73ad66906402e36beb29aa4a
+  blob_sha: 6bf6ccd7e20a1a9b83b76c2d581bf6ff1976e7d6
+  commit_sha: 9048360bdc3d59b7d897b5cfe7eea7df1cd818a8
 generated_by:
   component: context-init
   role: update
