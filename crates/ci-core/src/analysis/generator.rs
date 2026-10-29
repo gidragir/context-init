@@ -151,6 +151,16 @@ fn same_card(disk: &str, fresh: &str) -> bool {
     }
 }
 
+/// Whether Git reports the card's directory changed since its recorded commit.
+fn is_git_stale(disk: &str, root: &Path) -> bool {
+    OkfCard::parse(disk)
+        .ok()
+        .and_then(|card| {
+            crate::git::check_card_staleness(&SystemGitBackend::new(), root, &card).ok()
+        })
+        .is_some_and(|report| report.stale)
+}
+
 /// Whether the card on disk is untouched generator output for `expected_body` (legacy cards
 /// without frontmatter are compared whole).
 fn is_pristine_card(disk: &str, expected_body: &str) -> bool {
@@ -482,7 +492,13 @@ pub fn update(
         if owned {
             let fresh = render_card_for(sub, analysis, "update");
             let content = match fs::read_to_string(&card) {
-                Ok(disk) if same_card(&disk, &fresh) => disk,
+                // An equal card is kept only while Git agrees it is current: sources committed
+                // since `commit_sha` need a restamp even when the blob matches.
+                Ok(disk)
+                    if same_card(&disk, &fresh) && !is_git_stale(&disk, &analysis.root_dir) =>
+                {
+                    disk
+                }
                 _ => fresh,
             };
             rendered.push((card, content));
@@ -1391,6 +1407,9 @@ mod tests {
             "pub fn run_api() -> u32 {\n    41\n}\n",
         )
         .unwrap();
+        // `update` on the dirty tree first (blob already describes the edit), then commit.
+        let (analysis, subs) = deterministic(&root);
+        update(&analysis, &subs, &kd, None).unwrap();
         git(&root, &["commit", "-q", "-am", "edit api"]);
         let (analysis, subs) = deterministic(&root);
         update(&analysis, &subs, &kd, None).unwrap();
