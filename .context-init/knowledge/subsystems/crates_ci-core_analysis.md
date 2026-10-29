@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis
 source:
   kind: git
   blob_sha: 032f40c8d9ac8143b23008a6d914116c03138a60
-  commit_sha: 9048360bdc3d59b7d897b5cfe7eea7df1cd818a8
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 7
@@ -44,8 +44,23 @@ pub fn scan_project(root: &Path, scope: &ScopeConfig) -> Result<ScanReport>
 pub fn render_scan_markdown(project_id: &str, root: &Path, report: &ScanReport) -> String
 pub fn validate_scope(scope: &ScopeConfig) -> Result<()>
 pub struct ScopeFilter
+pub fn build(root: &Path, scope: &ScopeConfig) -> Result<Self>
+pub fn files(&self) -> &[String]
+pub fn allows_file(&self, path: &Path) -> bool
+pub fn allows_dir(&self, path: &Path) -> bool
 pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo>
 pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 3] = ["Подсистема `", "Модуль и компоненты директории `", "Модуль-файл `", ]
+pub fn subsystem_tokens(root_dir: &Path, sub: &SubsystemInfo) -> usize
+pub struct TaskDigestRequest<'a>
+pub fn build_task_digest(root: &Path, git: &dyn GitBackend, index: Option<&L0Index>, req: &TaskDigestRequest, ) -> Result<String>
+pub struct DiscoveredModule
+pub struct ProjectAnalysis
+pub struct McpCheckResult
+pub struct WorkspaceRepo
+pub struct CrossLink
+pub struct WorkspaceReport
+pub fn analyze_workspace(workspace_root: &Path, git: &dyn GitBackend) -> Result<WorkspaceReport>
+pub fn render_workspace_l0(report: &WorkspaceReport) -> String
 ```
 
 ## 🧪 Запуск и тестирование

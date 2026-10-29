@@ -3,10 +3,10 @@ directory: crates/ci-mcp
 source:
   kind: git
   blob_sha: 91c3a42511050390d85e8d416301a8b0fce6694d
-  commit_sha: 9048360bdc3d59b7d897b5cfe7eea7df1cd818a8
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 3
@@ -42,6 +42,13 @@ pub struct McpPackParams
 pub struct McpSubmitParams
 pub struct SubmitResult
 pub struct McpFeedbackParams
+pub struct FeedbackResult
+pub struct McpInitParams
+pub struct McpUpdateParams
+pub struct McpScanParams
+pub struct McpWorkspaceParams
+pub struct McpTaskParams
+pub struct McpSearchParams
 ```
 
 ## 🧪 Запуск и тестирование

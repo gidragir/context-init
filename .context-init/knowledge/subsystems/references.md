@@ -3,7 +3,7 @@ directory: references/openviking_spec.md
 source:
   kind: git
   blob_sha: 67a69204fe4988fdf1f396cf27e7264779586bd6
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
   role: init

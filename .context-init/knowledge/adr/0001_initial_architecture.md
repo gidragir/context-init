@@ -9,12 +9,14 @@
 
 ## Архитектурные границы подсистем
 - **Ci Core** (`crates_ci-core`): Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs
-- **Ci Core Analysis** (`crates_ci-core_analysis`): Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs, crates/ci-core/src/analysis/mod.rs
+- **Ci Core Analysis** (`crates_ci-core_analysis`): Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs
 - **Ci Core Analysis Detector** (`crates_ci-core_analysis_detector`): Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (1 файлов)
 - **Ci Core Analysis Detector Tests** (`crates_ci-core_analysis_detector_tests`): Модуль-файл `crates/ci-core/src/analysis/detector/tests.rs`
 - **Ci Core Analysis Generator** (`crates_ci-core_analysis_generator`): Модуль-файл `crates/ci-core/src/analysis/generator.rs`
+- **Ci Core Analysis Lang** (`crates_ci-core_analysis_lang`): Подсистема `crates/ci-core/src/analysis/lang` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs
 - **Ci Core Analysis Pack** (`crates_ci-core_analysis_pack`): Модуль-файл `crates/ci-core/src/analysis/pack.rs`
 - **Ci Core Config** (`crates_ci-core_config`): Модуль-файл `crates/ci-core/src/config.rs`
+- **Ci Core Git** (`crates_ci-core_git`): Модуль-файл `crates/ci-core/src/git.rs`
 - **Ci Core Openviking** (`crates_ci-core_openviking`): Модуль-файл `crates/ci-core/src/openviking.rs`
 - **Ci Core Storage** (`crates_ci-core_storage`): Модуль-файл `crates/ci-core/src/storage.rs`
 - **Ci Core Telemetry** (`crates_ci-core_telemetry`): Модуль-файл `crates/ci-core/src/telemetry.rs`

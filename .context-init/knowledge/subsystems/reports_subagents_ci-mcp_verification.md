@@ -3,7 +3,7 @@ directory: reports/subagents/ci-mcp_verification.md
 source:
   kind: git
   blob_sha: 99baa06870b00cbb2bd7007d2be1a1ba15bc48e9
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
   role: init

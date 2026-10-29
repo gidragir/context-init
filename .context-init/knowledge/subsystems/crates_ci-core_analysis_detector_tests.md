@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis/detector/tests.rs
 source:
   kind: git
   blob_sha: 769fa688aa3df7d83534284ec1b98d634c1060ec
-  commit_sha: 9048360bdc3d59b7d897b5cfe7eea7df1cd818a8
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -33,6 +33,9 @@ freshness:
 pub struct Engine<T: Clone>
 pub enum Status
 pub async fn run_task<T>(id: &str, payload: T) -> Result<Status, Error>
+pub trait Service
+pub struct MyService
+pub fn new() -> Self
 ```
 
 ## 🧪 Запуск и тестирование

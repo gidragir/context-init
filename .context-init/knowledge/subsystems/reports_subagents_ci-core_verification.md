@@ -3,7 +3,7 @@ directory: reports/subagents/ci-core_verification.md
 source:
   kind: git
   blob_sha: c63d4fc692cdbe774972e4a98de388778506293b
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
   role: init

@@ -3,7 +3,7 @@ directory: reports/subagents/context-init_verification.md
 source:
   kind: git
   blob_sha: c9d8065ff7f598c362b020e4d09de8eeb86b988f
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
   role: init

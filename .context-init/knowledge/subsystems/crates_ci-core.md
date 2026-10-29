@@ -3,10 +3,10 @@ directory: crates/ci-core
 source:
   kind: git
   blob_sha: 2fb923dfe17712ded8c47790a74fb8bccc0827ff
-  commit_sha: 9048360bdc3d59b7d897b5cfe7eea7df1cd818a8
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 3
@@ -36,7 +36,9 @@ pub const VERSION: &str = env !("CARGO_PKG_VERSION")
 pub fn crate_info() -> &'static str
 pub struct SearchHit
 pub trait Retriever
+fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>>
 pub struct Bm25Retriever
+pub fn build(index: &L0Index, knowledge_dir: &Path) -> Result<Self>
 ```
 
 ## 🧪 Запуск и тестирование

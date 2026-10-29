@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis/detector.rs
 source:
   kind: git
   blob_sha: f549ac7cf0925c2fac31ac71e7ae888e388c9443
-  commit_sha: 9048360bdc3d59b7d897b5cfe7eea7df1cd818a8
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -40,6 +40,7 @@ pub fn is_ignored_path(path: &Path, root: &Path) -> bool
 pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String>
 pub fn extract_multiline_symbols(content: &str, ext: &str, deep: bool) -> Vec<String>
 pub fn clean_symbol_line(line: &str) -> String
+pub fn sanitize_symbol(raw: &str) -> Option<String>
 ```
 
 ## 🧪 Запуск и тестирование

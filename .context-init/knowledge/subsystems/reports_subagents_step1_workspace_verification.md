@@ -3,7 +3,7 @@ directory: reports/subagents/step1_workspace_verification.md
 source:
   kind: git
   blob_sha: 606ba803f435bf5f58ef22b643fd95a0b62ae261
-  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
 generated_by:
   component: context-init
   role: init
