@@ -789,7 +789,9 @@ impl ContextHandler {
         let mut hits = retriever.search(query, top_k)?;
         let chain = &project.config.roles.search;
         let llm_enabled = !(chain.len() == 1 && chain[0].trim().eq_ignore_ascii_case(ROLE_NONE));
-        if llm_enabled && hits.len() > 1 {
+        // Only the first page is reranked: a model may order differently per call, which would
+        // duplicate or skip results across pages.
+        if llm_enabled && cursor.is_none() && hits.len() > 1 {
             if let Some(order) = rerank_with_llm(router, query, &hits) {
                 hits.sort_by_key(|h| {
                     order

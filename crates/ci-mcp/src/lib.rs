@@ -777,8 +777,6 @@ mod tests {
             .await;
         project.config.roles.search = vec!["scripted".to_string()];
 
-        let plain = ci_llm::RoleRouter::new(project.config.clone(), None);
-        let _ = plain;
         let first_id = |text: &str| -> String {
             text.lines()
                 .find_map(|l| l.strip_prefix("### `"))
@@ -813,6 +811,10 @@ mod tests {
         let router = search_router(&project, Some(&reply));
         let reranked = ContextHandler::search(&project, "run", None, &router).unwrap();
         assert_eq!(first_id(&reranked), promoted, "{reranked}");
+
+        // Later pages keep the BM25 order: no LLM call, so paging stays consistent.
+        let paged = ContextHandler::search(&project, "run", Some("zz"), &router).unwrap();
+        assert_ne!(first_id(&paged), promoted, "{paged}");
 
         // A failing or garbage provider falls back to the BM25 order.
         for bad in [None, Some("not json at all")] {

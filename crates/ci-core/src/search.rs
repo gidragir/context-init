@@ -160,6 +160,7 @@ impl Bm25Retriever {
 impl Retriever for Bm25Retriever {
     fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>> {
         let terms = stems(query);
+        let top_k = top_k.min(self.entries.len());
         if terms.is_empty() || top_k == 0 {
             return Ok(Vec::new());
         }
@@ -285,5 +286,7 @@ mod tests {
         );
         assert!(retriever.search("zzzz-unknown", 3).unwrap().is_empty());
         assert!(retriever.search("   ", 3).unwrap().is_empty());
+        // An absurd top_k must neither panic nor over-allocate.
+        assert_eq!(retriever.search("storage", usize::MAX).unwrap().len(), 1);
     }
 }
