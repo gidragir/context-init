@@ -6,7 +6,7 @@ use crate::analysis::detector::count_tokens;
 use crate::analysis::lang::{self, mdo, mdo::MdoObject};
 use crate::git::GitBackend;
 use crate::storage::L0Index;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -41,26 +41,41 @@ fn subsystem_tag(index: Option<&L0Index>, path: &str) -> String {
         .unwrap_or_default()
 }
 
-fn method_map(ext: &str, source: &str) -> BTreeMap<String, String> {
-    lang::adapter_for_ext(ext)
-        .map(|a| a.method_bodies(source).into_iter().collect())
+/// Methods keyed by `(name, occurrence)`, so same-named methods of different impls stay apart.
+fn method_map(ext: &str, source: &str) -> BTreeMap<(String, usize), String> {
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let mut out = BTreeMap::new();
+    for (name, body) in lang::adapter_for_ext(ext)
+        .map(|a| a.method_bodies(source))
         .unwrap_or_default()
+    {
+        let n = seen.entry(name.clone()).or_insert(0);
+        out.insert((name, *n), body);
+        *n += 1;
+    }
+    out
 }
 
 /// Names of methods added, changed (`name`) or removed (`name (removed)`) between two versions.
 fn changed_methods(ext: &str, old: Option<&str>, new: Option<&str>) -> Vec<String> {
     let old = method_map(ext, old.unwrap_or(""));
     let new = method_map(ext, new.unwrap_or(""));
-    let mut out: Vec<String> = new
+    let mut out: Vec<String> = Vec::new();
+    for (name, _) in new
         .iter()
-        .filter(|(n, body)| old.get(*n) != Some(body))
-        .map(|(n, _)| n.clone())
-        .collect();
-    out.extend(
-        old.keys()
-            .filter(|n| !new.contains_key(*n))
-            .map(|n| format!("{n} (removed)")),
-    );
+        .filter(|(k, body)| old.get(*k) != Some(body))
+        .map(|(k, v)| (&k.0, v))
+    {
+        if !out.contains(name) {
+            out.push(name.clone());
+        }
+    }
+    for name in old.keys().filter(|k| !new.contains_key(*k)).map(|k| &k.0) {
+        let label = format!("{name} (removed)");
+        if !out.contains(&label) && !out.contains(name) {
+            out.push(label);
+        }
+    }
     out
 }
 
@@ -96,7 +111,7 @@ fn raw_method(ext: &str, source: &str, name: &str) -> Option<String> {
         }
         return Some(lines[start..].join("\n"));
     }
-    method_map(ext, source).remove(name)
+    method_map(ext, source).remove(&(name.to_string(), 0))
 }
 
 /// `-`/`+` view of two method versions with up to two context lines around the change.
@@ -136,15 +151,33 @@ fn fit_to_budget(text: String, max_tokens: usize) -> String {
         return text;
     }
     let note = "\n… (truncated; narrow down with `target`)\n";
+    let reserve = count_tokens(note);
+    if max_tokens <= reserve {
+        return "…".chars().take(max_tokens).collect();
+    }
+    // Per-line counts are summed (an upper bound), so the result stays within the budget
+    // without re-tokenizing the accumulated text for every line.
     let mut kept = String::new();
+    let mut used = 0;
     for line in text.lines() {
-        let candidate = format!("{kept}{line}\n");
-        if count_tokens(&format!("{candidate}{note}")) > max_tokens {
+        used += count_tokens(line) + 1;
+        if used + reserve > max_tokens {
             break;
         }
-        kept = candidate;
+        kept.push_str(line);
+        kept.push('\n');
     }
     format!("{kept}{note}")
+}
+
+/// Rejects refs that git would parse as options or that carry control characters.
+fn validate_ref(kind: &str, value: &str) -> Result<()> {
+    let v = value.trim();
+    if v.is_empty() || v.starts_with('-') || v.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        bail!("Invalid {kind} '{value}'");
+    }
+    Ok(())
 }
 
 /// Builds the digest of the changes between `base_ref` (default `HEAD~1`, resolved through
@@ -155,8 +188,12 @@ pub fn build_task_digest(
     index: Option<&L0Index>,
     req: &TaskDigestRequest,
 ) -> Result<String> {
-    let head = git.head_commit(root).unwrap_or_default();
     let base_ref = req.base_ref.unwrap_or("HEAD~1");
+    validate_ref("base ref", base_ref)?;
+    if req.target.is_some_and(|t| t.trim().is_empty()) {
+        bail!("target must not be empty");
+    }
+    let head = git.head_commit(root).unwrap_or_default();
     let base = git
         .merge_base(root, base_ref, "HEAD")
         .unwrap_or_else(|_| base_ref.to_string());
@@ -207,11 +244,15 @@ pub fn build_task_digest(
         return Ok(fit_to_budget(out, req.max_tokens));
     }
 
-    let mut out = format!(
+    let mut out = String::new();
+    if head.is_empty() {
+        out.push_str("_Not a Git repository (or no commits yet): no diff available._\n\n");
+    }
+    out.push_str(&format!(
         "# Task Context Digest\n\n- **Base Ref:** `{base_ref}` (merge-base `{}`)\n- **HEAD:** `{head}`\n- **Modified Files:** {}\n\n",
         base.chars().take(12).collect::<String>(),
         changed.len()
-    );
+    ));
     let commits = git
         .log_oneline(root, &base, &head, MAX_COMMITS)
         .unwrap_or_default();
@@ -399,5 +440,82 @@ mod tests {
         let missing = build_task_digest(&root, &git_backend, None, &req("nope")).unwrap();
         assert!(missing.contains("No changed method or object"), "{missing}");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn digest_rejects_option_like_refs_and_non_repos() {
+        let root = repo();
+        let out = std::env::temp_dir().join(format!("pwned_{}", std::process::id()));
+        let evil = format!("--output={}", out.display());
+        let err = build_task_digest(
+            &root,
+            &SystemGitBackend::new(),
+            None,
+            &TaskDigestRequest {
+                paths: &[],
+                base_ref: Some(&evil),
+                target: None,
+                max_tokens: 2000,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("Invalid base ref"), "{err}");
+        assert!(fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .flatten()
+            .all(|e| !e
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&format!("pwned_{}", std::process::id()))));
+
+        let blank = build_task_digest(
+            &root,
+            &SystemGitBackend::new(),
+            None,
+            &TaskDigestRequest {
+                paths: &[],
+                base_ref: Some("main"),
+                target: Some("  "),
+                max_tokens: 2000,
+            },
+        )
+        .unwrap_err();
+        assert!(blank.to_string().contains("target"), "{blank}");
+
+        let plain = std::env::temp_dir().join(format!("plain_{}", std::process::id()));
+        fs::create_dir_all(&plain).unwrap();
+        let no_repo = build_task_digest(
+            &plain,
+            &SystemGitBackend::new(),
+            None,
+            &TaskDigestRequest {
+                paths: &[],
+                base_ref: None,
+                target: None,
+                max_tokens: 2000,
+            },
+        )
+        .unwrap();
+        assert!(no_repo.contains("Not a Git repository"), "{no_repo}");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&plain);
+    }
+
+    #[test]
+    fn same_named_methods_in_different_impls_are_all_compared() {
+        let old = "struct A;\nstruct B;\nimpl A { fn new() -> u32 { 1 } }\nimpl B { fn new() -> u32 { 2 } }\n";
+        let new = "struct A;\nstruct B;\nimpl A { fn new() -> u32 { 1 } }\nimpl B { fn new() -> u32 { 3 } }\n";
+        assert_eq!(changed_methods("rs", Some(old), Some(new)), ["new"]);
+        let new2 = "struct A;\nstruct B;\nimpl A { fn new() -> u32 { 9 } }\nimpl B { fn new() -> u32 { 2 } }\n";
+        assert_eq!(changed_methods("rs", Some(old), Some(new2)), ["new"]);
+    }
+
+    #[test]
+    fn budget_is_a_hard_cap() {
+        let text = (0..200)
+            .map(|i| format!("- line number {i}\n"))
+            .collect::<String>();
+        let fitted = fit_to_budget(text, 5);
+        assert!(count_tokens(&fitted) <= 5, "{fitted}");
     }
 }

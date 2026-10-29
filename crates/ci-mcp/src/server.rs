@@ -91,7 +91,7 @@ impl ContextInitServer {
 
         if let Some(name) = arg_project
             .map(str::trim)
-            .filter(|n| !n.is_empty() && !n.contains(['/', '\\']))
+            .filter(|n| !n.is_empty() && *n != "." && *n != ".." && !n.contains(['/', '\\']))
         {
             if let Some(child) = self.child_repo(name).await {
                 return child;
@@ -142,15 +142,10 @@ impl ContextInitServer {
     }
 
     /// `<workspace>/<name>` for a bare repository name, looked up under the registered roots,
-    /// the default root, and their parents (D6).
+    /// and the default root (D6); never above them.
     async fn child_repo(&self, name: &str) -> Option<PathBuf> {
         let mut bases: Vec<PathBuf> = self.roots.read().await.clone();
         bases.extend(self.default_root.clone());
-        let parents: Vec<PathBuf> = bases
-            .iter()
-            .filter_map(|b| b.parent().map(Path::to_path_buf))
-            .collect();
-        bases.extend(parents);
         bases
             .into_iter()
             .map(|b| b.join(name))
