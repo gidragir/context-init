@@ -2,11 +2,11 @@
   "timestamp": "2026-10-29",
   "drift_metrics": {
     "iterations": 10,
-    "avg_ms": 31.802092799999997,
-    "min_ms": 5.303999999999999,
-    "max_ms": 166.732641,
-    "up_to_date_count": 33,
-    "has_drift": true
+    "avg_ms": 25.582107999999998,
+    "min_ms": 9.806944,
+    "max_ms": 136.150591,
+    "up_to_date_count": 36,
+    "has_drift": false
   },
   "compression_metrics": {
     "file_path": "crates/ci-core/src/analysis/detector.rs",
@@ -15,59 +15,64 @@
     "compressed_bytes": 9381,
     "compressed_tokens": 2663,
     "tokens_saved_percent": 82.88450414551065,
-    "compression_duration_ms": 6.360405
+    "compression_duration_ms": 9.708827
   },
   "mcp_latencies": [
     {
       "tool": "context_init",
-      "latency_ms": 33.21409,
+      "latency_ms": 41.651907,
       "status": "OK"
     },
     {
       "tool": "context_check",
-      "latency_ms": 2.8041139999999998,
+      "latency_ms": 2.94203,
       "status": "OK (0 drift)"
     },
     {
       "tool": "context_get_subsystems",
-      "latency_ms": 2.184255,
+      "latency_ms": 2.405757,
       "status": "OK (1 subsystems)"
     },
     {
       "tool": "context_pack",
-      "latency_ms": 2.3688569999999998,
+      "latency_ms": 2.243857,
       "status": "OK (AST compressed)"
     },
     {
       "tool": "context_update",
-      "latency_ms": 2.681671,
+      "latency_ms": 2.333652,
       "status": "OK (reconciled)"
     }
   ],
   "cross_project": {
-    "context_init_drift": true,
+    "context_init_drift": false,
     "ai_dotfiles_subsystems": 2,
     "ai_dotfiles_drift": false,
     "ai_dotfiles_pack_status": "OK (files=2, tokens~159)"
   },
   "v03": {
-    "mcp_cold_start_ms": 2.880118,
-    "router_fallback_avg_ms": 0.0133178,
+    "mcp_cold_start_ms": 1.774154,
+    "router_fallback_avg_ms": 0.0077234,
     "budget_compliance_percent": 100.0,
-    "budget_calls": 7
+    "budget_calls": 8
   },
   "v04": {
     "bsl_tokens_saved_percent": 99.2621359223301,
     "scan_files": 400,
-    "scan_ms": 27.411216,
-    "stale_check_avg_ms": 3.3718008
+    "scan_ms": 29.15529,
+    "stale_check_avg_ms": 9.947761
   },
   "v05": {
     "raw_diff_tokens": 6670,
-    "digest_tokens": 552,
-    "digest_vs_diff_percent": 8.275862068965518,
+    "digest_tokens": 554,
+    "digest_vs_diff_percent": 8.305847076461768,
     "workspace_repos": 5,
-    "workspace_ms": 42.324994
+    "workspace_ms": 39.773923
+  },
+  "v06": {
+    "queries": 10,
+    "search_avg_ms": 0.2684851,
+    "recall_at_5": 1.0
   },
   "overall_status": "PASSED (NO REGRESSIONS)"
 }

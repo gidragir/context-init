@@ -14,7 +14,7 @@ use ci_mcp::pagination::count_tokens as count_reply_tokens;
 use ci_mcp::pipeline::{self, PipelineOptions};
 use ci_mcp::{
     ContextInitServer, McpCheckParams, McpGetSubsystemParams, McpGetSubsystemsParams,
-    McpInitParams, McpPackParams, McpScanParams, McpTaskParams, McpUpdateParams,
+    McpInitParams, McpPackParams, McpScanParams, McpSearchParams, McpTaskParams, McpUpdateParams,
     McpWorkspaceParams, ResolvedProject,
 };
 
@@ -80,6 +80,13 @@ struct V05Metrics {
 }
 
 #[derive(serde::Serialize, Debug, Clone)]
+struct V06Metrics {
+    queries: usize,
+    search_avg_ms: f64,
+    recall_at_5: f64,
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
 struct BenchmarkReport {
     timestamp: String,
     drift_metrics: DriftMetrics,
@@ -89,6 +96,7 @@ struct BenchmarkReport {
     v03: V03Metrics,
     v04: V04Metrics,
     v05: V05Metrics,
+    v06: V06Metrics,
     overall_status: String,
 }
 
@@ -392,6 +400,8 @@ async fn test_regression_benchmark_and_generate_report() {
     let v04 = measure_v04(&sandbox);
     println!("7/7 v0.5 context-audit gate...");
     let v05 = measure_v05(&sandbox);
+    println!("8/8 v0.6 context-audit gate...");
+    let v06 = measure_v06(&repo_kb);
     let _ = fs::remove_dir_all(&sandbox);
 
     // 8. Reports (written only on request, so test runs keep the tree clean)
@@ -410,6 +420,7 @@ async fn test_regression_benchmark_and_generate_report() {
         v03,
         v04,
         v05,
+        v06,
         overall_status: "PASSED (NO REGRESSIONS)".to_string(),
     };
     let reports_dir = repo_root.join("reports");
@@ -613,7 +624,17 @@ async fn measure_v03(sandbox: &Path, initialized_workspace: &Path) -> V03Metrics
             .await
             .expect("workspace"),
     ));
-    // Later milestones append their tools here (search v0.6).
+    replies.push((
+        "context_search",
+        server
+            .search(Parameters(McpSearchParams {
+                query: "func".to_string(),
+                path: path.clone(),
+                ..McpSearchParams::default()
+            }))
+            .await
+            .expect("search"),
+    ));
     let ok = replies
         .iter()
         .filter(|(tool, text)| {
@@ -652,6 +673,60 @@ fn run_git(root: &Path, args: &[&str]) {
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// Queries (Russian and English) with the subsystem each one must surface in the top 5.
+const SEARCH_GOLD: [(&str, &str); 10] = [
+    ("storage knowledge paths", "crates_ci-core_storage"),
+    ("telemetry signals", "crates_ci-core_telemetry"),
+    ("router fallback providers", "crates_ci-llm_router"),
+    ("mcp server handlers", "crates_ci-mcp_handlers"),
+    ("pagination budget", "crates_ci-mcp_pagination"),
+    ("git staleness", "crates_ci-core_git"),
+    ("benchmark regression", "tests_regression_benchmark"),
+    (
+        "модуль генератор generator",
+        "crates_ci-core_analysis_generator",
+    ),
+    ("модуль конфигурации config", "crates_ci-core_config"),
+    (
+        "verification ci-mcp subagents",
+        "reports_subagents_ci-mcp_verification",
+    ),
+];
+
+fn measure_v06(repo_kb: &Path) -> V06Metrics {
+    use ci_core::search::{Bm25Retriever, Retriever};
+    use ci_core::storage::L0Index;
+
+    let index = L0Index::load_from_file(&repo_kb.join("L0_index.json")).expect("repo L0 index");
+    let retriever = Bm25Retriever::build(&index, repo_kb).expect("build retriever");
+    let mut found = 0;
+    let t = Instant::now();
+    for (query, expected) in SEARCH_GOLD {
+        let hits = retriever.search(query, 5).expect("search");
+        if hits.iter().any(|h| h.subsystem_id == expected) {
+            found += 1;
+        } else {
+            println!(
+                "   MISS: '{query}' -> expected {expected}, got {:?}",
+                hits.iter().map(|h| &h.subsystem_id).collect::<Vec<_>>()
+            );
+        }
+    }
+    let search_avg_ms = t.elapsed().as_secs_f64() * 1000.0 / SEARCH_GOLD.len() as f64;
+    let recall_at_5 = found as f64 / SEARCH_GOLD.len() as f64;
+    println!("   search: avg={search_avg_ms:.2}ms recall@5={recall_at_5:.2}");
+    assert!(
+        search_avg_ms < time_limit(20.0),
+        "search too slow: {search_avg_ms:.2}ms"
+    );
+    assert!(recall_at_5 >= 0.9, "recall@5 regressed: {recall_at_5:.2}");
+    V06Metrics {
+        queries: SEARCH_GOLD.len(),
+        search_avg_ms,
+        recall_at_5,
+    }
 }
 
 fn measure_v05(sandbox: &Path) -> V05Metrics {
@@ -1029,6 +1104,13 @@ fn render_markdown_report(report: &BenchmarkReport) -> String {
         report.v05.digest_vs_diff_percent,
         report.v05.workspace_repos,
         report.v05.workspace_ms
+    ));
+
+    md.push_str("## 🚦 8. Гейт v0.6 (context-audit)\n\n");
+    md.push_str("| Метрика | Значение | Порог |\n| :--- | :--- | :--- |\n");
+    md.push_str(&format!(
+        "| Латентность `Bm25Retriever::search` (avg, {} запросов) | `{:.2} ms` | `< 20 ms` |\n| `recall@5` | `{:.2}` | `>= 0.90` |\n\n",
+        report.v06.queries, report.v06.search_avg_ms, report.v06.recall_at_5
     ));
 
     md.push_str("## 🎯 Заключение и вердикт регрессионного контроля\n\n");
