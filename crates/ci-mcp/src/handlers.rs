@@ -1,12 +1,12 @@
 //! MCP tool execution handlers with token budgeting, Git staleness validation, and telemetry (D14, D19, D21, D29).
 
 use anyhow::{bail, Context, Result};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
 use ci_core::analysis::resolve_knowledge_dir;
+use ci_core::analysis::scan::{render_scan_markdown, scan_project};
 use ci_core::config::{CliOverrides, Config, StorageMode, StoragePaths};
 use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
@@ -600,54 +600,8 @@ impl ContextHandler {
 
     /// Handler for `context_scan` (D9).
     pub fn scan(project: &ResolvedProject, cursor: Option<&str>) -> Result<String> {
-        let mut extensions_map: HashMap<String, (usize, usize)> = HashMap::new();
-        let mut total_files = 0;
-        let mut total_lines = 0;
-
-        let mut walker = vec![project.root.clone()];
-        while let Some(dir) = walker.pop() {
-            if let Ok(entries) = fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') || name == "target" || name == "node_modules" {
-                        continue;
-                    }
-                    if path.is_dir() {
-                        walker.push(path);
-                    } else if path.is_file() {
-                        total_files += 1;
-                        let ext = path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("none")
-                            .to_ascii_lowercase();
-                        let lines = fs::read_to_string(&path)
-                            .map(|c| c.lines().count())
-                            .unwrap_or(0);
-                        total_lines += lines;
-                        let entry = extensions_map.entry(ext).or_insert((0, 0));
-                        entry.0 += 1;
-                        entry.1 += lines;
-                    }
-                }
-            }
-        }
-
-        let mut scan_out = format!(
-            "# Project Scan: {}\n\n- **Root:** `{}`\n- **Total Files:** {}\n- **Total Lines:** {}\n\n## Extensions Breakdown\n",
-            project.project_id,
-            project.root.display(),
-            total_files,
-            total_lines
-        );
-
-        let mut sorted_exts: Vec<_> = extensions_map.into_iter().collect();
-        sorted_exts.sort_by_key(|b| std::cmp::Reverse(b.1 .1));
-        for (ext, (files, lines)) in sorted_exts {
-            scan_out.push_str(&format!("- `.{}`: {} files, {} lines\n", ext, files, lines));
-        }
-
+        let report = scan_project(&project.root, &project.config.scope)?;
+        let scan_out = render_scan_markdown(&project.project_id, &project.root, &report);
         let paginated =
             paginate_content(&scan_out, cursor, project.config.max_response_tokens, false);
         Ok(paginated.rendered)

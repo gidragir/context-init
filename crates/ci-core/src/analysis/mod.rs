@@ -4,6 +4,8 @@
 pub mod detector;
 pub mod generator;
 pub mod pack;
+pub mod scan;
+pub mod scope;
 pub mod subsystems;
 pub mod types;
 

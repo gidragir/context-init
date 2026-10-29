@@ -14,7 +14,7 @@ use ci_mcp::pagination::count_tokens as count_reply_tokens;
 use ci_mcp::pipeline::{self, PipelineOptions};
 use ci_mcp::{
     ContextInitServer, McpCheckParams, McpGetSubsystemParams, McpGetSubsystemsParams,
-    McpInitParams, McpPackParams, McpUpdateParams, ResolvedProject,
+    McpInitParams, McpPackParams, McpScanParams, McpUpdateParams, ResolvedProject,
 };
 
 #[derive(serde::Serialize, Debug, Clone)]
@@ -557,7 +557,17 @@ async fn measure_v03(sandbox: &Path, initialized_workspace: &Path) -> V03Metrics
             .await
             .expect("check"),
     ));
-    // Later milestones append their tools here (scan v0.4, task v0.5, workspace v0.5, search v0.6).
+    replies.push((
+        "context_scan",
+        server
+            .scan(Parameters(McpScanParams {
+                path: path.clone(),
+                ..McpScanParams::default()
+            }))
+            .await
+            .expect("scan"),
+    ));
+    // Later milestones append their tools here (task v0.5, workspace v0.5, search v0.6).
     let ok = replies
         .iter()
         .filter(|(tool, text)| {

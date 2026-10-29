@@ -818,3 +818,49 @@ fn ci_and_release_configuration_files_exist_and_cover_d26_d27() {
         assert!(root.join(".github/workflows").join(wf).is_file(), "{wf}");
     }
 }
+
+#[test]
+fn cli_init_with_scope_flags_persists_scope_and_filters_subsystems() {
+    let sb = Sandbox::new("scope_flags");
+    sb.write_fixture();
+    let root = sb.project();
+    for (rel, text) in [
+        ("crates/ci-core/src/lib.rs", "pub fn core() {}\n"),
+        ("crates/ci-core/tests/it.rs", "fn it() {}\n"),
+        ("crates/other/src/lib.rs", "pub fn other() {}\n"),
+    ] {
+        let p = root.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+    }
+    let out = sb.run(&[
+        "init",
+        ".",
+        "--compact",
+        "--include",
+        "crates/ci-core/**",
+        "--exclude",
+        "**/tests/**",
+        "--ext",
+        "rs",
+    ]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let toml = fs::read_to_string(root.join(".context-init.toml")).unwrap();
+    assert!(
+        toml.contains("[scope]") && toml.contains("crates/ci-core/**"),
+        "{toml}"
+    );
+    let index = fs::read_to_string(root.join(".context-init/knowledge/L0_index.json")).unwrap();
+    assert!(index.contains("crates/ci-core/src/lib.rs"), "{index}");
+    for forbidden in ["crates/other", "src/api", "tests/it.rs"] {
+        assert!(
+            !index.contains(forbidden),
+            "{forbidden} leaked into {index}"
+        );
+    }
+
+    let scan = sb.run(&["scan", ".", "--json"]);
+    assert!(scan.status.success(), "{}{}", stdout(&scan), stderr(&scan));
+    let report: serde_json::Value = serde_json::from_str(&stdout(&scan)).unwrap();
+    assert_eq!(report["total_files"], 1, "{report}");
+}

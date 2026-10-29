@@ -1,6 +1,6 @@
 //! `init` and `update`: the shared detect → enrich → generate pipeline.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 use colored::Colorize;
 use std::path::PathBuf;
@@ -50,6 +50,15 @@ pub struct InitArgs {
     /// Do not create or update the navigation section in the repo's AGENTS.md
     #[arg(long)]
     pub no_agents_md: bool,
+    /// Only look at files matching this glob (repeatable); saved to `[scope]`
+    #[arg(long, value_name = "GLOB")]
+    pub include: Vec<String>,
+    /// Skip files matching this glob (repeatable); saved to `[scope]`
+    #[arg(long, value_name = "GLOB")]
+    pub exclude: Vec<String>,
+    /// Only look at files with this extension (repeatable); saved to `[scope]`
+    #[arg(long, value_name = "EXT")]
+    pub ext: Vec<String>,
     #[command(flatten)]
     pub rtk: RtkArgs,
 }
@@ -62,6 +71,9 @@ impl Default for InitArgs {
             dry_run: false,
             deep: false,
             no_agents_md: false,
+            include: Vec::new(),
+            exclude: Vec::new(),
+            ext: Vec::new(),
             rtk: RtkArgs::default(),
         }
     }
@@ -82,8 +94,56 @@ pub struct UpdateArgs {
     pub rtk: RtkArgs,
 }
 
+/// Applies `--include/--exclude/--ext` to the project's scope and persists them as `[scope]` in
+/// `<root>/.context-init.toml` (not on `--dry-run`), so `update`, `pack` and `scan` agree.
+fn apply_scope_flags(project: &mut ci_mcp::ResolvedProject, args: &InitArgs) -> Result<()> {
+    if args.include.is_empty() && args.exclude.is_empty() && args.ext.is_empty() {
+        return Ok(());
+    }
+    let scope = &mut project.config.scope;
+    for (target, flags) in [
+        (&mut scope.include, &args.include),
+        (&mut scope.exclude, &args.exclude),
+        (&mut scope.extensions, &args.ext),
+    ] {
+        if !flags.is_empty() {
+            *target = flags.clone();
+        }
+    }
+    if args.dry_run {
+        return Ok(());
+    }
+    let path = project.root.join(".context-init.toml");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e).with_context(|| format!("Failed to read {path:?}")),
+    };
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .with_context(|| format!("{path:?} is not valid TOML"))?;
+    let table = doc
+        .entry("scope")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .with_context(|| format!("`scope` in {path:?} is not a table"))?;
+    for (key, list) in [
+        ("include", &project.config.scope.include),
+        ("exclude", &project.config.scope.exclude),
+        ("extensions", &project.config.scope.extensions),
+    ] {
+        let mut arr = toml_edit::Array::new();
+        for item in list {
+            arr.push(item.as_str());
+        }
+        table[key] = toml_edit::value(arr);
+    }
+    std::fs::write(&path, doc.to_string()).with_context(|| format!("Failed to write {path:?}"))
+}
+
 pub fn run_init(global: &GlobalArgs, args: &InitArgs) -> Result<ExitCode> {
-    let project = global.load_project(&args.path, args.rtk.mode())?;
+    let mut project = global.load_project(&args.path, args.rtk.mode())?;
+    apply_scope_flags(&mut project, args)?;
     let router = router_for(&project)?;
     if !global.compact {
         output::banner("Knowledge base init");

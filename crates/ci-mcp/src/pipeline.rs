@@ -112,6 +112,7 @@ pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport> {
             deep: false,
             with_rtk: false,
             split_threshold_tokens: project.config.split_threshold_tokens,
+            scope: project.config.scope.clone(),
         },
     )?;
     let report = generator::audit(&analysis, &project.knowledge_dir)?;
@@ -161,6 +162,7 @@ pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Res
             deep: false,
             with_rtk: project.config.integrations.resolve_rtk_active(),
             split_threshold_tokens: project.config.split_threshold_tokens,
+            scope: project.config.scope.clone(),
         },
     )?;
     let subsystems = build_deterministic(&analysis);
@@ -206,6 +208,7 @@ fn analyze(
             deep: opts.deep,
             with_rtk: project.config.integrations.resolve_rtk_active(),
             split_threshold_tokens: project.config.split_threshold_tokens,
+            scope: project.config.scope.clone(),
         },
     )?;
     let mut subsystems = build_deterministic(&analysis);

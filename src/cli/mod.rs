@@ -8,6 +8,7 @@ mod mcp;
 mod migrate;
 mod output;
 mod pack;
+mod scan;
 mod setup;
 mod telemetry;
 
@@ -94,6 +95,8 @@ enum Commands {
     Update(init_update::UpdateArgs),
     /// Check the knowledge base for drift against the source tree
     Check(check::CheckArgs),
+    /// Survey the tree: files, lines and tokens per directory and extension
+    Scan(scan::ScanArgs),
     /// Pack a subsystem's files into compressed AI context
     Pack(pack::PackArgs),
     /// Run the MCP server on stdio
@@ -121,6 +124,7 @@ pub fn run() -> Result<ExitCode> {
         Some(Commands::Init(args)) => init_update::run_init(&cli.global, &args),
         Some(Commands::Update(args)) => init_update::run_update(&cli.global, &args),
         Some(Commands::Check(args)) => check::run(&cli.global, &args),
+        Some(Commands::Scan(args)) => scan::run(&cli.global, &args),
         Some(Commands::Pack(args)) => pack::run(&cli.global, &args),
         Some(Commands::Mcp(args)) => mcp::run(&args),
         Some(Commands::Config(args)) => config::run(&cli.global, &args),

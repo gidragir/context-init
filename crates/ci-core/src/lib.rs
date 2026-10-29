@@ -11,8 +11,8 @@ pub use config::{
     generate_template_toml, is_binary_available, is_binary_available_in_dirs,
     is_binary_available_in_path, is_rtk_available, join_search_paths, resolve_rtk_active,
     resolve_rtk_active_with_path, AppConfig, CliOverrides, Config, IntegrationsConfig, ModelConfig,
-    ModelKind, RoleKind, RolesConfig, RtkMode, StorageMode, StoragePaths, TelemetryConfig,
-    DEFAULT_LANGUAGE, DEFAULT_MAX_RESPONSE_TOKENS, ROLE_NONE,
+    ModelKind, RoleKind, RolesConfig, RtkMode, ScopeConfig, StorageMode, StoragePaths,
+    TelemetryConfig, DEFAULT_LANGUAGE, DEFAULT_MAX_RESPONSE_TOKENS, ROLE_NONE,
 };
 pub use git::{
     check_card_staleness, check_frontmatter_staleness, parse_nul_paths, parse_porcelain_z,

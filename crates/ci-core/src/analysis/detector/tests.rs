@@ -565,6 +565,7 @@ fn analyze_with_threshold(root: &Path, threshold: usize) -> ProjectAnalysis {
             deep: false,
             with_rtk: false,
             split_threshold_tokens: threshold,
+            scope: Default::default(),
         },
     )
     .expect("Analysis should succeed")
@@ -733,4 +734,60 @@ fn representative_files_sorted_by_path() {
         file("main.rs", 1, true),
     ]);
     assert_eq!(paths(after), order);
+}
+
+#[test]
+fn detector_honors_gitignore_scope_and_symlinks() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("det_scope_{}_{nanos}", std::process::id()));
+    let root = base.join("proj");
+    let outside = base.join("outside");
+    for (rel, text) in [
+        ("proj/.gitignore", "generated/\n"),
+        ("proj/src/api/mod.rs", "pub fn api() {}\n"),
+        ("proj/src/store/mod.rs", "pub fn store() {}\n"),
+        ("proj/generated/mod.rs", "pub fn generated() {}\n"),
+        ("outside/leak/mod.rs", "pub fn leak() {}\n"),
+    ] {
+        let p = base.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.join("leak"), root.join("linked")).unwrap();
+
+    let analysis = analyze_project(&root, false, false).unwrap();
+    let ids: Vec<&str> = analysis
+        .detected_modules
+        .iter()
+        .map(|m| m.id.as_str())
+        .collect();
+    assert!(
+        !ids.iter()
+            .any(|i| i.contains("generated") || i.contains("linked")),
+        "{ids:?}"
+    );
+    assert!(ids.iter().any(|i| i.contains("api")), "{ids:?}");
+
+    let scoped = analyze_project_with(
+        &root,
+        &AnalyzeOptions {
+            scope: ScopeConfig {
+                exclude: vec!["src/store/**".into()],
+                ..ScopeConfig::default()
+            },
+            ..AnalyzeOptions::default()
+        },
+    )
+    .unwrap();
+    let ids: Vec<&str> = scoped
+        .detected_modules
+        .iter()
+        .map(|m| m.id.as_str())
+        .collect();
+    assert!(!ids.iter().any(|i| i.contains("store")), "{ids:?}");
+    let _ = fs::remove_dir_all(&base);
 }

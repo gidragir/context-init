@@ -1,13 +1,16 @@
 use crate::analysis::generator::sanitize_id;
+use crate::analysis::scope::ScopeFilter;
 use crate::analysis::types::{DiscoveredModule, ProjectAnalysis};
-use crate::config::DEFAULT_SPLIT_THRESHOLD_TOKENS;
+use crate::config::{ScopeConfig, DEFAULT_SPLIT_THRESHOLD_TOKENS};
 use crate::storage::{ProjectCommands, ProjectType, SubsystemFile};
 use anyhow::{Context, Result};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-const IGNORED_DIRS: &[&str] = &[
+pub(crate) const IGNORED_DIRS: &[&str] = &[
     ".git",
     ".agents",
     ".context-init",
@@ -43,8 +46,36 @@ const CODE_EXTENSIONS: &[&str] = &[
     "sh", "bash", "zsh", "sql", "yaml", "yml", "json", "toml",
 ];
 
+thread_local! {
+    /// Scope of the analysis running on this thread (`.gitignore` + `[scope]`, D9).
+    static SCOPE: RefCell<Option<Rc<ScopeFilter>>> = const { RefCell::new(None) };
+}
+
+/// Installs a [`ScopeFilter`] for the current thread and restores the previous one on drop.
+struct ScopeGuard(Option<Rc<ScopeFilter>>);
+
+impl ScopeGuard {
+    fn install(filter: ScopeFilter) -> Self {
+        ScopeGuard(SCOPE.with(|s| s.borrow_mut().replace(Rc::new(filter))))
+    }
+}
+
+impl Drop for ScopeGuard {
+    fn drop(&mut self) {
+        SCOPE.with(|s| *s.borrow_mut() = self.0.take());
+    }
+}
+
+fn scope_allows_file(path: &Path) -> bool {
+    SCOPE.with(|s| s.borrow().as_ref().is_none_or(|f| f.allows_file(path)))
+}
+
+fn scope_allows_dir(path: &Path) -> bool {
+    SCOPE.with(|s| s.borrow().as_ref().is_none_or(|f| f.allows_dir(path)))
+}
+
 /// Knobs for [`analyze_project_with`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct AnalyzeOptions {
     /// Deep AST scan (symbols).
     pub deep: bool,
@@ -53,6 +84,19 @@ pub struct AnalyzeOptions {
     /// Modules whose source exceeds this many BPE tokens are split into per-module
     /// subsystems (`0` disables splitting).
     pub split_threshold_tokens: usize,
+    /// `[scope]` restrictions on top of `.gitignore`.
+    pub scope: ScopeConfig,
+}
+
+impl Default for AnalyzeOptions {
+    fn default() -> Self {
+        Self {
+            deep: false,
+            with_rtk: false,
+            split_threshold_tokens: DEFAULT_SPLIT_THRESHOLD_TOKENS,
+            scope: ScopeConfig::default(),
+        }
+    }
 }
 
 /// [`analyze_project_with`] using the default split threshold.
@@ -63,6 +107,7 @@ pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<Projec
             deep,
             with_rtk,
             split_threshold_tokens: DEFAULT_SPLIT_THRESHOLD_TOKENS,
+            scope: ScopeConfig::default(),
         },
     )
 }
@@ -72,9 +117,11 @@ pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<Projec
         deep,
         with_rtk,
         split_threshold_tokens,
-    } = *opts;
+        scope,
+    } = opts.clone();
     let canonical = fs::canonicalize(root)
         .with_context(|| format!("Не удалось получить канонический путь для {:?}", root))?;
+    let _scope_guard = ScopeGuard::install(ScopeFilter::build(&canonical, &scope)?);
 
     let default_name = canonical
         .file_name()
@@ -694,7 +741,7 @@ fn discover_subsystems(
                 let path = entry.path();
                 if path.is_file() {
                     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                    if CODE_EXTENSIONS.contains(&ext) {
+                    if CODE_EXTENSIONS.contains(&ext) && scope_allows_file(&path) {
                         code_files.push(path);
                     }
                 }
@@ -793,7 +840,7 @@ fn discover_subsystems(
 
     let mut result = Vec::new();
     for dir in dirs_to_inspect {
-        if is_ignored_path(&dir, root) {
+        if is_ignored_path(&dir, root) || !scope_allows_dir(&dir) {
             continue;
         }
         let rel_path = dir
@@ -882,7 +929,7 @@ fn contains_relevant_files(dir: &Path) -> bool {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() {
+            if path.is_file() && scope_allows_file(&path) {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                     if CODE_EXTENSIONS.contains(&ext) || ext == "md" {
                         return true;
@@ -1016,7 +1063,7 @@ fn module_entries(
             let mut files = Vec::new();
             let is_dir = path.is_dir();
             if is_dir {
-                if IGNORED_DIRS.contains(&name.as_str()) {
+                if IGNORED_DIRS.contains(&name.as_str()) || !scope_allows_dir(&path) {
                     continue;
                 }
                 collect_files_recursive(&path, root, &mut files, depth, 4);
@@ -1220,7 +1267,7 @@ fn collect_files_recursive(
         let name = entry.file_name().to_string_lossy().to_string();
 
         if path.is_dir() {
-            if !IGNORED_DIRS.contains(&name.as_str()) {
+            if !IGNORED_DIRS.contains(&name.as_str()) && scope_allows_dir(&path) {
                 collect_files_recursive(&path, root, acc, depth + 1, max_depth);
             }
         } else if path.is_file() {
@@ -1236,7 +1283,7 @@ fn subsystem_file(path: &Path, name: &str, root: &Path) -> Option<SubsystemFile>
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    if !(CODE_EXTENSIONS.contains(&ext.as_str()) || ext == "md") {
+    if !(CODE_EXTENSIONS.contains(&ext.as_str()) || ext == "md") || !scope_allows_file(path) {
         return None;
     }
     Some(SubsystemFile {

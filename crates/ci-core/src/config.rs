@@ -698,6 +698,9 @@ pub struct Config {
     /// Refresh a Git-stale L1 card on `context_get_subsystem` instead of only reporting it (default `false`, D2).
     #[serde(default)]
     pub auto_refresh: bool,
+    /// File scope on top of `.gitignore` (`[scope]`, D9).
+    #[serde(default)]
+    pub scope: ScopeConfig,
     /// Knowledge base location (default `repo`).
     #[serde(default)]
     pub storage: StorageMode,
@@ -719,6 +722,24 @@ pub struct Config {
     pub loaded_sources: Vec<PathBuf>,
 }
 
+/// `[scope]`: which files `init`, `update`, `pack` and `scan` look at, on top of `.gitignore` (D9).
+/// `include`/`exclude` are globs relative to the project root; `extensions` are file extensions
+/// without the dot. Empty lists mean "no restriction".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ScopeConfig {
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    pub extensions: Vec<String>,
+}
+
+impl ScopeConfig {
+    /// `true` when no restriction is configured.
+    pub fn is_empty(&self) -> bool {
+        self.include.is_empty() && self.exclude.is_empty() && self.extensions.is_empty()
+    }
+}
+
 /// Alias for `Config`.
 pub type AppConfig = Config;
 
@@ -730,6 +751,7 @@ impl Default for Config {
             split_threshold_tokens: default_split_threshold_tokens(),
             touch_agents_md: false,
             auto_refresh: false,
+            scope: ScopeConfig::default(),
             storage: StorageMode::default(),
             integrations: IntegrationsConfig::default(),
             models: BTreeMap::new(),
@@ -783,6 +805,7 @@ struct PartialConfig {
     split_threshold_tokens: Option<usize>,
     touch_agents_md: Option<bool>,
     auto_refresh: Option<bool>,
+    scope: Option<ScopeConfig>,
     storage: Option<StorageMode>,
     integrations: Option<PartialIntegrationsConfig>,
     models: Option<BTreeMap<String, PartialModelConfig>>,
@@ -897,6 +920,9 @@ impl Config {
         }
         if let Some(refresh) = partial.auto_refresh {
             self.auto_refresh = refresh;
+        }
+        if let Some(scope) = partial.scope {
+            self.scope = scope;
         }
         if let Some(storage) = partial.storage {
             self.storage = storage;

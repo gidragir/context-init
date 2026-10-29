@@ -1048,6 +1048,7 @@ mod tests {
                 deep: false,
                 with_rtk: false,
                 split_threshold_tokens: threshold,
+                scope: Default::default(),
             },
         )
         .unwrap()
