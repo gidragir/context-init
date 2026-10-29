@@ -1,10 +1,26 @@
+---
+directory: crates/ci-core/src/storage.rs
+source:
+  kind: git
+  blob_sha: 35508ead97029b6a8476089532c2462f21213db2
+  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+generated_by:
+  component: context-init
+  role: init
+  model: none
+freshness:
+  total_entries: 1
+  sampled_entries: 1
+  unsampled_entries: 0
+  pending_child_changes: 0
+---
+
 # Подсистема: Ci Core Storage (L1)
+
+Модуль-файл `crates/ci-core/src/storage.rs`
 
 > **Идентификатор:** `crates_ci-core_storage`
 > **Теги:** Rust (Cargo), crates_ci-core_storage
-
-## 🎯 Назначение и роль
-Модуль-файл `crates/ci-core/src/storage.rs`
 
 ## 📁 Точки входа и структура файлов
 

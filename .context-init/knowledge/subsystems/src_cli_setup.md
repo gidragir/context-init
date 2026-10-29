@@ -1,10 +1,26 @@
+---
+directory: src/cli/setup
+source:
+  kind: git
+  blob_sha: 88df1eb3b9c791ade3d96dab26e8cc68982bbf6a
+  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+generated_by:
+  component: context-init
+  role: init
+  model: none
+freshness:
+  total_entries: 5
+  sampled_entries: 5
+  unsampled_entries: 0
+  pending_child_changes: 0
+---
+
 # Подсистема: Cli Setup (L1)
+
+Подсистема `src/cli/setup` с ключевыми точками входа: src/cli/setup/mod.rs
 
 > **Идентификатор:** `src_cli_setup`
 > **Теги:** Rust (Cargo), src_cli_setup
-
-## 🎯 Назначение и роль
-Подсистема `src/cli/setup` с ключевыми точками входа: src/cli/setup/mod.rs
 
 ## 📁 Точки входа и структура файлов
 

@@ -1,10 +1,26 @@
+---
+directory: crates/ci-core/src/openviking.rs
+source:
+  kind: git
+  blob_sha: d0748321868e0379c157555376f25c17ac24b0f7
+  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+generated_by:
+  component: context-init
+  role: init
+  model: none
+freshness:
+  total_entries: 1
+  sampled_entries: 1
+  unsampled_entries: 0
+  pending_child_changes: 0
+---
+
 # Подсистема: Ci Core Openviking (L1)
+
+Модуль-файл `crates/ci-core/src/openviking.rs`
 
 > **Идентификатор:** `crates_ci-core_openviking`
 > **Теги:** Rust (Cargo), crates_ci-core_openviking
-
-## 🎯 Назначение и роль
-Модуль-файл `crates/ci-core/src/openviking.rs`
 
 ## 📁 Точки входа и структура файлов
 

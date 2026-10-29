@@ -1,10 +1,26 @@
+---
+directory: src/cli
+source:
+  kind: git
+  blob_sha: b0acd4a66914e1d61f7bc70867a4893c9e974e24
+  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+generated_by:
+  component: context-init
+  role: init
+  model: none
+freshness:
+  total_entries: 11
+  sampled_entries: 11
+  unsampled_entries: 0
+  pending_child_changes: 0
+---
+
 # Подсистема: Cli (L1)
+
+Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs
 
 > **Идентификатор:** `src_cli`
 > **Теги:** Rust (Cargo), src_cli
-
-## 🎯 Назначение и роль
-Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs
 
 ## 📁 Точки входа и структура файлов
 
@@ -19,6 +35,7 @@
 | `src/cli/mod.rs` | ⭐ Точка входа |
 | `src/cli/output.rs` | Исходный код |
 | `src/cli/pack.rs` | Исходный код |
+| `src/cli/scan.rs` | Исходный код |
 | `src/cli/telemetry.rs` | Исходный код |
 
 ## 🔑 Ключевой контракт и экспорты

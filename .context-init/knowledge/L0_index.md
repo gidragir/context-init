@@ -29,10 +29,11 @@ rtk cargo run
 | Подсистема | Роль / Назначение | Точки входа | L1 Карточка |
 | :--- | :--- | :--- | :--- |
 | **Ci Core** | Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs | `crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs` | [subsystems/crates_ci-core.md](subsystems/crates_ci-core.md) |
-| **Ci Core Analysis** | Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs | `crates/ci-core/src/analysis/mod.rs` | [subsystems/crates_ci-core_analysis.md](subsystems/crates_ci-core_analysis.md) |
+| **Ci Core Analysis** | Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs, crates/ci-core/src/analysis/mod.rs | `crates/ci-core/src/analysis/lang/mod.rs, crates/ci-core/src/analysis/mod.rs` | [subsystems/crates_ci-core_analysis.md](subsystems/crates_ci-core_analysis.md) |
 | **Ci Core Analysis Detector** | Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (1 файлов) | `-` | [subsystems/crates_ci-core_analysis_detector.md](subsystems/crates_ci-core_analysis_detector.md) |
 | **Ci Core Analysis Detector Tests** | Модуль-файл `crates/ci-core/src/analysis/detector/tests.rs` | `-` | [subsystems/crates_ci-core_analysis_detector_tests.md](subsystems/crates_ci-core_analysis_detector_tests.md) |
 | **Ci Core Analysis Generator** | Модуль-файл `crates/ci-core/src/analysis/generator.rs` | `-` | [subsystems/crates_ci-core_analysis_generator.md](subsystems/crates_ci-core_analysis_generator.md) |
+| **Ci Core Analysis Pack** | Модуль-файл `crates/ci-core/src/analysis/pack.rs` | `-` | [subsystems/crates_ci-core_analysis_pack.md](subsystems/crates_ci-core_analysis_pack.md) |
 | **Ci Core Config** | Модуль-файл `crates/ci-core/src/config.rs` | `-` | [subsystems/crates_ci-core_config.md](subsystems/crates_ci-core_config.md) |
 | **Ci Core Openviking** | Модуль-файл `crates/ci-core/src/openviking.rs` | `-` | [subsystems/crates_ci-core_openviking.md](subsystems/crates_ci-core_openviking.md) |
 | **Ci Core Storage** | Модуль-файл `crates/ci-core/src/storage.rs` | `-` | [subsystems/crates_ci-core_storage.md](subsystems/crates_ci-core_storage.md) |
@@ -47,6 +48,7 @@ rtk cargo run
 | **Ci Mcp** | Подсистема `crates/ci-mcp` с ключевыми точками входа: crates/ci-mcp/Cargo.toml, crates/ci-mcp/src/lib.rs | `crates/ci-mcp/Cargo.toml, crates/ci-mcp/src/lib.rs` | [subsystems/crates_ci-mcp.md](subsystems/crates_ci-mcp.md) |
 | **Ci Mcp Handlers** | Модуль-файл `crates/ci-mcp/src/handlers.rs` | `-` | [subsystems/crates_ci-mcp_handlers.md](subsystems/crates_ci-mcp_handlers.md) |
 | **Ci Mcp Pagination** | Модуль-файл `crates/ci-mcp/src/pagination.rs` | `-` | [subsystems/crates_ci-mcp_pagination.md](subsystems/crates_ci-mcp_pagination.md) |
+| **Ci Mcp Pipeline** | Модуль-файл `crates/ci-mcp/src/pipeline.rs` | `-` | [subsystems/crates_ci-mcp_pipeline.md](subsystems/crates_ci-mcp_pipeline.md) |
 | **Ci Mcp Server** | Модуль-файл `crates/ci-mcp/src/server.rs` | `-` | [subsystems/crates_ci-mcp_server.md](subsystems/crates_ci-mcp_server.md) |
 | **References** | Модуль и компоненты директории `references` (1 файлов) | `-` | [subsystems/references.md](subsystems/references.md) |
 | **Reports** | Модуль и компоненты директории `reports` (2 файлов) | `-` | [subsystems/reports.md](subsystems/reports.md) |
@@ -58,7 +60,8 @@ rtk cargo run
 | **Reports Subagents Step1 Workspace Verification** | Модуль-файл `reports/subagents/step1_workspace_verification.md` | `-` | [subsystems/reports_subagents_step1_workspace_verification.md](subsystems/reports_subagents_step1_workspace_verification.md) |
 | **Cli** | Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs | `src/cli/mod.rs` | [subsystems/src_cli.md](subsystems/src_cli.md) |
 | **Cli Setup** | Подсистема `src/cli/setup` с ключевыми точками входа: src/cli/setup/mod.rs | `src/cli/setup/mod.rs` | [subsystems/src_cli_setup.md](subsystems/src_cli_setup.md) |
-| **Tests** | Модуль и компоненты директории `tests` (2 файлов) | `-` | [subsystems/tests.md](subsystems/tests.md) |
+| **Tests** | Модуль и компоненты директории `tests` (1 файлов) | `-` | [subsystems/tests.md](subsystems/tests.md) |
+| **Tests Regression Benchmark** | Модуль-файл `tests/regression_benchmark.rs` | `-` | [subsystems/tests_regression_benchmark.md](subsystems/tests_regression_benchmark.md) |
 
 ## 📋 Инварианты и правила проекта
 - Все внешние крейты и зависимости строго объявляются в Cargo.toml.

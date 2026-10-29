@@ -1,10 +1,26 @@
+---
+directory: crates/ci-llm
+source:
+  kind: git
+  blob_sha: 7f598da687127e3273aefdd6940c1f217bf48841
+  commit_sha: 36198169b6c3e1dac832cf4204e7b96c6805df94
+generated_by:
+  component: context-init
+  role: init
+  model: none
+freshness:
+  total_entries: 3
+  sampled_entries: 3
+  unsampled_entries: 0
+  pending_child_changes: 0
+---
+
 # Подсистема: Ci Llm (L1)
+
+Подсистема `crates/ci-llm` с ключевыми точками входа: crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs
 
 > **Идентификатор:** `crates_ci-llm`
 > **Теги:** Rust (Cargo), crates_ci-llm
-
-## 🎯 Назначение и роль
-Подсистема `crates/ci-llm` с ключевыми точками входа: crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs
 
 ## 📁 Точки входа и структура файлов
 

@@ -70,28 +70,59 @@
     {
       "id": "crates_ci-core_analysis",
       "name": "Ci Core Analysis",
-      "summary": "Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs",
+      "summary": "Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs, crates/ci-core/src/analysis/mod.rs",
       "l1_path": "subsystems/crates_ci-core_analysis.md",
       "tags": [
         "Rust (Cargo)",
         "crates_ci-core_analysis"
       ],
       "entrypoints": [
+        "crates/ci-core/src/analysis/lang/mod.rs",
         "crates/ci-core/src/analysis/mod.rs"
       ],
       "key_files": [
+        "crates/ci-core/src/analysis/lang/bsl.rs",
+        "crates/ci-core/src/analysis/lang/mdo.rs",
+        "crates/ci-core/src/analysis/lang/mod.rs",
+        "crates/ci-core/src/analysis/lang/python.rs",
+        "crates/ci-core/src/analysis/lang/rust.rs",
         "crates/ci-core/src/analysis/mod.rs",
-        "crates/ci-core/src/analysis/pack.rs",
+        "crates/ci-core/src/analysis/scan.rs",
+        "crates/ci-core/src/analysis/scope.rs",
         "crates/ci-core/src/analysis/subsystems.rs",
         "crates/ci-core/src/analysis/types.rs"
       ],
       "files": [
         {
+          "path": "crates/ci-core/src/analysis/lang/bsl.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/lang/mdo.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/lang/mod.rs",
+          "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-core/src/analysis/lang/python.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/lang/rust.rs",
+          "is_entrypoint": false
+        },
+        {
           "path": "crates/ci-core/src/analysis/mod.rs",
           "is_entrypoint": true
         },
         {
-          "path": "crates/ci-core/src/analysis/pack.rs",
+          "path": "crates/ci-core/src/analysis/scan.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/scope.rs",
           "is_entrypoint": false
         },
         {
@@ -106,14 +137,13 @@
       "key_symbols": [
         "pub const REPO_KNOWLEDGE_DIR: &str = \".context-init/knowledge\"",
         "pub fn resolve_knowledge_dir(root: &Path, mode: StorageMode, central_kb: &Path) -> PathBuf",
-        "pub enum PackStyle",
-        "pub struct PackedSubsystems",
-        "pub fn pack_subsystem(root: &Path, knowledge_dir: &Path, index: &L0Index, subsystem_id: &str, compress: bool, style: PackStyle, ) -> Result<PackedSubsystems>",
-        "pub fn pack_files(root: &Path, subs: &[&SubsystemInfo], files: &[String], compress: bool, style: PackStyle, ) -> String",
-        "pub fn compress_source(content: &str, ext: &str) -> String",
-        "pub fn compress_rust_ast(content: &str) -> Option<String>",
-        "pub fn format_rust_items(items: &[syn :: Item]) -> String",
-        "pub fn normalize_rust_tokens(s: &str) -> String"
+        "pub struct BslAdapter",
+        "pub struct MdoObject",
+        "pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject>",
+        "pub fn render_mdo_l2_card(obj: &MdoObject) -> String",
+        "pub(crate) fn discover_mdo_subsystems(root: &Path, files: &[String], ) -> (Vec<DiscoveredModule>, BTreeSet<String>)",
+        "pub fn find_object_card(root: &Path, scope: &ScopeConfig, id: &str) -> Result<Option<String>>",
+        "pub struct PythonAdapter"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core"
@@ -137,6 +167,7 @@
         }
       ],
       "key_symbols": [
+        "pub(crate) const IGNORED_DIRS: &[&str] = &[\".git\", \".agents\", \".context-init\", \".gemini\", \"node_modules\", \"target\", \"dist\", \"build\", \".idea\", \".vscode\", \".cargo\", \"vendor\", \"__pycache__\", \".venv\", \"venv\", \".next\", \".nuxt\", \".turbo\", \".cache\", \"coverage\", \".mypy_cache\", \".pytest_cache\", \".ruff_cache\", \".vault\", \"out\", \".svelte-kit\", \".astro\", \".parcel-cache\", ]",
         "pub struct AnalyzeOptions",
         "pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<ProjectAnalysis>",
         "pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<ProjectAnalysis>",
@@ -145,8 +176,7 @@
         "pub fn is_ignored_path(path: &Path, root: &Path) -> bool",
         "pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String>",
         "pub fn extract_multiline_symbols(content: &str, ext: &str, deep: bool) -> Vec<String>",
-        "pub fn clean_symbol_line(line: &str) -> String",
-        "pub fn sanitize_symbol(raw: &str) -> Option<String>"
+        "pub fn clean_symbol_line(line: &str) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis"
@@ -197,10 +227,44 @@
       ],
       "key_symbols": [
         "pub struct GenerateOptions",
+        "pub fn render_subsystem_card_okf(sub: &SubsystemInfo, analysis: &ProjectAnalysis, source_shas: Option<(String, String)>, role: &str, model: &str, ) -> String",
+        "pub fn restamp_card_source(card_path: &Path, root: &Path, directory: Option<&str>) -> Result<bool>",
         "pub fn generate(analysis: &ProjectAnalysis, subsystems: &[SubsystemInfo], knowledge_dir: &Path, opts: &GenerateOptions, ) -> Result<()>",
         "pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftReport>",
         "pub fn update(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, ) -> Result<(usize, usize)>",
         "pub fn sanitize_id(raw: &str) -> String"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis"
+    },
+    {
+      "id": "crates_ci-core_analysis_pack",
+      "name": "Ci Core Analysis Pack",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/pack.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_pack.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_pack"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/pack.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/pack.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub enum PackStyle",
+        "pub struct PackedSubsystems",
+        "pub fn pack_subsystem(root: &Path, knowledge_dir: &Path, index: &L0Index, subsystem_id: &str, compress: bool, style: PackStyle, ) -> Result<PackedSubsystems>",
+        "pub fn pack_files(root: &Path, subs: &[&SubsystemInfo], files: &[String], compress: bool, style: PackStyle, ) -> String",
+        "pub fn compress_source(content: &str, ext: &str) -> String",
+        "pub fn compress_rust_ast(content: &str) -> Option<String>",
+        "pub fn format_rust_items(items: &[syn :: Item]) -> String",
+        "pub fn normalize_rust_tokens(s: &str) -> String",
+        "pub fn compress_code(content: &str) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis"
@@ -565,7 +629,6 @@
       "key_files": [
         "crates/ci-mcp/Cargo.toml",
         "crates/ci-mcp/src/lib.rs",
-        "crates/ci-mcp/src/pipeline.rs",
         "crates/ci-mcp/src/tools.rs"
       ],
       "files": [
@@ -578,10 +641,6 @@
           "is_entrypoint": true
         },
         {
-          "path": "crates/ci-mcp/src/pipeline.rs",
-          "is_entrypoint": false
-        },
-        {
           "path": "crates/ci-mcp/src/tools.rs",
           "is_entrypoint": false
         }
@@ -589,14 +648,14 @@
       "key_symbols": [
         "pub const VERSION: &str = env !(\"CARGO_PKG_VERSION\")",
         "pub fn crate_info() -> String",
-        "pub struct PipelineOptions<'a>",
-        "pub struct PipelineOutcome",
-        "pub fn run_init(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>",
-        "pub fn run_update(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>",
-        "pub struct FullDriftReport",
-        "pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport>",
-        "pub fn validate_model_override(config: &Config, model_override: Option<&str>) -> Result<()>",
-        "pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>"
+        "pub struct McpCheckParams",
+        "pub struct McpCheckResult",
+        "pub struct McpGetSubsystemsParams",
+        "pub struct McpGetSubsystemParams",
+        "pub struct McpPackParams",
+        "pub struct McpSubmitParams",
+        "pub struct SubmitResult",
+        "pub struct McpFeedbackParams"
       ],
       "test_command": "rtk cargo test -p ci-mcp"
     },
@@ -655,6 +714,38 @@
         "pub fn format_footer(truncated: bool, next_cursor: Option<&str>, stale: bool, tokens: usize, ) -> String",
         "pub struct PaginatedOutput",
         "pub fn paginate_content(full_text: &str, cursor: Option<&str>, max_tokens: usize, stale: bool, ) -> PaginatedOutput"
+      ],
+      "test_command": "rtk cargo test -p ci-mcp",
+      "parent": "crates_ci-mcp"
+    },
+    {
+      "id": "crates_ci-mcp_pipeline",
+      "name": "Ci Mcp Pipeline",
+      "summary": "Модуль-файл `crates/ci-mcp/src/pipeline.rs`",
+      "l1_path": "subsystems/crates_ci-mcp_pipeline.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-mcp_pipeline"
+      ],
+      "key_files": [
+        "crates/ci-mcp/src/pipeline.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-mcp/src/pipeline.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct PipelineOptions<'a>",
+        "pub struct PipelineOutcome",
+        "pub fn run_init(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>",
+        "pub fn run_update(project: &ResolvedProject, router: &RoleRouter, opts: &PipelineOptions, ) -> Result<PipelineOutcome>",
+        "pub struct FullDriftReport",
+        "pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport>",
+        "pub fn validate_model_override(config: &Config, model_override: Option<&str>) -> Result<()>",
+        "pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<()>",
+        "pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
       "parent": "crates_ci-mcp"
@@ -901,6 +992,7 @@
         "src/cli/mod.rs",
         "src/cli/output.rs",
         "src/cli/pack.rs",
+        "src/cli/scan.rs",
         "src/cli/telemetry.rs"
       ],
       "files": [
@@ -938,6 +1030,10 @@
         },
         {
           "path": "src/cli/pack.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "src/cli/scan.rs",
           "is_entrypoint": false
         },
         {
@@ -1016,26 +1112,41 @@
     {
       "id": "tests",
       "name": "Tests",
-      "summary": "Модуль и компоненты директории `tests` (2 файлов)",
+      "summary": "Модуль и компоненты директории `tests` (1 файлов)",
       "l1_path": "subsystems/tests.md",
       "tags": [
         "Rust (Cargo)",
         "tests"
       ],
       "key_files": [
-        "tests/cli.rs",
-        "tests/regression_benchmark.rs"
+        "tests/cli.rs"
       ],
       "files": [
         {
           "path": "tests/cli.rs",
           "is_entrypoint": false
-        },
+        }
+      ]
+    },
+    {
+      "id": "tests_regression_benchmark",
+      "name": "Tests Regression Benchmark",
+      "summary": "Модуль-файл `tests/regression_benchmark.rs`",
+      "l1_path": "subsystems/tests_regression_benchmark.md",
+      "tags": [
+        "Rust (Cargo)",
+        "tests_regression_benchmark"
+      ],
+      "key_files": [
+        "tests/regression_benchmark.rs"
+      ],
+      "files": [
         {
           "path": "tests/regression_benchmark.rs",
           "is_entrypoint": false
         }
-      ]
+      ],
+      "parent": "tests"
     }
   ],
   "core_rules": [
