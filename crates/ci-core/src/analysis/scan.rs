@@ -69,13 +69,16 @@ pub fn scan_project(root: &Path, scope: &ScopeConfig) -> Result<ScanReport> {
     let (mut total_files, mut total_lines, mut total_tokens) = (0, 0, 0);
 
     for rel in filter.files() {
-        let bytes = fs::read(root.join(rel)).unwrap_or_default();
-        let (lines, tokens) = match std::str::from_utf8(&bytes) {
-            Ok(text) if bytes.len() <= TOKENIZE_MAX_BYTES => {
-                (text.lines().count(), count_tokens(text))
+        let path = root.join(rel);
+        let size = fs::metadata(&path).map_or(0, |m| m.len() as usize);
+        // Oversized files are estimated, never read into memory.
+        let (lines, tokens) = if size > TOKENIZE_MAX_BYTES {
+            (0, size / 4)
+        } else {
+            match fs::read_to_string(&path) {
+                Ok(text) => (text.lines().count(), count_tokens(&text)),
+                Err(_) => (0, 0),
             }
-            Ok(text) => (text.lines().count(), bytes.len() / 4),
-            Err(_) => (0, 0),
         };
         let dir = rel.split_once('/').map_or(".", |(d, _)| d).to_string();
         let ext = Path::new(rel)

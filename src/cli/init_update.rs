@@ -110,6 +110,7 @@ fn apply_scope_flags(project: &mut ci_mcp::ResolvedProject, args: &InitArgs) -> 
             *target = flags.clone();
         }
     }
+    ci_core::analysis::scope::validate_scope(&project.config.scope)?;
     if args.dry_run {
         return Ok(());
     }

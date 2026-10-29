@@ -11,6 +11,7 @@ use anyhow::{bail, Context, Result};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -35,8 +36,23 @@ pub struct MdoObject {
 impl MdoObject {
     /// Stable id: `<kind>_<name>`, lower-case (`catalog_items`).
     pub fn id(&self) -> String {
-        sanitize_id(&format!("{}_{}", self.kind, self.name))
+        object_slug(&self.kind, &self.name)
     }
+}
+
+/// `<kind>_<name>` as an id. Names with non-ASCII letters would collapse to the same slug, so
+/// they get a short digest of the name instead.
+fn object_slug(kind: &str, name: &str) -> String {
+    if name.is_ascii() {
+        return sanitize_id(&format!("{kind}_{name}"));
+    }
+    let digest = Sha256::digest(name.as_bytes());
+    let short: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
+    format!("{}_{short}", sanitize_id(kind))
+}
+
+fn subsystem_module_id(name: &str) -> String {
+    object_slug("subsystem", name)
 }
 
 /// Parses one `.mdo` XML document. Namespaces are ignored; elements are matched by local name.
@@ -271,7 +287,7 @@ pub(crate) fn discover_mdo_subsystems(
         }
         covered.extend(rels.iter().cloned());
         modules.push(module_of(
-            sanitize_id(&format!("subsystem_{}", obj.name)),
+            subsystem_module_id(&obj.name),
             obj.name.clone(),
             parent_dir(rel).to_string(),
             rels,
@@ -355,5 +371,21 @@ mod tests {
         assert_eq!(cat.id(), "catalog_items");
         assert!(parse_mdo_xml("<a><b></a>").is_err());
         assert!(parse_mdo_xml("").is_err());
+    }
+
+    #[test]
+    fn non_ascii_object_names_get_distinct_stable_ids() {
+        let a = parse_mdo_xml("<m:Subsystem xmlns:m=\"urn:x\"><name>Продажи</name></m:Subsystem>")
+            .unwrap();
+        let b = parse_mdo_xml("<m:Subsystem xmlns:m=\"urn:x\"><name>Закупки</name></m:Subsystem>")
+            .unwrap();
+        assert_ne!(a.id(), b.id());
+        assert_eq!(a.id(), a.id());
+        assert!(a.id().starts_with("subsystem_"), "{}", a.id());
+        assert_ne!(
+            subsystem_module_id("Продажи"),
+            subsystem_module_id("Закупки")
+        );
+        assert_eq!(subsystem_module_id("Billing"), "subsystem_billing");
     }
 }

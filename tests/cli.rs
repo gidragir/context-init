@@ -864,3 +864,12 @@ fn cli_init_with_scope_flags_persists_scope_and_filters_subsystems() {
     let report: serde_json::Value = serde_json::from_str(&stdout(&scan)).unwrap();
     assert_eq!(report["total_files"], 1, "{report}");
 }
+
+#[test]
+fn cli_init_with_invalid_glob_does_not_persist_scope() {
+    let sb = Sandbox::new("bad_glob");
+    sb.write_fixture();
+    let out = sb.run(&["init", ".", "--compact", "--include", "[ab"]);
+    assert!(!out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(!sb.project().join(".context-init.toml").exists());
+}

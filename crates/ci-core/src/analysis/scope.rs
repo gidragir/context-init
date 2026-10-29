@@ -21,6 +21,13 @@ fn glob_set(patterns: &[String]) -> Result<GlobSet> {
     Ok(builder.build()?)
 }
 
+/// Fails when a `[scope]` glob does not compile, without touching the file system.
+pub fn validate_scope(scope: &ScopeConfig) -> Result<()> {
+    glob_set(&scope.include)?;
+    glob_set(&scope.exclude)?;
+    Ok(())
+}
+
 /// Files and directories of a project that pass `.gitignore` and `[scope]`.
 #[derive(Debug, Clone)]
 pub struct ScopeFilter {
