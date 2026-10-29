@@ -14,7 +14,8 @@ use ci_mcp::pagination::count_tokens as count_reply_tokens;
 use ci_mcp::pipeline::{self, PipelineOptions};
 use ci_mcp::{
     ContextInitServer, McpCheckParams, McpGetSubsystemParams, McpGetSubsystemsParams,
-    McpInitParams, McpPackParams, McpScanParams, McpUpdateParams, ResolvedProject,
+    McpInitParams, McpPackParams, McpScanParams, McpTaskParams, McpUpdateParams,
+    McpWorkspaceParams, ResolvedProject,
 };
 
 #[derive(serde::Serialize, Debug, Clone)]
@@ -70,6 +71,15 @@ struct V04Metrics {
 }
 
 #[derive(serde::Serialize, Debug, Clone)]
+struct V05Metrics {
+    raw_diff_tokens: usize,
+    digest_tokens: usize,
+    digest_vs_diff_percent: f64,
+    workspace_repos: usize,
+    workspace_ms: f64,
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
 struct BenchmarkReport {
     timestamp: String,
     drift_metrics: DriftMetrics,
@@ -78,6 +88,7 @@ struct BenchmarkReport {
     cross_project: CrossProjectMetrics,
     v03: V03Metrics,
     v04: V04Metrics,
+    v05: V05Metrics,
     overall_status: String,
 }
 
@@ -379,9 +390,11 @@ async fn test_regression_benchmark_and_generate_report() {
     let v03 = measure_v03(&sandbox, &temp_workspace).await;
     println!("6/6 v0.4 context-audit gate...");
     let v04 = measure_v04(&sandbox);
+    println!("7/7 v0.5 context-audit gate...");
+    let v05 = measure_v05(&sandbox);
     let _ = fs::remove_dir_all(&sandbox);
 
-    // 7. Reports (written only on request, so test runs keep the tree clean)
+    // 8. Reports (written only on request, so test runs keep the tree clean)
     if std::env::var("CONTEXT_INIT_WRITE_BENCHMARK").as_deref() != Ok("1") {
         println!(
             "\nREGRESSION BENCHMARK PASSED (set CONTEXT_INIT_WRITE_BENCHMARK=1 to write reports)"
@@ -396,6 +409,7 @@ async fn test_regression_benchmark_and_generate_report() {
         cross_project,
         v03,
         v04,
+        v05,
         overall_status: "PASSED (NO REGRESSIONS)".to_string(),
     };
     let reports_dir = repo_root.join("reports");
@@ -579,7 +593,27 @@ async fn measure_v03(sandbox: &Path, initialized_workspace: &Path) -> V03Metrics
             .await
             .expect("scan"),
     ));
-    // Later milestones append their tools here (task v0.5, workspace v0.5, search v0.6).
+    replies.push((
+        "context_task",
+        server
+            .task(Parameters(McpTaskParams {
+                path: path.clone(),
+                ..McpTaskParams::default()
+            }))
+            .await
+            .expect("task"),
+    ));
+    replies.push((
+        "context_workspace",
+        server
+            .workspace(Parameters(McpWorkspaceParams {
+                path: Some(sandbox.to_string_lossy().to_string()),
+                cursor: None,
+            }))
+            .await
+            .expect("workspace"),
+    ));
+    // Later milestones append their tools here (search v0.6).
     let ok = replies
         .iter()
         .filter(|(tool, text)| {
@@ -618,6 +652,96 @@ fn run_git(root: &Path, args: &[&str]) {
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+fn measure_v05(sandbox: &Path) -> V05Metrics {
+    use ci_core::analysis::task::{build_task_digest, TaskDigestRequest};
+    use ci_core::analysis::workspace::analyze_workspace;
+    use ci_core::git::SystemGitBackend;
+
+    // Task digest vs. raw diff on a multi-file commit.
+    let repo = sandbox.join("task-repo");
+    fs::create_dir_all(repo.join("src")).unwrap();
+    run_git(&repo, &["init", "-q", "-b", "main"]);
+    let body = |version: u32| -> String {
+        (0..8)
+            .map(|f| {
+                format!(
+                    "pub fn handler_{f}(input: &str) -> usize {{\n    let mut total = {version};\n    for ch in input.chars() {{\n        if ch.is_alphabetic() {{\n            total += {f} + {version};\n        }}\n    }}\n    total\n}}\n\n"
+                )
+            })
+            .collect()
+    };
+    for i in 0..10 {
+        fs::write(repo.join(format!("src/m{i}.rs")), body(1)).unwrap();
+    }
+    run_git(&repo, &["add", "-A"]);
+    run_git(&repo, &["commit", "-q", "-m", "base"]);
+    for i in 0..10 {
+        fs::write(repo.join(format!("src/m{i}.rs")), body(2)).unwrap();
+    }
+    run_git(&repo, &["commit", "-q", "-am", "feat: bump all handlers"]);
+    let raw = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["diff", "HEAD~1..HEAD"])
+        .output()
+        .expect("git diff");
+    let raw_diff_tokens = count_tokens(&String::from_utf8_lossy(&raw.stdout));
+    let digest = build_task_digest(
+        &repo,
+        &SystemGitBackend::new(),
+        None,
+        &TaskDigestRequest {
+            paths: &[],
+            base_ref: Some("HEAD~1"),
+            target: None,
+            max_tokens: 100_000,
+        },
+    )
+    .expect("digest");
+    let digest_tokens = count_tokens(&digest);
+    let digest_vs_diff_percent = digest_tokens as f64 * 100.0 / raw_diff_tokens as f64;
+    println!("   task digest: {digest_tokens} vs raw diff {raw_diff_tokens} tokens ({digest_vs_diff_percent:.1}%)");
+    assert!(
+        digest_vs_diff_percent < 50.0,
+        "digest not compact: {digest_vs_diff_percent:.1}%"
+    );
+
+    // Workspace L0 over 5 repositories.
+    let ws = sandbox.join("five-repos");
+    for r in 0..5 {
+        let dir = ws.join(format!("svc{r}"));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("src/lib.rs"),
+            "pub struct SharedDto;\npub struct Own;\n",
+        )
+        .unwrap();
+        run_git(&dir, &["init", "-q"]);
+        run_git(&dir, &["add", "-A"]);
+        run_git(&dir, &["commit", "-q", "-m", "init"]);
+    }
+    let t = Instant::now();
+    let report = analyze_workspace(&ws, &SystemGitBackend::new()).expect("workspace");
+    let workspace_ms = t.elapsed().as_secs_f64() * 1000.0;
+    println!(
+        "   workspace-L0: {} repos in {workspace_ms:.1}ms",
+        report.repos.len()
+    );
+    assert_eq!(report.repos.len(), 5);
+    assert!(report.links.iter().any(|l| l.symbol == "SharedDto"));
+    assert!(
+        workspace_ms < time_limit(100.0),
+        "workspace too slow: {workspace_ms:.1}ms"
+    );
+    V05Metrics {
+        raw_diff_tokens,
+        digest_tokens,
+        digest_vs_diff_percent,
+        workspace_repos: report.repos.len(),
+        workspace_ms,
+    }
 }
 
 fn measure_v04(sandbox: &Path) -> V04Metrics {
@@ -894,6 +1018,17 @@ fn render_markdown_report(report: &BenchmarkReport) -> String {
         report.v04.scan_files,
         report.v04.scan_ms,
         report.v04.stale_check_avg_ms
+    ));
+
+    md.push_str("## 🚦 7. Гейт v0.5 (context-audit)\n\n");
+    md.push_str("| Метрика | Значение | Порог |\n| :--- | :--- | :--- |\n");
+    md.push_str(&format!(
+        "| Дайджест задачи L1 vs сырой diff | `{} / {}` токенов (`{:.1}%`) | `< 50%` |\n| `workspace-L0` ({} репозиториев) | `{:.1} ms` | `< 100 ms` |\n\n",
+        report.v05.digest_tokens,
+        report.v05.raw_diff_tokens,
+        report.v05.digest_vs_diff_percent,
+        report.v05.workspace_repos,
+        report.v05.workspace_ms
     ));
 
     md.push_str("## 🎯 Заключение и вердикт регрессионного контроля\n\n");

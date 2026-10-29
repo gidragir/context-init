@@ -2,10 +2,10 @@
   "timestamp": "2026-10-29",
   "drift_metrics": {
     "iterations": 10,
-    "avg_ms": 18.568174399999993,
-    "min_ms": 4.85383,
-    "max_ms": 121.22977999999999,
-    "up_to_date_count": 31,
+    "avg_ms": 31.802092799999997,
+    "min_ms": 5.303999999999999,
+    "max_ms": 166.732641,
+    "up_to_date_count": 33,
     "has_drift": true
   },
   "compression_metrics": {
@@ -15,32 +15,32 @@
     "compressed_bytes": 9381,
     "compressed_tokens": 2663,
     "tokens_saved_percent": 82.88450414551065,
-    "compression_duration_ms": 5.189865
+    "compression_duration_ms": 6.360405
   },
   "mcp_latencies": [
     {
       "tool": "context_init",
-      "latency_ms": 33.500087,
+      "latency_ms": 33.21409,
       "status": "OK"
     },
     {
       "tool": "context_check",
-      "latency_ms": 2.6504630000000002,
+      "latency_ms": 2.8041139999999998,
       "status": "OK (0 drift)"
     },
     {
       "tool": "context_get_subsystems",
-      "latency_ms": 2.17235,
+      "latency_ms": 2.184255,
       "status": "OK (1 subsystems)"
     },
     {
       "tool": "context_pack",
-      "latency_ms": 2.251006,
+      "latency_ms": 2.3688569999999998,
       "status": "OK (AST compressed)"
     },
     {
       "tool": "context_update",
-      "latency_ms": 2.348187,
+      "latency_ms": 2.681671,
       "status": "OK (reconciled)"
     }
   ],
@@ -51,16 +51,23 @@
     "ai_dotfiles_pack_status": "OK (files=2, tokens~159)"
   },
   "v03": {
-    "mcp_cold_start_ms": 1.443435,
-    "router_fallback_avg_ms": 0.0060176,
+    "mcp_cold_start_ms": 2.880118,
+    "router_fallback_avg_ms": 0.0133178,
     "budget_compliance_percent": 100.0,
-    "budget_calls": 5
+    "budget_calls": 7
   },
   "v04": {
     "bsl_tokens_saved_percent": 99.2621359223301,
     "scan_files": 400,
-    "scan_ms": 26.911907999999997,
-    "stale_check_avg_ms": 7.150359400000001
+    "scan_ms": 27.411216,
+    "stale_check_avg_ms": 3.3718008
+  },
+  "v05": {
+    "raw_diff_tokens": 6670,
+    "digest_tokens": 552,
+    "digest_vs_diff_percent": 8.275862068965518,
+    "workspace_repos": 5,
+    "workspace_ms": 42.324994
   },
   "overall_status": "PASSED (NO REGRESSIONS)"
 }
