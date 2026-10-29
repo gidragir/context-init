@@ -354,16 +354,18 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn roots_to_paths_parses_file_uris() {
-        let paths = crate::server::roots_to_paths(&[
-            root("file:///tmp/a%20b"),
-            root("https://example.com/repo"),
-            root("file:///srv/%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82"),
-        ]);
         #[cfg(not(windows))]
-        assert_eq!(
-            paths,
-            vec![PathBuf::from("/tmp/a b"), PathBuf::from("/srv/проект")]
-        );
+        {
+            let paths = crate::server::roots_to_paths(&[
+                root("file:///tmp/a%20b"),
+                root("https://example.com/repo"),
+                root("file:///srv/%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82"),
+            ]);
+            assert_eq!(
+                paths,
+                vec![PathBuf::from("/tmp/a b"), PathBuf::from("/srv/проект")]
+            );
+        }
         #[cfg(windows)]
         assert_eq!(
             crate::server::roots_to_paths(&[root("file:///C:/x")]),

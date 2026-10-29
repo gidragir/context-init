@@ -466,6 +466,7 @@ impl Sandbox {
     }
 
     /// A directory holding a fake `gh` that logs its arguments.
+    #[cfg(unix)]
     fn fake_gh_dir(&self) -> PathBuf {
         let bin = self.dir.join("bin");
         fs::create_dir_all(&bin).unwrap();
