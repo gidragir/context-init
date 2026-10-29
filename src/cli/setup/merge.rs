@@ -39,6 +39,16 @@ pub fn merge_json(existing: Option<&str>, entry: Value) -> Result<String> {
     Ok(format!("{}\n", serde_json::to_string_pretty(&root)?))
 }
 
+/// Turns an inline table (`key = { .. }`) into a regular table in place.
+fn inline_to_table(item: &mut toml_edit::Item) {
+    if let toml_edit::Item::Value(toml_edit::Value::InlineTable(_)) = item {
+        let taken = std::mem::take(item);
+        if let toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) = taken {
+            *item = toml_edit::Item::Table(it.into_table());
+        }
+    }
+}
+
 /// Sets `[mcp_servers.context-init] command/args` in a Codex-style TOML config,
 /// preserving comments and formatting of everything else.
 pub fn merge_toml(existing: Option<&str>, exe: &Path) -> Result<String> {
@@ -46,18 +56,20 @@ pub fn merge_toml(existing: Option<&str>, exe: &Path) -> Result<String> {
         .unwrap_or("")
         .parse()
         .context("existing config is not valid TOML")?;
-    let servers = doc
-        .entry("mcp_servers")
-        .or_insert_with(|| {
-            let mut t = toml_edit::Table::new();
-            t.set_implicit(true);
-            toml_edit::Item::Table(t)
-        })
+    let servers = doc.entry("mcp_servers").or_insert_with(|| {
+        let mut t = toml_edit::Table::new();
+        t.set_implicit(true);
+        toml_edit::Item::Table(t)
+    });
+    inline_to_table(servers);
+    let servers = servers
         .as_table_mut()
         .context("`mcp_servers` in the existing config is not a table")?;
     let entry = servers
         .entry(SERVER_NAME)
-        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+    inline_to_table(entry);
+    let entry = entry
         .as_table_mut()
         .context("`mcp_servers.context-init` is not a table")?;
     entry["command"] = toml_edit::value(exe.to_string_lossy().as_ref());
@@ -161,10 +173,43 @@ impl PlannedWrite {
             }
             None => None,
         };
-        fs::write(&self.path, &self.new)
-            .with_context(|| format!("Failed to write {:?}", self.path))?;
+        atomic_write_str(&self.path, &self.new)?;
         Ok(backup)
     }
+}
+
+/// Writes `content` to a sibling temp file and renames it over `path`, so a crash never
+/// leaves a half-written config. Permissions of an existing `path` are kept.
+pub fn atomic_write_str(path: &Path, content: &str) -> Result<()> {
+    use std::io::Write;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = path.with_file_name(format!("{name}.tmp.{}.{nanos}", std::process::id()));
+    let result = (|| -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .with_context(|| format!("Failed to create {:?}", tmp))?;
+        if let Ok(meta) = fs::metadata(path) {
+            fs::set_permissions(&tmp, meta.permissions())?;
+        }
+        file.write_all(content.as_bytes())?;
+        file.flush()?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp, path).with_context(|| format!("Failed to replace {:?}", path))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -332,6 +377,49 @@ mod tests {
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&backup), 0o600);
         assert_eq!(mode(&path), 0o600);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_toml_converts_inline_tables() {
+        let exe = Path::new("/opt/ci/context-init");
+        let out = merge_toml(Some("mcp_servers = { other = { command = \"x\" } }\n"), exe).unwrap();
+        let doc: toml_edit::DocumentMut = out.parse().unwrap();
+        assert_eq!(doc["mcp_servers"]["other"]["command"].as_str(), Some("x"));
+        assert_eq!(
+            doc["mcp_servers"]["context-init"]["command"].as_str(),
+            Some("/opt/ci/context-init")
+        );
+
+        let out = merge_toml(
+            Some("[mcp_servers]\ncontext-init = { command = \"/old\" }\n"),
+            exe,
+        )
+        .unwrap();
+        let doc: toml_edit::DocumentMut = out.parse().unwrap();
+        assert_eq!(
+            doc["mcp_servers"]["context-init"]["command"].as_str(),
+            Some("/opt/ci/context-init")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_str_replaces_file_preserving_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("ci_atomic_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cfg.json");
+        fs::write(&path, "old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        atomic_write_str(&path, "new").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let leftovers = fs::read_dir(&dir).unwrap().flatten().count();
+        assert_eq!(leftovers, 1, "temp file must be renamed away");
         let _ = fs::remove_dir_all(&dir);
     }
 }

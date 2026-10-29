@@ -132,10 +132,7 @@ pub fn run(global: &GlobalArgs, args: &TelemetryArgs) -> Result<ExitCode> {
             .output()
             .is_ok_and(|o| o.status.success());
     if gh_ready {
-        let body_file =
-            std::env::temp_dir().join(format!("context-init-telemetry-{}.md", std::process::id()));
-        std::fs::write(&body_file, &digest)
-            .with_context(|| format!("Failed to write {:?}", body_file))?;
+        let body_file = create_secure_temp_markdown(&digest)?;
         let status = Command::new("gh")
             .args([
                 "issue",
@@ -161,6 +158,32 @@ pub fn run(global: &GlobalArgs, args: &TelemetryArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Writes `content` to a fresh `0o600` file in the temp dir; `create_new` refuses to follow a
+/// pre-planted file or symlink at a predictable name.
+pub fn create_secure_temp_markdown(content: &str) -> Result<std::path::PathBuf> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let path = std::env::temp_dir().join(format!(
+        "context-init-telemetry-{}-{nanos}.md",
+        std::process::id()
+    ));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts
+        .open(&path)
+        .with_context(|| format!("Failed to create {:?}", path))?;
+    file.write_all(content.as_bytes())
+        .with_context(|| format!("Failed to write {:?}", path))?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +204,26 @@ mod tests {
             &body[body.len() - 40..]
         );
         assert!(!body.contains(&"x".repeat(6001)));
+    }
+
+    #[test]
+    fn create_secure_temp_markdown_uses_create_new_and_unique_name() {
+        let a = create_secure_temp_markdown("digest-a").unwrap();
+        let b = create_secure_temp_markdown("digest-b").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "digest-a");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "digest-b");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for p in [&a, &b] {
+                assert_eq!(
+                    std::fs::metadata(p).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::remove_file(b);
     }
 }

@@ -723,3 +723,28 @@ fn cli_agents_md_contains_rtk_fallback_commands() {
         "{agents}"
     );
 }
+
+#[test]
+fn cli_setup_all_write_aborts_before_any_write_if_one_harness_config_is_invalid() {
+    let sb = Sandbox::new("setup_all_abort");
+    let good = sb.home().join(".gemini/config/mcp_config.json");
+    let bad = sb.home().join(".cursor/mcp.json");
+    fs::create_dir_all(good.parent().unwrap()).unwrap();
+    fs::create_dir_all(bad.parent().unwrap()).unwrap();
+    fs::write(&good, "{}\n").unwrap();
+    fs::write(&bad, "{bad").unwrap();
+    let out = sb.run(&["setup", "all", "--write"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert_eq!(fs::read_to_string(&good).unwrap(), "{}\n");
+    let siblings: Vec<_> = fs::read_dir(good.parent().unwrap())
+        .unwrap()
+        .flatten()
+        .collect();
+    assert_eq!(siblings.len(), 1, "unexpected files: {siblings:?}");
+}

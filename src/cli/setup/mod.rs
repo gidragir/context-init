@@ -113,9 +113,14 @@ pub fn run(args: &SetupArgs) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    // Plan every harness in memory first: an invalid config aborts before any write (M4).
+    let plans: Vec<SetupPlan> = harnesses
+        .into_iter()
+        .map(|h| plan_setup(h, &dirs, &exe))
+        .collect::<Result<_>>()?;
+
     let stamp = backup_stamp();
-    for h in harnesses {
-        let plan = plan_setup(h, &dirs, &exe)?;
+    for plan in plans {
         println!("{} {}", "==>".cyan().bold(), plan.harness.name().bold());
         for w in &plan.writes {
             if w.is_noop() {
