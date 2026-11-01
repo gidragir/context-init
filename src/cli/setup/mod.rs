@@ -14,7 +14,7 @@ use ci_core::storage::now_rfc3339;
 
 use harness::{is_installed, server_entry, spec, ConfigFormat, Harness, HomeDirs, RuleTarget};
 use merge::{merge_json, merge_toml, PlannedWrite};
-use rules::{skill_file, upsert_marked_block, RULE_TEMPLATE};
+use rules::{render_rule, skill_file, upsert_marked_block};
 
 #[derive(Args, Debug, Clone)]
 pub struct SetupArgs {
@@ -58,6 +58,19 @@ pub struct SetupPlan {
 
 /// Computes all file changes for `h` in memory; nothing is written.
 pub fn plan_setup(h: Harness, dirs: &HomeDirs, exe: &Path) -> Result<SetupPlan> {
+    let rtk = ci_core::config::Config::load(Some(Path::new(".")), &Default::default())
+        .map(|c| c.integrations.resolve_rtk_active())
+        .unwrap_or_else(|_| ci_core::config::IntegrationsConfig::default().resolve_rtk_active());
+    plan_setup_with_rtk(h, dirs, exe, rtk)
+}
+
+/// Computes all file changes for `h` in memory with an explicit RTK flag; nothing is written.
+pub fn plan_setup_with_rtk(
+    h: Harness,
+    dirs: &HomeDirs,
+    exe: &Path,
+    rtk: bool,
+) -> Result<SetupPlan> {
     let spec = spec(h, dirs);
     let existing = std::fs::read_to_string(&spec.mcp_file).ok();
     let merged = match spec.format {
@@ -67,14 +80,15 @@ pub fn plan_setup(h: Harness, dirs: &HomeDirs, exe: &Path) -> Result<SetupPlan> 
     .with_context(|| format!("Cannot update {}", spec.mcp_file.display()))?;
     let mut writes = vec![PlannedWrite::new(spec.mcp_file.clone(), merged)?];
     let mut print_rule = None;
+    let rule_text = render_rule(rtk);
     match spec.rule {
-        RuleTarget::SkillFile(path) => writes.push(PlannedWrite::new(path, skill_file())?),
+        RuleTarget::SkillFile(path) => writes.push(PlannedWrite::new(path, skill_file(rtk))?),
         RuleTarget::MarkedBlock(path) => {
             let current = std::fs::read_to_string(&path).ok();
-            let updated = upsert_marked_block(current.as_deref(), RULE_TEMPLATE);
+            let updated = upsert_marked_block(current.as_deref(), &rule_text);
             writes.push(PlannedWrite::new(path, updated)?);
         }
-        RuleTarget::PrintOnly => print_rule = Some(RULE_TEMPLATE.to_string()),
+        RuleTarget::PrintOnly => print_rule = Some(rule_text),
         RuleTarget::None => {}
     }
     Ok(SetupPlan {

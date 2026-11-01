@@ -1,6 +1,6 @@
 //! The short agent rule installed by `setup`, and marker-delimited upserts.
 
-/// The rule text installed into harness rule files (≤ 15 lines: it lands in every prompt).
+/// The rule text installed into harness rule files (≤ 25 lines: it lands in every prompt).
 pub const RULE_TEMPLATE: &str = include_str!("rule_template.md");
 
 pub const BEGIN_MARKER: &str = "<!-- context-init:begin -->";
@@ -26,10 +26,17 @@ pub fn upsert_marked_block(existing: Option<&str>, body: &str) -> String {
 }
 
 /// Claude Code skill wrapping the rule.
-pub fn skill_file() -> String {
+pub fn skill_file(rtk: bool) -> String {
     format!(
-        "---\nname: context-init\ndescription: Navigate this project through the context-init knowledge base (subsystem map, cards, compressed code) instead of reading source files broadly.\n---\n\n{RULE_TEMPLATE}"
+        "---\nname: context-init\ndescription: Navigate this project through the context-init knowledge base (subsystem map, cards, compressed code) instead of reading source files broadly.\n---\n\n{}",
+        render_rule(rtk)
     )
+}
+
+/// Renders the rule template, replacing `{rtk}` with `"rtk "` when `rtk` is true, or `""` when false.
+pub fn render_rule(rtk: bool) -> String {
+    let prefix = if rtk { "rtk " } else { "" };
+    RULE_TEMPLATE.replace("{rtk}", prefix)
 }
 
 #[cfg(test)]
@@ -64,9 +71,9 @@ mod tests {
     }
 
     #[test]
-    fn rule_template_is_at_most_15_lines() {
+    fn rule_template_is_at_most_25_lines() {
         let lines = RULE_TEMPLATE.trim_end().lines().count();
-        assert!(lines <= 15, "rule template has {lines} lines");
+        assert!(lines <= 25, "rule template has {lines} lines");
         for tool in [
             "context_get_subsystems",
             "context_get_subsystem",
@@ -75,6 +82,16 @@ mod tests {
         ] {
             assert!(RULE_TEMPLATE.contains(tool), "missing {tool}");
         }
+        assert!(RULE_TEMPLATE.contains("Subagents and scripts"));
         assert!(RULE_TEMPLATE.contains("context-init pack <subsystem_id> --compress"));
+    }
+
+    #[test]
+    fn render_rule_prefixes_rtk() {
+        let with_rtk = render_rule(true);
+        assert!(with_rtk.contains("rtk context-init search"), "{with_rtk}");
+        let without_rtk = render_rule(false);
+        assert!(without_rtk.contains("context-init search"), "{without_rtk}");
+        assert!(!without_rtk.contains("rtk context-init"), "{without_rtk}");
     }
 }

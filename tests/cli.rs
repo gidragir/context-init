@@ -399,6 +399,19 @@ fn cli_setup_write_claude_code() {
 }
 
 #[test]
+fn setup_writes_subagent_section() {
+    let sb = Sandbox::new("setup_subagents");
+    fs::write(sb.home().join(".claude.json"), "{\"numStartups\": 1}\n").unwrap();
+    let out = sb.run(&["setup", "claude-code", "--write"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let skill = fs::read_to_string(sb.home().join(".claude/skills/context-init/SKILL.md")).unwrap();
+    assert!(
+        skill.contains("Subagents and scripts"),
+        "expected 'Subagents and scripts' in SKILL.md, got:\n{skill}"
+    );
+}
+
+#[test]
 fn cli_setup_all_skips_absent_harnesses() {
     let sb = Sandbox::new("setup_all");
     fs::create_dir_all(sb.home().join(".cursor")).unwrap();
