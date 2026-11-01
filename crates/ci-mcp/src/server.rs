@@ -8,12 +8,17 @@ use rmcp::service::{NotificationContext, Peer, RoleServer};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use std::collections::HashMap;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 use ci_core::config::{Config, StoragePaths};
-use ci_core::telemetry::TelemetrySink;
+use ci_core::telemetry::{
+    classify_error, harness_from_client_name, CallContext, CallOutcome, Channel, ErrorClass,
+    HarnessId, JsonlTelemetrySink, Recorder, TelemetrySink,
+};
 use ci_llm::{AgentWorkPackage, RoleRouter};
 
 use crate::handlers::{ContextHandler, HandlerReply, ResolvedProject};
@@ -26,6 +31,8 @@ pub struct ContextInitServer {
     pub(crate) roots: Arc<RwLock<Vec<PathBuf>>>,
     pub(crate) work_packages: Arc<RwLock<HashMap<String, AgentWorkPackage>>>,
     pub(crate) telemetry_sink: Option<Arc<dyn TelemetrySink>>,
+    /// Harness of the connected client, normalized from `clientInfo.name` on `initialized`.
+    pub(crate) client_harness: Arc<std::sync::RwLock<HarnessId>>,
 }
 
 impl ContextInitServer {
@@ -36,6 +43,7 @@ impl ContextInitServer {
             roots: Arc::new(RwLock::new(Vec::new())),
             work_packages: Arc::new(RwLock::new(HashMap::new())),
             telemetry_sink: None,
+            client_harness: Arc::new(std::sync::RwLock::new(HarnessId::Other)),
         }
     }
 
@@ -154,10 +162,59 @@ impl ContextInitServer {
     }
 
     /// Builds the model router for a project's configuration (D16).
-    fn router_for(&self, project: &ResolvedProject) -> Result<RoleRouter, rmcp::ErrorData> {
+    /// The error wraps an `invalid_params` `rmcp::ErrorData`, preserved by [`Self::instrumented`].
+    fn router_for(&self, project: &ResolvedProject) -> anyhow::Result<RoleRouter> {
         RoleRouter::new(project.config.clone(), self.telemetry_sink.clone())
             .map(|r| r.with_project_id(project.project_id.clone()))
-            .map_err(|e| rmcp::ErrorData::invalid_params(format!("{e:#}"), None))
+            .map_err(|e| {
+                anyhow::Error::new(rmcp::ErrorData::invalid_params(format!("{e:#}"), None))
+            })
+    }
+
+    /// Per-call telemetry context: MCP channel, current client harness, not nested.
+    pub fn call_context(&self) -> CallContext {
+        CallContext {
+            harness: self
+                .client_harness
+                .read()
+                .map(|h| *h)
+                .unwrap_or(HarnessId::Other),
+            channel: Channel::Mcp,
+            nested: false,
+        }
+    }
+
+    /// Runs a tool body, records one operational event through `recorder` (a no-op recorder
+    /// when the resolved project has telemetry disabled) and maps errors to MCP errors.
+    pub(crate) async fn instrumented<F, Fut>(
+        &self,
+        tool: &'static str,
+        recorder: Recorder,
+        f: F,
+    ) -> Result<String, rmcp::ErrorData>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = anyhow::Result<String>>,
+    {
+        let ctx = self.call_context();
+        let started = Instant::now();
+        match f().await {
+            Ok(text) => {
+                recorder.record_call(&ctx, tool, started, CallOutcome::Ok);
+                Ok(text)
+            }
+            Err(e) => {
+                let (class, mcp_err) = match e.downcast_ref::<rmcp::ErrorData>() {
+                    Some(data) => (ErrorClass::InvalidParams, data.clone()),
+                    None => (
+                        classify_error(&e),
+                        rmcp::ErrorData::internal_error(format!("{:#}", e), None),
+                    ),
+                };
+                recorder.record_call(&ctx, tool, started, CallOutcome::Err(class));
+                Err(mcp_err)
+            }
+        }
     }
 
     /// Registers a pending agent work package (if any) and returns the reply text.
@@ -265,8 +322,11 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::check_drift(&resolved, p.cursor.as_deref())
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_check", recorder, || async {
+            ContextHandler::check_drift(&resolved, p.cursor.as_deref())
+        })
+        .await
     }
 
     /// List all project subsystems and metrics from L0 index.
@@ -282,8 +342,11 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::get_subsystems(&resolved, p.cursor.as_deref())
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_get_subsystems", recorder, || async {
+            ContextHandler::get_subsystems(&resolved, p.cursor.as_deref())
+        })
+        .await
     }
 
     /// Get L1 overview card for a specific subsystem by ID.
@@ -299,8 +362,11 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::get_subsystem(&resolved, &p.subsystem_id, p.cursor.as_deref())
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_get_subsystem", recorder, || async {
+            ContextHandler::get_subsystem(&resolved, &p.subsystem_id, p.cursor.as_deref())
+        })
+        .await
     }
 
     /// Pack subsystem code into AST-compressed context for LLM analysis.
@@ -313,14 +379,17 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::pack(
-            &resolved,
-            &p.subsystem_id,
-            p.compress.unwrap_or(true),
-            p.style.as_deref().unwrap_or("xml"),
-            p.cursor.as_deref(),
-        )
-        .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_pack", recorder, || async {
+            ContextHandler::pack(
+                &resolved,
+                &p.subsystem_id,
+                p.compress.unwrap_or(true),
+                p.style.as_deref().unwrap_or("xml"),
+                p.cursor.as_deref(),
+            )
+        })
+        .await
     }
 
     /// Submit agent work package results for schema validation and integration.
@@ -337,8 +406,11 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::submit(&resolved, &p.package_id, pkg.as_ref(), &p.submission)
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_submit", recorder, || async {
+            ContextHandler::submit(&resolved, &p.package_id, pkg.as_ref(), &p.submission)
+        })
+        .await
     }
 
     /// Record agent feedback signal on tool utility and freshness.
@@ -354,14 +426,17 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::feedback(
-            &resolved,
-            &p.tool,
-            &p.verdict,
-            p.note.as_deref(),
-            self.telemetry_sink.as_deref(),
-        )
-        .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_feedback", recorder, || async {
+            ContextHandler::feedback(
+                &resolved,
+                &p.tool,
+                &p.verdict,
+                p.note.as_deref(),
+                self.telemetry_sink.as_deref(),
+            )
+        })
+        .await
     }
 
     /// Initialize OpenViking L0-L2 knowledge base for a project.
@@ -374,10 +449,13 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        let router = self.router_for(&resolved)?;
-        let reply = ContextHandler::init(&resolved, &p, &router)
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))?;
-        Ok(self.accept_reply(reply).await)
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_init", recorder, || async {
+            let router = self.router_for(&resolved)?;
+            let reply = ContextHandler::init(&resolved, &p, &router)?;
+            Ok(self.accept_reply(reply).await)
+        })
+        .await
     }
 
     /// Incrementally update knowledge base when architectural drift is detected.
@@ -393,10 +471,13 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        let router = self.router_for(&resolved)?;
-        let reply = ContextHandler::update(&resolved, &p, &router)
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))?;
-        Ok(self.accept_reply(reply).await)
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_update", recorder, || async {
+            let router = self.router_for(&resolved)?;
+            let reply = ContextHandler::update(&resolved, &p, &router)?;
+            Ok(self.accept_reply(reply).await)
+        })
+        .await
     }
 
     /// Map of the Git repositories inside a workspace directory.
@@ -418,12 +499,15 @@ impl ContextInitServer {
             .filter(|d| d.is_dir())
             .map(|d| normalize_existing_path(&d))
             .unwrap_or_else(|| resolved.root.clone());
-        ContextHandler::workspace(
-            &root,
-            resolved.config.max_response_tokens,
-            p.cursor.as_deref(),
-        )
-        .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_workspace", recorder, || async {
+            ContextHandler::workspace(
+                &root,
+                resolved.config.max_response_tokens,
+                p.cursor.as_deref(),
+            )
+        })
+        .await
     }
 
     /// Scan project topology, directories, and file extensions without LLM.
@@ -436,8 +520,11 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        ContextHandler::scan(&resolved, p.cursor.as_deref())
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_scan", recorder, || async {
+            ContextHandler::scan(&resolved, p.cursor.as_deref())
+        })
+        .await
     }
 
     /// Generate task digest and modified subsystem context from Git diff.
@@ -450,14 +537,17 @@ impl ContextInitServer {
         let arg_path = p.path.as_deref().or(p.repo.as_deref());
         let arg_proj = p.project.as_deref();
         let resolved = self.resolve_context(arg_path, arg_proj).await;
-        ContextHandler::task(
-            &resolved,
-            p.paths.as_deref(),
-            p.base_ref.as_deref(),
-            p.target.as_deref(),
-            p.cursor.as_deref(),
-        )
-        .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_task", recorder, || async {
+            ContextHandler::task(
+                &resolved,
+                p.paths.as_deref(),
+                p.base_ref.as_deref(),
+                p.target.as_deref(),
+                p.cursor.as_deref(),
+            )
+        })
+        .await
     }
 
     /// Search subsystems, cards, and symbols by query.
@@ -473,15 +563,23 @@ impl ContextInitServer {
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
-        let router = self.router_for(&resolved)?;
-        ContextHandler::search(&resolved, &p.query, p.cursor.as_deref(), &router)
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{:#}", e), None))
+        let recorder = resolved.recorder(self.telemetry_sink.clone());
+        self.instrumented("context_search", recorder, || async {
+            let router = self.router_for(&resolved)?;
+            ContextHandler::search(&resolved, &p.query, p.cursor.as_deref(), &router)
+        })
+        .await
     }
 }
 
 #[tool_handler(router = Self::tool_router())]
 impl ServerHandler for ContextInitServer {
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        let info = context.peer.peer_info();
+        let harness = harness_from_client_name(info.as_ref().map(|i| i.client_info.name.as_str()));
+        if let Ok(mut w) = self.client_harness.write() {
+            *w = harness;
+        }
         self.refresh_roots(&context.peer).await;
     }
 
@@ -552,7 +650,10 @@ pub async fn run_mcp_server(default_root: Option<&Path>) -> Result<()> {
         default_root
     );
 
-    let server = ContextInitServer::new(default_root.map(|p| p.to_path_buf()));
+    // Operational events are written per call only for projects whose own config opts in.
+    let sink = JsonlTelemetrySink::new(StoragePaths::resolve(default_root).data_dir, true);
+    let server = ContextInitServer::new(default_root.map(|p| p.to_path_buf()))
+        .with_telemetry_sink(Arc::new(sink));
     let (stdin, stdout) = rmcp::transport::io::stdio();
 
     let running = server

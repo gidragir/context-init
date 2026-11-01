@@ -1193,9 +1193,8 @@ mod tests {
     #[tokio::test]
     async fn context_feedback_records_signal_with_hashed_project_id() {
         let tmp = TempDirGuard::new("feedback");
-        let sink = Arc::new(MockTelemetrySink::default());
-        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()))
-            .with_telemetry_sink(sink.clone());
+        // Project telemetry off and config dirs isolated: only the feedback event is expected.
+        let (server, sink) = telemetry_server(&tmp, false);
 
         let res = server
             .feedback(Parameters(McpFeedbackParams {
@@ -1478,5 +1477,204 @@ mod tests {
 
         assert!(task_res.contains("## Task-Specified Paths"));
         assert!(task_res.contains("`src/engine.rs` (subsystem: `core`)"));
+    }
+
+    // --- operational telemetry instrumentation (Task 2) ---
+
+    /// Isolates data/config dirs, writes the project config and returns a server with a mock sink.
+    fn telemetry_server(
+        tmp: &TempDirGuard,
+        project_enabled: bool,
+    ) -> (ContextInitServer, Arc<MockTelemetrySink>) {
+        std::env::set_var("XDG_CONFIG_HOME", tmp.path().join(".xdg-config"));
+        std::env::set_var("HOME", tmp.path().join(".home"));
+        fs::write(
+            tmp.path().join(".context-init.toml"),
+            format!("[telemetry]\nenabled = {project_enabled}\n"),
+        )
+        .unwrap();
+        let sink = Arc::new(MockTelemetrySink::default());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()))
+            .with_telemetry_sink(sink.clone());
+        (server, sink)
+    }
+
+    fn operational(sink: &MockTelemetrySink) -> Vec<ci_core::telemetry::OperationalSignal> {
+        sink.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match &e.signal {
+                TelemetrySignal::Operational(op) => Some(op.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn every_tool_records_one_operational_event() {
+        let tmp = TempDirGuard::new("tel_all");
+        let (server, sink) = telemetry_server(&tmp, true);
+        let path = Some(tmp.path().to_string_lossy().to_string());
+
+        let _ = server
+            .check_drift(Parameters(McpCheckParams {
+                path: path.clone(),
+                ..Default::default()
+            }))
+            .await;
+        let _ = server
+            .get_subsystems(Parameters(McpGetSubsystemsParams {
+                path: path.clone(),
+                ..Default::default()
+            }))
+            .await;
+        let _ = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: "nope".to_string(),
+                path: path.clone(),
+                ..Default::default()
+            }))
+            .await;
+        let _ = server
+            .pack(Parameters(McpPackParams {
+                subsystem_id: "nope".to_string(),
+                path: path.clone(),
+                ..Default::default()
+            }))
+            .await;
+        let _ = server
+            .submit(Parameters(McpSubmitParams {
+                package_id: "unknown-package".to_string(),
+                submission: json!({}),
+                path: path.clone(),
+                project: None,
+            }))
+            .await;
+        let _ = server
+            .feedback(Parameters(McpFeedbackParams {
+                tool: "context_pack".to_string(),
+                verdict: "helpful".to_string(),
+                note: None,
+                path: path.clone(),
+                project: None,
+            }))
+            .await;
+        let _ = server
+            .init(Parameters(McpInitParams {
+                path: path.clone(),
+                deep: Some(false),
+                force: Some(true),
+                with_agents_md: Some(false),
+                ..Default::default()
+            }))
+            .await;
+        let _ = server
+            .update(Parameters(McpUpdateParams {
+                path: path.clone(),
+                ..Default::default()
+            }))
+            .await;
+        let _ = server
+            .workspace(Parameters(McpWorkspaceParams {
+                path: path.clone(),
+                cursor: None,
+            }))
+            .await;
+        let _ = server
+            .scan(Parameters(McpScanParams {
+                path: path.clone(),
+                ..Default::default()
+            }))
+            .await;
+        let _ = server
+            .task(Parameters(McpTaskParams {
+                path: path.clone(),
+                ..Default::default()
+            }))
+            .await;
+        let _ = server
+            .search(Parameters(McpSearchParams {
+                query: "core".to_string(),
+                path,
+                ..Default::default()
+            }))
+            .await;
+
+        let mut names: Vec<String> = operational(&sink).into_iter().map(|o| o.tool).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "context_check",
+                "context_feedback",
+                "context_get_subsystem",
+                "context_get_subsystems",
+                "context_init",
+                "context_pack",
+                "context_scan",
+                "context_search",
+                "context_submit",
+                "context_task",
+                "context_update",
+                "context_workspace",
+            ]
+        );
+        assert!(operational(&sink)
+            .iter()
+            .all(|o| o.channel == "mcp" && !o.nested));
+    }
+
+    #[tokio::test]
+    async fn client_info_sets_harness() {
+        let tmp = TempDirGuard::new("tel_harness");
+        let (server, sink) = telemetry_server(&tmp, true);
+        let params = || McpScanParams {
+            path: Some(tmp.path().to_string_lossy().to_string()),
+            ..Default::default()
+        };
+
+        // No clientInfo seen: unknown client => `other`.
+        let _ = server.scan(Parameters(params())).await;
+        assert_eq!(operational(&sink)[0].harness.as_deref(), Some("other"));
+
+        *server.client_harness.write().unwrap() =
+            ci_core::telemetry::harness_from_client_name(Some("claude-code"));
+        let _ = server.scan(Parameters(params())).await;
+        assert_eq!(
+            operational(&sink)[1].harness.as_deref(),
+            Some("claude-code")
+        );
+    }
+
+    #[tokio::test]
+    async fn project_disabled_telemetry_writes_nothing() {
+        let tmp = TempDirGuard::new("tel_off");
+        let (server, sink) = telemetry_server(&tmp, false);
+        let _ = server
+            .scan(Parameters(McpScanParams {
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..Default::default()
+            }))
+            .await;
+        assert!(sink.events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_tool_records_error_class() {
+        let tmp = TempDirGuard::new("tel_err");
+        let (server, sink) = telemetry_server(&tmp, true);
+        let res = server
+            .get_subsystem(Parameters(McpGetSubsystemParams {
+                subsystem_id: "does-not-exist".to_string(),
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..Default::default()
+            }))
+            .await;
+        assert!(res.is_err());
+        let ops = operational(&sink);
+        assert_eq!(ops.len(), 1);
+        assert!(!ops[0].success);
+        assert_eq!(ops[0].error_class.as_deref(), Some("not_found"));
     }
 }

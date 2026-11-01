@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
 use ci_core::analysis::resolve_knowledge_dir;
@@ -18,7 +19,7 @@ use ci_core::storage::{
     compute_project_id, now_rfc3339, safe_join, subsystem_card_path, L0Index, SubsystemInfo,
 };
 use ci_core::telemetry::{
-    record_feedback, FeedbackSignal, TelemetryEvent, TelemetrySignal, TelemetrySink,
+    record_feedback, FeedbackSignal, Recorder, TelemetryEvent, TelemetrySignal, TelemetrySink,
 };
 use ci_llm::enrich::{cli_outcome_message, EnrichOutcome};
 use ci_llm::providers::validate_agent_submission;
@@ -94,6 +95,16 @@ impl ResolvedProject {
             storage_paths,
             knowledge_dir,
             storage,
+        }
+    }
+
+    /// Telemetry recorder for this project: writes only when the project's own
+    /// `telemetry.enabled` is set and a sink is available; otherwise a no-op recorder.
+    pub fn recorder(&self, sink: Option<Arc<dyn TelemetrySink>>) -> Recorder {
+        if self.config.telemetry.enabled {
+            Recorder::new(sink, Some(self.project_id.clone()))
+        } else {
+            Recorder::disabled()
         }
     }
 
