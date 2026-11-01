@@ -23,6 +23,13 @@ pub struct AgentWorkPackage {
     pub instruction: String,
     /// Expected JSON Schema that the `context_submit` payload must satisfy.
     pub json_schema: serde_json::Value,
+    /// Model alias that issued the package; recorded as `summary_model` on submission.
+    #[serde(default)]
+    pub alias: String,
+    /// Whether the analysis behind the package was a deep AST scan; a submission is applied
+    /// to a re-analysis of the same depth.
+    #[serde(default)]
+    pub deep: bool,
 }
 
 /// Validated submission produced by `validate_agent_submission` for `context_submit` (D14).

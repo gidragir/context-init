@@ -2,13 +2,14 @@
 //! enrichment (`ci-llm`) → generate/update the knowledge base (`ci-core`).
 
 use anyhow::{bail, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ci_core::analysis::generator::{self, GenerateOptions};
 use ci_core::analysis::subsystems::build_deterministic;
 use ci_core::analysis::{detector, ProjectAnalysis};
 use ci_core::config::{Config, StorageMode, ROLE_NONE};
-use ci_core::storage::SubsystemInfo;
+use ci_core::storage::{L0Index, SubsystemInfo};
+use ci_core::SummarySource;
 use ci_llm::enrich::{enrich_subsystems, EnrichOutcome};
 use ci_llm::{PromptTemplateRegistry, RoleName, RoleRouter};
 
@@ -49,14 +50,26 @@ pub fn run_init(
     router: &RoleRouter,
     opts: &PipelineOptions,
 ) -> Result<PipelineOutcome> {
-    let (analysis, subsystems, enrich) = analyze(project, router, RoleName::Init, opts)?;
+    let (analysis, mut subsystems, enrich) = analyze(project, router, RoleName::Init, opts)?;
     let knowledge_dir = project.knowledge_dir.clone();
+    let agents_md = opts.with_agents_md.then_some(project.storage);
     let gen_opts = GenerateOptions {
         force: opts.force,
         dry_run: opts.dry_run,
-        agents_md: opts.with_agents_md.then_some(project.storage),
+        agents_md,
     };
     generator::generate(&analysis, &subsystems, &knowledge_dir, &gen_opts)?;
+    let enrich = if opts.dry_run {
+        enrich
+    } else {
+        apply_enrichment(&analysis, &knowledge_dir, enrich, agents_md)
+    };
+    if matches!(enrich, EnrichOutcome::Enriched { .. }) {
+        // Report what the knowledge base now holds, LLM summaries included.
+        if let Ok(index) = L0Index::load_from_file(&knowledge_dir.join("L0_index.json")) {
+            subsystems = index.subsystems;
+        }
+    }
     Ok(PipelineOutcome {
         added: subsystems.len(),
         updated: 0,
@@ -75,12 +88,9 @@ pub fn run_update(
 ) -> Result<PipelineOutcome> {
     let (analysis, subsystems, enrich) = analyze(project, router, RoleName::Update, opts)?;
     let knowledge_dir = project.knowledge_dir.clone();
-    let (added, updated) = generator::update(
-        &analysis,
-        &subsystems,
-        &knowledge_dir,
-        opts.with_agents_md.then_some(project.storage),
-    )?;
+    let agents_md = opts.with_agents_md.then_some(project.storage);
+    let (added, updated) = generator::update(&analysis, &subsystems, &knowledge_dir, agents_md)?;
+    let enrich = apply_enrichment(&analysis, &knowledge_dir, enrich, agents_md);
     Ok(PipelineOutcome {
         analysis,
         subsystems,
@@ -161,15 +171,7 @@ pub fn validate_model_override(config: &Config, model_override: Option<&str>) ->
 /// `generator::update` regenerate cards it owns, then re-stamps the card's provenance SHAs so
 /// that hand-edited cards stop being reported stale too.
 pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<()> {
-    let analysis = detector::analyze_project_with(
-        &project.root,
-        &detector::AnalyzeOptions {
-            deep: false,
-            with_rtk: project.config.integrations.resolve_rtk_active(),
-            split_threshold_tokens: project.config.split_threshold_tokens,
-            scope: project.config.scope.clone(),
-        },
-    )?;
+    let analysis = detect(project, false)?;
     let subsystems = build_deterministic(&analysis);
     generator::update(&analysis, &subsystems, &project.knowledge_dir, None)?;
     if let Some(card) = project.card_file(sub) {
@@ -207,26 +209,65 @@ fn analyze(
     opts: &PipelineOptions,
 ) -> Result<(ProjectAnalysis, Vec<SubsystemInfo>, EnrichOutcome)> {
     validate_model_override(&project.config, opts.model_override)?;
-    let analysis = detector::analyze_project_with(
-        &project.root,
-        &detector::AnalyzeOptions {
-            deep: opts.deep,
-            with_rtk: project.config.integrations.resolve_rtk_active(),
-            split_threshold_tokens: project.config.split_threshold_tokens,
-            scope: project.config.scope.clone(),
-        },
-    )?;
-    let mut subsystems = build_deterministic(&analysis);
+    let analysis = detect(project, opts.deep)?;
+    let subsystems = build_deterministic(&analysis);
     let prompts = PromptTemplateRegistry::new(project.config.language.clone());
-    let enrich = enrich_subsystems(
+    let mut enrich = enrich_subsystems(
         router,
         &prompts,
         role,
         &analysis,
-        &mut subsystems,
+        &subsystems,
         opts.model_override,
     );
+    if let EnrichOutcome::PendingAgent(pkg) = &mut enrich {
+        // `context_submit` re-analyzes at the same depth before applying the answer.
+        pkg.deep = opts.deep;
+    }
     Ok((analysis, subsystems, enrich))
+}
+
+/// Deterministic project analysis with the project's scope, split threshold and RTK setting.
+pub fn detect(project: &ResolvedProject, deep: bool) -> Result<ProjectAnalysis> {
+    detector::analyze_project_with(
+        &project.root,
+        &detector::AnalyzeOptions {
+            deep,
+            with_rtk: project.config.integrations.resolve_rtk_active(),
+            split_threshold_tokens: project.config.split_threshold_tokens,
+            scope: project.config.scope.clone(),
+        },
+    )
+}
+
+/// Applies LLM summaries to the freshly written knowledge base with `llm` provenance. Like
+/// enrichment itself, a failure here never fails the pipeline: the deterministic base stays
+/// and the outcome turns into a warning.
+fn apply_enrichment(
+    analysis: &ProjectAnalysis,
+    knowledge_dir: &Path,
+    enrich: EnrichOutcome,
+    agents_md: Option<StorageMode>,
+) -> EnrichOutcome {
+    let EnrichOutcome::Enriched { updates, model } = &enrich else {
+        return enrich;
+    };
+    if updates.is_empty() {
+        return enrich;
+    }
+    match generator::apply_summaries(
+        analysis,
+        knowledge_dir,
+        updates,
+        SummarySource::Llm,
+        Some(model),
+        agents_md,
+    ) {
+        Ok(_) => enrich,
+        Err(e) => EnrichOutcome::Failed {
+            warning: format!("{e:#}"),
+        },
+    }
 }
 
 #[cfg(test)]

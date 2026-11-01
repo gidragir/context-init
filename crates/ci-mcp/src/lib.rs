@@ -338,6 +338,8 @@ mod tests {
             facts: json!({}),
             instruction: "test".to_string(),
             json_schema: ci_llm::default_role_json_schema(role),
+            alias: "test".to_string(),
+            deep: false,
         };
         server.register_work_package(pkg.clone()).await;
         let out = server
@@ -487,6 +489,227 @@ mod tests {
             .unwrap();
         let out: SubmitResult = serde_json::from_str(&out).unwrap();
         assert!(out.valid, "{:?}", out.errors);
+    }
+
+    /// Keeps the host's global config (and its telemetry setting) out of the test.
+    fn isolate_config_dirs(tmp: &TempDirGuard) {
+        std::env::set_var("XDG_CONFIG_HOME", tmp.path().join(".xdg-config"));
+        std::env::set_var("HOME", tmp.path().join(".home"));
+    }
+
+    /// Runs `context_init` with an agent model on the fixture; returns the package id.
+    async fn init_with_agent_package(server: &ContextInitServer, root: &Path) -> String {
+        fs::write(root.join(".context-init.toml"), AGENT_CONFIG).unwrap();
+        let reply = server
+            .init(Parameters(init_params(root)))
+            .await
+            .expect("init");
+        reply
+            .lines()
+            .find_map(|l| l.strip_prefix("package_id: "))
+            .unwrap_or_else(|| panic!("no package_id line in: {reply}"))
+            .trim()
+            .to_string()
+    }
+
+    async fn submit_payload(
+        server: &ContextInitServer,
+        root: &Path,
+        package_id: &str,
+        submission: serde_json::Value,
+    ) -> SubmitResult {
+        let out = server
+            .submit(Parameters(McpSubmitParams {
+                package_id: package_id.to_string(),
+                submission,
+                path: Some(root.to_string_lossy().to_string()),
+                project: None,
+            }))
+            .await
+            .expect("submit tool call");
+        serde_json::from_str(&out).expect("parse SubmitResult JSON")
+    }
+
+    #[tokio::test]
+    async fn submit_updates_l1_card_and_l0_md() {
+        let tmp = TempDirGuard::new("submit_card");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let package_id = init_with_agent_package(&server, tmp.path()).await;
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let target = resolved.load_l0_index().unwrap().subsystems[0].clone();
+
+        let out = submit_payload(
+            &server,
+            tmp.path(),
+            &package_id,
+            json!({"subsystems": [{
+                "id": target.id, "name": "Agent Name",
+                "summary": "Agent-written summary of the subsystem", "tags": ["agent"]
+            }]}),
+        )
+        .await;
+        assert!(out.valid, "{:?}", out.errors);
+
+        let card = fs::read_to_string(resolved.knowledge_dir.join(&target.l1_path)).unwrap();
+        assert!(
+            card.contains("Agent-written summary of the subsystem"),
+            "{card}"
+        );
+        let l0_md = fs::read_to_string(resolved.knowledge_dir.join("L0_index.md")).unwrap();
+        assert!(
+            l0_md.contains("Agent-written summary of the subsystem"),
+            "{l0_md}"
+        );
+        let index = resolved.load_l0_index().unwrap();
+        let sub = index.subsystems.iter().find(|s| s.id == target.id).unwrap();
+        assert_eq!(sub.summary_source, ci_core::SummarySource::Agent);
+        assert_eq!(sub.summary_model.as_deref(), Some("h"));
+
+        let report = pipeline::run_check(&resolved).unwrap();
+        assert!(!report.has_drift, "{report:?}");
+    }
+
+    #[tokio::test]
+    async fn submit_with_unknown_id_is_rejected_atomically() {
+        let tmp = TempDirGuard::new("submit_atomic");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let package_id = init_with_agent_package(&server, tmp.path()).await;
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let kd = resolved.knowledge_dir.clone();
+        let target = resolved.load_l0_index().unwrap().subsystems[0].clone();
+        let index_before = fs::read(kd.join("L0_index.json")).unwrap();
+        let md_before = fs::read(kd.join("L0_index.md")).unwrap();
+        let card_before = fs::read(kd.join(&target.l1_path)).unwrap();
+
+        let out = submit_payload(
+            &server,
+            tmp.path(),
+            &package_id,
+            json!({"subsystems": [
+                {"id": target.id, "name": "Valid", "summary": "Valid summary", "tags": []},
+                {"id": "ghost", "name": "Ghost", "summary": "Ghost summary", "tags": []}
+            ]}),
+        )
+        .await;
+        assert!(!out.valid);
+        assert!(
+            out.errors.iter().any(|e| e.contains("ghost")),
+            "{:?}",
+            out.errors
+        );
+        assert_eq!(fs::read(kd.join("L0_index.json")).unwrap(), index_before);
+        assert_eq!(fs::read(kd.join("L0_index.md")).unwrap(), md_before);
+        assert_eq!(fs::read(kd.join(&target.l1_path)).unwrap(), card_before);
+        assert!(!kd.join("subsystems/ghost.md").exists());
+    }
+
+    #[tokio::test]
+    async fn submit_rejects_single_card_body_form() {
+        let tmp = TempDirGuard::new("submit_body_form");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let kd = resolved.knowledge_dir.clone();
+        let target = resolved.load_l0_index().unwrap().subsystems[0].clone();
+        let index_before = fs::read(kd.join("L0_index.json")).unwrap();
+        let card_before = fs::read(kd.join(&target.l1_path)).unwrap();
+
+        // The `update` role schema still describes the single-card form, so the payload passes
+        // schema validation and must be refused by the submission itself.
+        let out = submit_with_package(
+            &server,
+            tmp.path(),
+            RoleName::Update,
+            json!({"id": target.id, "summary": "s", "body": "# Replaced card"}),
+        )
+        .await;
+        assert!(!out.valid, "{out:?}");
+        assert_eq!(fs::read(kd.join("L0_index.json")).unwrap(), index_before);
+        assert_eq!(fs::read(kd.join(&target.l1_path)).unwrap(), card_before);
+    }
+
+    #[tokio::test]
+    async fn llm_enrichment_sets_llm_source() {
+        let tmp = TempDirGuard::new("llm_source");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        let root = fs::canonicalize(tmp.path()).unwrap();
+        let analysis = ci_core::analysis::detector::analyze_project_with(
+            &root,
+            &ci_core::analysis::detector::AnalyzeOptions {
+                deep: false,
+                with_rtk: false,
+                split_threshold_tokens: ci_core::config::Config::default().split_threshold_tokens,
+                scope: Default::default(),
+            },
+        )
+        .unwrap();
+        let id = ci_core::analysis::subsystems::build_deterministic(&analysis)[0]
+            .id
+            .clone();
+        let reply = tmp.path().join("llm_reply.json");
+        fs::write(
+            &reply,
+            json!({"subsystems": [{
+                "id": id, "name": "LLM Name", "summary": "LLM-written summary", "tags": ["llm"]
+            }]})
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join(".context-init.toml"),
+            format!(
+                "[models.mock]\nkind = \"command\"\ncommand = [\"cat\", {:?}]\n\n[roles]\ninit = [\"mock\"]\n",
+                reply.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let raw: serde_json::Value = serde_json::from_slice(
+            &fs::read(resolved.knowledge_dir.join("L0_index.json")).unwrap(),
+        )
+        .unwrap();
+        let entry = raw["subsystems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == id.as_str())
+            .unwrap_or_else(|| panic!("{id} missing in {raw}"));
+        assert_eq!(entry["summary"], "LLM-written summary", "{entry}");
+        assert_eq!(entry["summary_source"], "llm", "{entry}");
+        assert_eq!(entry["summary_model"], "mock", "{entry}");
+        let sub = resolved
+            .load_l0_index()
+            .unwrap()
+            .subsystems
+            .into_iter()
+            .find(|s| s.id == id)
+            .unwrap();
+        let card = fs::read_to_string(resolved.knowledge_dir.join(&sub.l1_path)).unwrap();
+        assert!(card.contains("LLM-written summary"), "{card}");
     }
 
     #[tokio::test]
@@ -1123,29 +1346,70 @@ mod tests {
         assert_eq!(core.files[0].path, "src/lib.rs");
     }
 
+    /// Review Focus 5: a write failure midway (the card is staged, `L0_index.md` cannot be)
+    /// leaves the index and every card byte-for-byte unchanged.
+    #[cfg(unix)]
     #[tokio::test]
     async fn submit_reports_write_errors() {
+        use std::os::unix::fs::PermissionsExt;
         let tmp = TempDirGuard::new("submit_write_err");
-        let kd = seed_in_repo_knowledge(tmp.path());
-        fs::remove_dir_all(kd.join("subsystems")).unwrap();
-        fs::write(kd.join("subsystems"), "not a dir").unwrap();
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
         let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let package_id = init_with_agent_package(&server, tmp.path()).await;
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let kd = resolved.knowledge_dir.clone();
+        let target = resolved.load_l0_index().unwrap().subsystems[0].clone();
+        let index_before = fs::read(kd.join("L0_index.json")).unwrap();
+        let card_before = fs::read(kd.join(&target.l1_path)).unwrap();
 
-        let out = submit_with_package(
+        let set_mode = |mode| fs::set_permissions(&kd, fs::Permissions::from_mode(mode)).unwrap();
+        set_mode(0o555);
+        if fs::write(kd.join(".probe"), "").is_ok() {
+            // Running with privileges that ignore permissions: nothing to observe.
+            set_mode(0o755);
+            return;
+        }
+        let out = submit_payload(
             &server,
             tmp.path(),
-            RoleName::Update,
-            json!({"id": "core", "summary": "s", "body": "# Core"}),
+            &package_id,
+            json!({"subsystems": [{
+                "id": target.id, "name": "N", "summary": "Never written", "tags": []
+            }]}),
         )
         .await;
-        assert!(!out.valid || !out.errors.is_empty());
+        set_mode(0o755);
+
+        assert!(!out.valid, "{out:?}");
+        assert!(!out.errors.is_empty());
         assert!(!out.message.contains("accepted"), "{}", out.message);
+        assert_eq!(fs::read(kd.join("L0_index.json")).unwrap(), index_before);
+        assert_eq!(fs::read(kd.join(&target.l1_path)).unwrap(), card_before);
+        let leftovers: Vec<_> = fs::read_dir(kd.join("subsystems"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[tokio::test]
     async fn context_submit_valid_and_schema_error_feedback() {
         let tmp = TempDirGuard::new("submit");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
         let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let id = resolved.load_l0_index().unwrap().subsystems[0].id.clone();
 
         let pkg = AgentWorkPackage {
             package_id: "pkg-worker-init-1001".to_string(),
@@ -1153,6 +1417,8 @@ mod tests {
             facts: json!({}),
             instruction: "Extract subsystems".to_string(),
             json_schema: ci_llm::default_role_json_schema(RoleName::Init),
+            alias: "worker".to_string(),
+            deep: false,
         };
         server.register_work_package(pkg.clone()).await;
 
@@ -1160,7 +1426,7 @@ mod tests {
         let valid_payload = json!({
             "subsystems": [
                 {
-                    "id": "ci_mcp",
+                    "id": id,
                     "name": "MCP Server",
                     "summary": "Protocol server implementation",
                     "tags": ["mcp", "rust"]
@@ -1182,7 +1448,7 @@ mod tests {
         );
         let valid_out: SubmitResult =
             serde_json::from_str(&res_valid.unwrap()).expect("parse SubmitResult JSON");
-        assert!(valid_out.valid);
+        assert!(valid_out.valid, "{:?}", valid_out.errors);
         assert_eq!(valid_out.package_id, pkg.package_id);
         assert!(valid_out.errors.is_empty());
         assert!(valid_out.message.contains("validated and accepted"));
@@ -1400,73 +1666,6 @@ mod tests {
             resolved,
             Some(fs::canonicalize(&ws_root).unwrap()),
             "find_project_root_upward must find workspace root over member crate"
-        );
-    }
-
-    #[tokio::test]
-    async fn context_submit_update_role_persists_card_and_metadata() {
-        let tmp = TempDirGuard::new("submit_update");
-        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
-
-        // 1. Initialize KB
-        let _ = server
-            .init(Parameters(McpInitParams {
-                path: Some(tmp.path().to_string_lossy().to_string()),
-                ..Default::default()
-            }))
-            .await
-            .expect("init succeeds");
-
-        // 2. Register work package for Update role
-        let pkg = AgentWorkPackage {
-            package_id: "pkg-worker-update-2002".to_string(),
-            role: RoleName::Update,
-            facts: json!({}),
-            instruction: "Update core card".to_string(),
-            json_schema: ci_llm::default_role_json_schema(RoleName::Update),
-        };
-        server.register_work_package(pkg.clone()).await;
-
-        // 3. Submit valid update
-        let updated_body =
-            "# Subsystem: Core Logic (L1)\n\nUpdated card body content from agent.\n";
-        let update_payload = json!({
-            "id": "core",
-            "summary": "Updated core summary by agent",
-            "body": updated_body,
-            "tags": ["core", "updated"]
-        });
-
-        let res = server
-            .submit(Parameters(McpSubmitParams {
-                package_id: pkg.package_id.clone(),
-                submission: update_payload,
-                path: Some(tmp.path().to_string_lossy().to_string()),
-                project: None,
-            }))
-            .await
-            .expect("submit succeeds");
-
-        let out: SubmitResult = serde_json::from_str(&res).unwrap();
-        assert!(out.valid);
-        assert!(out.errors.is_empty());
-
-        // Verify disk card file was updated
-        let resolved = server
-            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
-            .await;
-        let card_p = resolved.knowledge_dir.join("subsystems").join("core.md");
-        assert!(card_p.is_file(), "core.md must exist on disk");
-        let card_content = fs::read_to_string(&card_p).unwrap();
-        assert_eq!(card_content, updated_body);
-
-        // Verify L0_index.json metadata was updated
-        let idx = resolved.load_l0_index().unwrap();
-        let core_sub = idx.subsystems.iter().find(|s| s.id == "core").unwrap();
-        assert_eq!(core_sub.summary, "Updated core summary by agent");
-        assert_eq!(
-            core_sub.tags,
-            vec!["core".to_string(), "updated".to_string()]
         );
     }
 

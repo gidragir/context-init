@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ci_core::analysis::generator::{self, SummaryUpdate};
 use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
 use ci_core::analysis::resolve_knowledge_dir;
 use ci_core::analysis::scan::{render_scan_markdown, scan_project};
@@ -16,13 +17,13 @@ use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
 use ci_core::search::{Bm25Retriever, Retriever, SearchHit};
 use ci_core::storage::{
-    compute_project_id, now_rfc3339, safe_join, subsystem_card_path, subsystem_tokens, L0Index,
-    SubsystemInfo,
+    compute_project_id, safe_join, subsystem_card_path, subsystem_tokens, L0Index, SubsystemInfo,
 };
 use ci_core::telemetry::{
     record_feedback, FeedbackSignal, Recorder, TelemetryEvent, TelemetryScope, TelemetrySignal,
     TelemetrySink,
 };
+use ci_core::SummarySource;
 use ci_llm::enrich::{cli_outcome_message, EnrichOutcome};
 use ci_llm::providers::validate_agent_submission;
 use ci_llm::{AgentWorkPackage, LlmRequest, RoleName, RoleRouter};
@@ -530,98 +531,64 @@ impl ContextHandler {
         Ok(paginated.rendered)
     }
 
-    /// Persists a validated agent submission into the knowledge base.
+    /// Applies a validated agent submission to the whole knowledge base.
     ///
-    /// Every subsystem id is validated before anything is written, so a hostile id can
-    /// neither escape `knowledge_dir` nor leave a half-applied update behind. File lists
-    /// are never taken from submissions: they come from the detector only.
-    fn persist_submission(project: &ResolvedProject, payload: &serde_json::Value) -> Result<()> {
+    /// Only the `{"subsystems": [{id, name, summary, tags}]}` form is accepted. The project is
+    /// re-analyzed deterministically (at the package's depth) and the summaries are merged via
+    /// [`generator::apply_summaries`] with `agent` provenance and the package's model alias, which
+    /// re-renders the affected cards, `L0_index.md`, `L0_index.json` and (with
+    /// `touch_agents_md`) `AGENTS.md`. The call is all-or-nothing: an invalid or unknown id, or a
+    /// failed analysis, leaves every file untouched. File lists are never taken from
+    /// submissions: they come from the detector only. Returns the number of subsystems updated.
+    fn persist_submission(
+        project: &ResolvedProject,
+        pkg: &AgentWorkPackage,
+        payload: &serde_json::Value,
+    ) -> Result<usize> {
         let kd = &project.knowledge_dir;
-        let index_path = kd.join("L0_index.json");
-        let mut index = if index_path.is_file() {
-            project.load_l0_index()?
-        } else {
-            L0Index::default()
-        };
+        let items = payload
+            .get("subsystems")
+            .and_then(serde_json::Value::as_array)
+            .context(
+                "Submission must have the form {\"subsystems\": [{\"id\", \"name\", \"summary\", \"tags\"}]}; \
+                 single cards with `body` are not accepted",
+            )?;
         let str_field = |v: &serde_json::Value, key: &str| {
             v.get(key)
                 .and_then(serde_json::Value::as_str)
                 .map(ToOwned::to_owned)
         };
-        let tags_field = |v: &serde_json::Value| {
-            v.get("tags")
-                .and_then(|t| serde_json::from_value::<Vec<String>>(t.clone()).ok())
-        };
 
-        if let Some(items) = payload
-            .get("subsystems")
-            .and_then(serde_json::Value::as_array)
-        {
-            let mut cards = Vec::with_capacity(items.len());
-            for item in items {
-                let id = str_field(item, "id").unwrap_or_default();
-                cards.push((subsystem_card_path(kd, &id)?, id, item));
-            }
-            for (card_path, id, item) in cards {
-                let name = str_field(item, "name").unwrap_or_else(|| id.clone());
-                let summary = str_field(item, "summary").unwrap_or_default();
-                if let Some(sub) = index.subsystems.iter_mut().find(|s| s.id == id) {
-                    sub.name = name.clone();
-                    sub.summary = summary.clone();
-                    if let Some(tags) = tags_field(item) {
-                        sub.tags = tags;
-                    }
-                } else {
-                    index.subsystems.push(SubsystemInfo {
-                        id: id.clone(),
-                        name: name.clone(),
-                        summary: summary.clone(),
-                        l1_path: format!("subsystems/{id}.md"),
-                        tags: tags_field(item).unwrap_or_default(),
-                        entrypoints: Vec::new(),
-                        key_files: Vec::new(),
-                        files: Vec::new(),
-                        key_symbols: Vec::new(),
-                        test_command: None,
-                        tokens: 0,
-                        parent: None,
-                        summary_source: ci_core::SummarySource::Heuristic,
-                        summary_model: None,
-                        needs_review: false,
-                    });
-                }
-                if !card_path.exists() {
-                    fs::create_dir_all(kd.join("subsystems"))?;
-                    fs::write(
-                        &card_path,
-                        format!("# Subsystem: {name} (L1)\n\n{summary}\n"),
-                    )
-                    .with_context(|| format!("Failed to write card {card_path:?}"))?;
-                }
-            }
-        } else if let Some(id) = str_field(payload, "id") {
-            let card_path = subsystem_card_path(kd, &id)?;
-            if let Some(body) = str_field(payload, "body") {
-                fs::create_dir_all(kd.join("subsystems"))
-                    .with_context(|| format!("Failed to create {:?}", kd.join("subsystems")))?;
-                fs::write(&card_path, body)
-                    .with_context(|| format!("Failed to write card {card_path:?}"))?;
-            }
-            if let Some(sub) = index.subsystems.iter_mut().find(|s| s.id == id) {
-                if let Some(summary) = str_field(payload, "summary") {
-                    sub.summary = summary;
-                }
-                if let Some(tags) = tags_field(payload) {
-                    sub.tags = tags;
-                }
-            }
-        } else {
-            return Ok(());
+        let mut updates = Vec::with_capacity(items.len());
+        for item in items {
+            let id = str_field(item, "id").unwrap_or_default();
+            // Rejects traversal and absolute ids with an explicit error before any analysis.
+            subsystem_card_path(kd, &id)?;
+            let summary = str_field(item, "summary")
+                .filter(|s| !s.trim().is_empty())
+                .with_context(|| format!("Subsystem '{id}': summary must not be empty"))?;
+            updates.push(SummaryUpdate {
+                name: str_field(item, "name").filter(|n| !n.trim().is_empty()),
+                tags: item
+                    .get("tags")
+                    .and_then(|t| serde_json::from_value::<Vec<String>>(t.clone()).ok()),
+                id,
+                summary,
+            });
         }
 
-        index.updated_at = now_rfc3339();
-        fs::create_dir_all(kd)?;
-        index.save_to_file(&index_path)
+        let analysis = pipeline::detect(project, pkg.deep)
+            .context("Re-analysis of the project failed; the knowledge base is unchanged")?;
+        let model = (!pkg.alias.is_empty()).then_some(pkg.alias.as_str());
+        let agents_md = project.config.touch_agents_md.then_some(project.storage);
+        generator::apply_summaries(
+            &analysis,
+            kd,
+            &updates,
+            SummarySource::Agent,
+            model,
+            agents_md,
+        )
     }
 
     /// Handler for `context_submit` (D14, D29, R4).
@@ -653,7 +620,7 @@ impl ContextHandler {
 
         match validate_agent_submission(pkg_ref, submission) {
             Ok(validated) => {
-                if let Err(e) = Self::persist_submission(project, &validated.payload) {
+                if let Err(e) = Self::persist_submission(project, pkg_ref, &validated.payload) {
                     let result = SubmitResult {
                         valid: false,
                         package_id: validated.package_id,

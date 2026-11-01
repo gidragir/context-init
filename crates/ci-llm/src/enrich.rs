@@ -1,6 +1,7 @@
 //! Optional LLM enrichment of deterministic subsystems via `RoleRouter` (D16).
 //! Replaces the legacy ad-hoc Ollama path: Ollama is just a `[models.*]` provider.
 
+use ci_core::analysis::generator::SummaryUpdate;
 use ci_core::analysis::ProjectAnalysis;
 use ci_core::storage::SubsystemInfo;
 
@@ -15,24 +16,29 @@ use crate::{
 pub enum EnrichOutcome {
     /// The role resolved to deterministic `none`; nothing changed.
     Skipped,
-    /// LLM summaries/tags were merged into this many existing subsystems.
-    Enriched { updated: usize },
+    /// The model answered with these summaries for known subsystems; the caller applies them
+    /// (`generator::apply_summaries`) with `model` as the recorded alias.
+    Enriched {
+        updates: Vec<SummaryUpdate>,
+        model: String,
+    },
     /// The role resolved to an `agent` model: the harness must answer this package via
-    /// `context_submit`. Subsystems are unchanged.
+    /// `context_submit`.
     PendingAgent(AgentWorkPackage),
-    /// The provider chain failed; subsystems are unchanged.
+    /// The provider chain failed; nothing is to be applied.
     Failed { warning: String },
 }
 
-/// Asks the model chain for `role` to improve subsystem summaries and tags, merging
-/// the answer by subsystem id. Unknown ids in the answer are ignored, so the set of
-/// subsystems always stays the detector's.
+/// Asks the model chain for `role` to improve subsystem summaries and tags. Returns the
+/// answer as updates keyed by subsystem id without changing `subsystems`: unknown ids and
+/// items without a summary are dropped, so the set of subsystems always stays the
+/// detector's.
 pub fn enrich_subsystems(
     router: &RoleRouter,
     prompts: &PromptTemplateRegistry,
     role: RoleName,
     analysis: &ProjectAnalysis,
-    subsystems: &mut [SubsystemInfo],
+    subsystems: &[SubsystemInfo],
     model_override: Option<&str>,
 ) -> EnrichOutcome {
     let schema = crate::default_role_json_schema(role);
@@ -55,22 +61,24 @@ pub fn enrich_subsystems(
     }
     match parse_subsystem_summaries(&resp.content) {
         Ok(items) => {
-            let mut updated = 0;
+            let mut updates: Vec<SummaryUpdate> = Vec::new();
             for item in items {
-                if let Some(sub) = subsystems.iter_mut().find(|s| s.id == item.id) {
-                    if !item.summary.trim().is_empty() {
-                        sub.summary = item.summary;
-                    }
-                    if !item.name.trim().is_empty() {
-                        sub.name = item.name;
-                    }
-                    if !item.tags.is_empty() {
-                        sub.tags = item.tags;
-                    }
-                    updated += 1;
+                let known = subsystems.iter().any(|s| s.id == item.id);
+                // A blank summary carries nothing to attribute to the model.
+                if !known || item.summary.trim().is_empty() {
+                    continue;
                 }
+                updates.push(SummaryUpdate {
+                    id: item.id,
+                    name: (!item.name.trim().is_empty()).then_some(item.name),
+                    summary: item.summary,
+                    tags: (!item.tags.is_empty()).then_some(item.tags),
+                });
             }
-            EnrichOutcome::Enriched { updated }
+            EnrichOutcome::Enriched {
+                updates,
+                model: resp.alias,
+            }
         }
         Err(e) => EnrichOutcome::Failed {
             warning: format!("{e:#}"),
@@ -83,9 +91,10 @@ pub fn enrich_subsystems(
 pub fn cli_outcome_message(outcome: &EnrichOutcome) -> Option<String> {
     match outcome {
         EnrichOutcome::Skipped => None,
-        EnrichOutcome::Enriched { updated } => {
-            Some(format!("LLM enrichment updated {updated} subsystem(s)."))
-        }
+        EnrichOutcome::Enriched { updates, model } => Some(format!(
+            "LLM enrichment ({model}) updated {} subsystem(s).",
+            updates.len()
+        )),
         EnrichOutcome::PendingAgent(_) => Some(
             "Model kind \"agent\" is answered by an AI harness over MCP (context_init); \
              the CLI keeps deterministic summaries."
@@ -225,15 +234,8 @@ mod tests {
     #[test]
     fn enrich_none_role_is_skipped() {
         let router = RoleRouter::with_registry(Config::default(), ProviderRegistry::new(), None);
-        let mut s = subs();
-        let out = enrich_subsystems(
-            &router,
-            &prompts(),
-            RoleName::Init,
-            &analysis(),
-            &mut s,
-            None,
-        );
+        let s = subs();
+        let out = enrich_subsystems(&router, &prompts(), RoleName::Init, &analysis(), &s, None);
         assert_eq!(out, EnrichOutcome::Skipped);
         assert_eq!(s, subs());
     }
@@ -243,34 +245,29 @@ mod tests {
         let router = router_with(Ok(
             r#"{"subsystems":[{"id":"core","name":"Core","summary":"LLM core","tags":["rust"]},{"id":"ghost","name":"G","summary":"x","tags":[]}]}"#,
         ));
-        let mut s = subs();
-        let out = enrich_subsystems(
-            &router,
-            &prompts(),
-            RoleName::Init,
-            &analysis(),
-            &mut s,
-            None,
+        let s = subs();
+        let out = enrich_subsystems(&router, &prompts(), RoleName::Init, &analysis(), &s, None);
+        assert_eq!(
+            out,
+            EnrichOutcome::Enriched {
+                updates: vec![SummaryUpdate {
+                    id: "core".to_string(),
+                    name: Some("Core".to_string()),
+                    summary: "LLM core".to_string(),
+                    tags: Some(vec!["rust".to_string()]),
+                }],
+                model: "scripted".to_string(),
+            }
         );
-        assert_eq!(out, EnrichOutcome::Enriched { updated: 1 });
-        assert_eq!(s[0].summary, "LLM core");
-        assert_eq!(s[0].tags, vec!["rust".to_string()]);
-        assert_eq!(s[1].summary, "deterministic api");
-        assert_eq!(s.len(), 2);
+        // The subsystems themselves are never mutated.
+        assert_eq!(s, subs());
     }
 
     #[test]
     fn enrich_provider_error_returns_failed_and_keeps_subsystems() {
         let router = router_with(Err("connection refused"));
-        let mut s = subs();
-        let out = enrich_subsystems(
-            &router,
-            &prompts(),
-            RoleName::Init,
-            &analysis(),
-            &mut s,
-            None,
-        );
+        let s = subs();
+        let out = enrich_subsystems(&router, &prompts(), RoleName::Init, &analysis(), &s, None);
         assert!(
             matches!(out, EnrichOutcome::Failed { ref warning } if warning.contains("connection refused")),
             "{out:?}"
@@ -294,15 +291,8 @@ mod tests {
         );
         cfg.roles.init = vec!["harness".to_string()];
         let router = RoleRouter::new(cfg, None).unwrap();
-        let mut s = subs();
-        let out = enrich_subsystems(
-            &router,
-            &prompts(),
-            RoleName::Init,
-            &analysis(),
-            &mut s,
-            None,
-        );
+        let s = subs();
+        let out = enrich_subsystems(&router, &prompts(), RoleName::Init, &analysis(), &s, None);
         match out {
             EnrichOutcome::PendingAgent(pkg) => assert_eq!(pkg.role, RoleName::Init),
             other => panic!("expected PendingAgent, got {other:?}"),
@@ -318,6 +308,8 @@ mod tests {
             facts: serde_json::json!({}),
             instruction: String::new(),
             json_schema: crate::default_role_json_schema(RoleName::Init),
+            alias: "h".to_string(),
+            deep: false,
         };
         let msg = cli_outcome_message(&EnrichOutcome::PendingAgent(pkg)).unwrap();
         assert!(msg.contains("agent") && msg.contains("MCP"), "{msg}");
