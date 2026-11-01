@@ -16,10 +16,12 @@ use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
 use ci_core::openviking::OkfCard;
 use ci_core::search::{Bm25Retriever, Retriever, SearchHit};
 use ci_core::storage::{
-    compute_project_id, now_rfc3339, safe_join, subsystem_card_path, L0Index, SubsystemInfo,
+    compute_project_id, now_rfc3339, safe_join, subsystem_card_path, subsystem_tokens, L0Index,
+    SubsystemInfo,
 };
 use ci_core::telemetry::{
-    record_feedback, FeedbackSignal, Recorder, TelemetryEvent, TelemetrySignal, TelemetrySink,
+    record_feedback, FeedbackSignal, Recorder, TelemetryEvent, TelemetryScope, TelemetrySignal,
+    TelemetrySink,
 };
 use ci_llm::enrich::{cli_outcome_message, EnrichOutcome};
 use ci_llm::providers::validate_agent_submission;
@@ -27,7 +29,7 @@ use ci_llm::{AgentWorkPackage, LlmRequest, RoleName, RoleRouter};
 
 use crate::pipeline::{self, PipelineOptions};
 
-use crate::pagination::{count_tokens, paginate_content};
+use crate::pagination::{count_tokens, decode_cursor, paginate_content, PaginatedOutput};
 use crate::tools::*;
 
 /// `pack all` is refused when the packed project exceeds this many response pages (D19).
@@ -170,6 +172,46 @@ impl ResolvedProject {
     }
 }
 
+/// Live source tokens of the listed subsystems. `SubsystemInfo::tokens` is not persisted, so it
+/// is filled from the current sources for these ids only, then summed by the storage helper.
+fn live_source_tokens(project: &ResolvedProject, index: &L0Index, ids: &[&str]) -> usize {
+    let hydrated = L0Index {
+        subsystems: index
+            .subsystems
+            .iter()
+            .filter(|s| ids.contains(&s.id.as_str()))
+            .cloned()
+            .map(|mut s| {
+                s.tokens = ci_core::analysis::subsystems::subsystem_tokens(&project.root, &s);
+                s
+            })
+            .collect(),
+        ..L0Index::default()
+    };
+    subsystem_tokens(&hydrated, ids)
+}
+
+/// Records the efficiency signal of one paginated reply (no-op when telemetry is inactive).
+fn record_page(
+    tel: &TelemetryScope,
+    tool: &str,
+    source_tokens: usize,
+    empty_search: bool,
+    cursor: Option<&str>,
+    page: &PaginatedOutput,
+) {
+    let hops = cursor.and_then(decode_cursor).map(|c| c.page).unwrap_or(0);
+    tel.efficiency(
+        tool,
+        source_tokens,
+        &page.rendered,
+        page.truncated,
+        hops,
+        page.stale,
+        empty_search,
+    );
+}
+
 /// Number of search results returned by default.
 pub const DEFAULT_SEARCH_TOP_K: usize = 10;
 
@@ -255,7 +297,11 @@ impl ContextHandler {
     }
 
     /// Handler for `context_get_subsystems`.
-    pub fn get_subsystems(project: &ResolvedProject, cursor: Option<&str>) -> Result<String> {
+    pub fn get_subsystems(
+        project: &ResolvedProject,
+        cursor: Option<&str>,
+        tel: &TelemetryScope,
+    ) -> Result<String> {
         let index = project.load_l0_index()?;
         let mut any_stale = false;
         for sub in &index.subsystems {
@@ -284,6 +330,18 @@ impl ContextHandler {
             project.config.max_response_tokens,
             any_stale,
         );
+        if tel.is_active() {
+            let ids: Vec<&str> = index.subsystems.iter().map(|s| s.id.as_str()).collect();
+            let source = live_source_tokens(project, &index, &ids);
+            record_page(
+                tel,
+                "context_get_subsystems",
+                source,
+                false,
+                cursor,
+                &paginated,
+            );
+        }
         Ok(paginated.rendered)
     }
 
@@ -292,6 +350,7 @@ impl ContextHandler {
         project: &ResolvedProject,
         subsystem_id: &str,
         cursor: Option<&str>,
+        tel: &TelemetryScope,
     ) -> Result<String> {
         let index = project.load_l0_index()?;
         let clean_id = subsystem_id
@@ -314,13 +373,10 @@ impl ContextHandler {
                 &project.config.scope,
                 clean_id,
             )? {
-                return Ok(paginate_content(
-                    &card,
-                    cursor,
-                    project.config.max_response_tokens,
-                    false,
-                )
-                .rendered);
+                let paginated =
+                    paginate_content(&card, cursor, project.config.max_response_tokens, false);
+                record_page(tel, "context_get_subsystem", 0, false, cursor, &paginated);
+                return Ok(paginated.rendered);
             }
             let available: Vec<&str> = index.subsystems.iter().map(|s| s.id.as_str()).collect();
             bail!(
@@ -388,6 +444,17 @@ impl ContextHandler {
             project.config.max_response_tokens,
             stale,
         );
+        if tel.is_active() {
+            let source = live_source_tokens(project, &index, &[sub.id.as_str()]);
+            record_page(
+                tel,
+                "context_get_subsystem",
+                source,
+                false,
+                cursor,
+                &paginated,
+            );
+        }
         Ok(paginated.rendered)
     }
 
@@ -398,6 +465,7 @@ impl ContextHandler {
         compress: bool,
         style: &str,
         cursor: Option<&str>,
+        tel: &TelemetryScope,
     ) -> Result<String> {
         let index = project.load_l0_index()?;
         let PackedSubsystems {
@@ -414,6 +482,12 @@ impl ContextHandler {
         )?;
 
         let budget = project.config.max_response_tokens;
+        let source_tokens = if tel.is_active() {
+            let ids: Vec<&str> = matched_subs.iter().map(|s| s.id.as_str()).collect();
+            live_source_tokens(project, &index, &ids)
+        } else {
+            0
+        };
         if subsystem_id.eq_ignore_ascii_case("all")
             && count_tokens(&packed_content) > PACK_ALL_MAX_PAGES.saturating_mul(budget)
         {
@@ -423,7 +497,16 @@ impl ContextHandler {
                  Pack per subsystem instead with context_pack(subsystem_id=<id>). Subsystems: {}",
                 ids.join(", ")
             );
-            return Ok(paginate_content(&refusal, cursor, budget, false).rendered);
+            let paginated = paginate_content(&refusal, cursor, budget, false);
+            record_page(
+                tel,
+                "context_pack",
+                source_tokens,
+                false,
+                cursor,
+                &paginated,
+            );
+            return Ok(paginated.rendered);
         }
 
         let any_stale = matched_subs
@@ -435,6 +518,14 @@ impl ContextHandler {
             cursor,
             project.config.max_response_tokens,
             any_stale,
+        );
+        record_page(
+            tel,
+            "context_pack",
+            source_tokens,
+            false,
+            cursor,
+            &paginated,
         );
         Ok(paginated.rendered)
     }
@@ -759,11 +850,13 @@ impl ContextHandler {
         base_ref: Option<&str>,
         target: Option<&str>,
         cursor: Option<&str>,
+        tel: &TelemetryScope,
     ) -> Result<String> {
+        let index = project.load_l0_index().ok();
         let digest = build_task_digest(
             &project.root,
             &SystemGitBackend::new(),
-            project.load_l0_index().ok().as_ref(),
+            index.as_ref(),
             &TaskDigestRequest {
                 paths: paths.unwrap_or(&[]),
                 base_ref,
@@ -773,6 +866,17 @@ impl ContextHandler {
         )?;
         let paginated =
             paginate_content(&digest, cursor, project.config.max_response_tokens, false);
+        if let (true, Some(index)) = (tel.is_active(), index.as_ref()) {
+            // The digest tags each affected path with its subsystem id.
+            let affected: Vec<&str> = index
+                .subsystems
+                .iter()
+                .map(|s| s.id.as_str())
+                .filter(|id| digest.contains(&format!("(subsystem: `{id}`)")))
+                .collect();
+            let source = live_source_tokens(project, index, &affected);
+            record_page(tel, "context_task", source, false, cursor, &paginated);
+        }
         Ok(paginated.rendered)
     }
 
@@ -783,8 +887,9 @@ impl ContextHandler {
         query: &str,
         cursor: Option<&str>,
         router: &RoleRouter,
+        tel: &TelemetryScope,
     ) -> Result<String> {
-        Self::search_top_k(project, query, cursor, router, DEFAULT_SEARCH_TOP_K)
+        Self::search_top_k(project, query, cursor, router, DEFAULT_SEARCH_TOP_K, tel)
     }
 
     /// [`ContextHandler::search`] with an explicit result count.
@@ -794,6 +899,7 @@ impl ContextHandler {
         cursor: Option<&str>,
         router: &RoleRouter,
         top_k: usize,
+        tel: &TelemetryScope,
     ) -> Result<String> {
         let index = project.load_l0_index()?;
         let retriever = Bm25Retriever::build(&index, &project.knowledge_dir)?;
@@ -842,6 +948,19 @@ impl ContextHandler {
             }
         }
         let out = render(&hits);
-        Ok(paginate_content(&out, cursor, budget, false).rendered)
+        let paginated = paginate_content(&out, cursor, budget, false);
+        if tel.is_active() {
+            let ids: Vec<&str> = hits.iter().map(|h| h.subsystem_id.as_str()).collect();
+            let source = live_source_tokens(project, &index, &ids);
+            record_page(
+                tel,
+                "context_search",
+                source,
+                hits.is_empty(),
+                cursor,
+                &paginated,
+            );
+        }
+        Ok(paginated.rendered)
     }
 }

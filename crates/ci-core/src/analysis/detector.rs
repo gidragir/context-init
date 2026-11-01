@@ -460,17 +460,7 @@ pub fn prefix_with_rtk(cmd: &str) -> String {
     }
 }
 
-static BPE_TOKENIZER: std::sync::OnceLock<Option<tiktoken_rs::CoreBPE>> =
-    std::sync::OnceLock::new();
-
-pub fn count_tokens(text: &str) -> usize {
-    let bpe = BPE_TOKENIZER.get_or_init(|| tiktoken_rs::cl100k_base().ok());
-    if let Some(bpe) = bpe.as_ref() {
-        bpe.encode_with_special_tokens(text).len()
-    } else {
-        text.len() / 4
-    }
-}
+pub use crate::tokens::count_tokens;
 
 fn detect_commands(root: &Path, pt: &ProjectType, with_rtk: bool) -> ProjectCommands {
     let mut cmds = ProjectCommands::default();

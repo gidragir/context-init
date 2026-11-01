@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 use ci_core::config::{Config, StoragePaths};
 use ci_core::telemetry::{
     classify_error, harness_from_client_name, CallContext, CallOutcome, Channel, ErrorClass,
-    HarnessId, JsonlTelemetrySink, Recorder, TelemetrySink,
+    HarnessId, JsonlTelemetrySink, Recorder, TelemetryScope, TelemetrySink,
 };
 use ci_llm::{AgentWorkPackage, RoleRouter};
 
@@ -184,6 +184,14 @@ impl ContextInitServer {
         }
     }
 
+    /// Telemetry scope handed to handlers: the project's recorder plus the current call context.
+    fn scope(&self, recorder: &Recorder) -> TelemetryScope {
+        TelemetryScope {
+            recorder: recorder.clone(),
+            ctx: self.call_context(),
+        }
+    }
+
     /// Runs a tool body, records one operational event through `recorder` (a no-op recorder
     /// when the resolved project has telemetry disabled) and maps errors to MCP errors.
     pub(crate) async fn instrumented<F, Fut>(
@@ -343,8 +351,9 @@ impl ContextInitServer {
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
         let recorder = resolved.recorder(self.telemetry_sink.clone());
+        let tel = self.scope(&recorder);
         self.instrumented("context_get_subsystems", recorder, || async {
-            ContextHandler::get_subsystems(&resolved, p.cursor.as_deref())
+            ContextHandler::get_subsystems(&resolved, p.cursor.as_deref(), &tel)
         })
         .await
     }
@@ -363,8 +372,9 @@ impl ContextInitServer {
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
         let recorder = resolved.recorder(self.telemetry_sink.clone());
+        let tel = self.scope(&recorder);
         self.instrumented("context_get_subsystem", recorder, || async {
-            ContextHandler::get_subsystem(&resolved, &p.subsystem_id, p.cursor.as_deref())
+            ContextHandler::get_subsystem(&resolved, &p.subsystem_id, p.cursor.as_deref(), &tel)
         })
         .await
     }
@@ -380,6 +390,7 @@ impl ContextInitServer {
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
         let recorder = resolved.recorder(self.telemetry_sink.clone());
+        let tel = self.scope(&recorder);
         self.instrumented("context_pack", recorder, || async {
             ContextHandler::pack(
                 &resolved,
@@ -387,6 +398,7 @@ impl ContextInitServer {
                 p.compress.unwrap_or(true),
                 p.style.as_deref().unwrap_or("xml"),
                 p.cursor.as_deref(),
+                &tel,
             )
         })
         .await
@@ -538,6 +550,7 @@ impl ContextInitServer {
         let arg_proj = p.project.as_deref();
         let resolved = self.resolve_context(arg_path, arg_proj).await;
         let recorder = resolved.recorder(self.telemetry_sink.clone());
+        let tel = self.scope(&recorder);
         self.instrumented("context_task", recorder, || async {
             ContextHandler::task(
                 &resolved,
@@ -545,6 +558,7 @@ impl ContextInitServer {
                 p.base_ref.as_deref(),
                 p.target.as_deref(),
                 p.cursor.as_deref(),
+                &tel,
             )
         })
         .await
@@ -564,9 +578,10 @@ impl ContextInitServer {
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
         let recorder = resolved.recorder(self.telemetry_sink.clone());
+        let tel = self.scope(&recorder);
         self.instrumented("context_search", recorder, || async {
             let router = self.router_for(&resolved)?;
-            ContextHandler::search(&resolved, &p.query, p.cursor.as_deref(), &router)
+            ContextHandler::search(&resolved, &p.query, p.cursor.as_deref(), &router, &tel)
         })
         .await
     }

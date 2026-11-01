@@ -457,6 +457,17 @@ impl L0Index {
     }
 }
 
+/// Sum of the in-memory `tokens` of the listed subsystems; unknown ids count as zero.
+/// `tokens` is not persisted, so callers fill it from live sources first.
+pub fn subsystem_tokens(index: &L0Index, ids: &[&str]) -> usize {
+    index
+        .subsystems
+        .iter()
+        .filter(|s| ids.contains(&s.id.as_str()))
+        .map(|s| s.tokens)
+        .sum()
+}
+
 /// Result of auditing knowledge base drift against the filesystem.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DriftReport {

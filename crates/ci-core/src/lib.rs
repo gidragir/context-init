@@ -8,6 +8,7 @@ pub mod openviking;
 pub mod search;
 pub mod storage;
 pub mod telemetry;
+pub mod tokens;
 
 pub use config::{
     generate_template_toml, is_binary_available, is_binary_available_in_dirs,
@@ -33,8 +34,8 @@ pub use telemetry::{
     classify_error, harness_from_client_name, harness_from_env, read_jsonl_file, record_feedback,
     render_telemetry_report, CallContext, CallOutcome, Channel, EfficiencySignal, ErrorClass,
     FeedbackSignal, HarnessId, JsonlTelemetrySink, LlmSignal, OperationalSignal, Recorder,
-    SessionPatternSignal, TelemetryEvent, TelemetrySignal, TelemetrySink, ANTIGRAVITY_ENV_MARKERS,
-    TELEMETRY_SCHEMA_VERSION,
+    SessionPatternSignal, TelemetryEvent, TelemetryScope, TelemetrySignal, TelemetrySink,
+    ANTIGRAVITY_ENV_MARKERS, TELEMETRY_SCHEMA_VERSION,
 };
 
 /// Current crate version synchronized with the workspace package metadata.

@@ -165,6 +165,11 @@ impl Recorder {
         }));
     }
 
+    /// Whether a record would actually be written (sink present, enabled, project known).
+    pub fn is_active(&self) -> bool {
+        self.project_id.is_some() && self.sink.as_ref().is_some_and(|s| s.is_enabled())
+    }
+
     /// Records a context-efficiency signal.
     pub fn record_efficiency(&self, sig: EfficiencySignal) {
         self.record(TelemetrySignal::Efficiency(sig));
@@ -179,6 +184,55 @@ impl Recorder {
             return;
         }
         let _ = sink.record(&TelemetryEvent::new(project_id, signal));
+    }
+}
+
+/// Recorder bundled with the per-call context; handlers record efficiency through it.
+#[derive(Clone)]
+pub struct TelemetryScope {
+    pub recorder: Recorder,
+    pub ctx: CallContext,
+}
+
+impl TelemetryScope {
+    /// Scope that never writes (CLI paths without telemetry wiring).
+    pub fn disabled() -> Self {
+        Self {
+            recorder: Recorder::disabled(),
+            ctx: CallContext {
+                harness: HarnessId::Other,
+                channel: Channel::Cli,
+                nested: false,
+            },
+        }
+    }
+
+    /// Whether recording would write anything; lets callers skip computing source tokens.
+    pub fn is_active(&self) -> bool {
+        self.recorder.is_active()
+    }
+
+    /// Records one efficiency signal; `response_tokens` is counted from `response`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn efficiency(
+        &self,
+        tool: &str,
+        source_tokens: usize,
+        response: &str,
+        truncated: bool,
+        cursor_hops: usize,
+        stale: bool,
+        empty_search: bool,
+    ) {
+        self.recorder.record_efficiency(EfficiencySignal {
+            tool: tool.to_string(),
+            response_tokens: crate::tokens::count_tokens(response),
+            source_tokens,
+            truncated,
+            cursor_hops,
+            stale,
+            empty_search,
+        });
     }
 }
 

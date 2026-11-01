@@ -35,7 +35,7 @@ pub fn crate_info() -> String {
 mod tests {
     use super::*;
     use ci_core::storage::{L0Index, SubsystemFile, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION};
-    use ci_core::telemetry::{TelemetryEvent, TelemetrySignal, TelemetrySink};
+    use ci_core::telemetry::{TelemetryEvent, TelemetryScope, TelemetrySignal, TelemetrySink};
     use ci_llm::{AgentWorkPackage, RoleName};
     use rmcp::handler::server::wrapper::Parameters;
     use serde_json::json;
@@ -791,8 +791,14 @@ mod tests {
         let mut baseline_project = project.clone();
         baseline_project.config.roles.search = vec!["none".to_string()];
         let none_router = ci_llm::RoleRouter::new(baseline_project.config.clone(), None).unwrap();
-        let baseline =
-            ContextHandler::search(&baseline_project, "run", None, &none_router).unwrap();
+        let baseline = ContextHandler::search(
+            &baseline_project,
+            "run",
+            None,
+            &none_router,
+            &TelemetryScope::disabled(),
+        )
+        .unwrap();
         let baseline_first = first_id(&baseline);
         assert!(!baseline_first.is_empty(), "{baseline}");
 
@@ -811,24 +817,40 @@ mod tests {
             .clone();
         let reply = format!("{{\"ranked_ids\": [\"{promoted}\"]}}");
         let router = search_router(&project, Some(&reply));
-        let reranked = ContextHandler::search(&project, "run", None, &router).unwrap();
+        let reranked =
+            ContextHandler::search(&project, "run", None, &router, &TelemetryScope::disabled())
+                .unwrap();
         assert_eq!(first_id(&reranked), promoted, "{reranked}");
 
         // Later pages keep the BM25 order: no LLM call, so paging stays consistent.
-        let paged = ContextHandler::search(&project, "run", Some("zz"), &router).unwrap();
+        let paged = ContextHandler::search(
+            &project,
+            "run",
+            Some("zz"),
+            &router,
+            &TelemetryScope::disabled(),
+        )
+        .unwrap();
         assert_ne!(first_id(&paged), promoted, "{paged}");
 
         // A multi-line query cannot inject Markdown structure into the header.
-        let injected =
-            ContextHandler::search(&baseline_project, "run\n## injected", None, &none_router)
-                .unwrap();
+        let injected = ContextHandler::search(
+            &baseline_project,
+            "run\n## injected",
+            None,
+            &none_router,
+            &TelemetryScope::disabled(),
+        )
+        .unwrap();
         assert!(!injected.contains("\n## injected"), "{injected}");
 
         // A result that spans several pages is never reranked: page 1 must stay the head of
         // the BM25 order, otherwise pages would duplicate or skip hits.
         let mut tiny = project.clone();
         tiny.config.max_response_tokens = 120;
-        let page1 = ContextHandler::search(&tiny, "run", None, &router).unwrap();
+        let page1 =
+            ContextHandler::search(&tiny, "run", None, &router, &TelemetryScope::disabled())
+                .unwrap();
         assert!(
             page1.contains("next_cursor") || page1.contains("cursor"),
             "{page1}"
@@ -838,7 +860,9 @@ mod tests {
         // A failing or garbage provider falls back to the BM25 order.
         for bad in [None, Some("not json at all")] {
             let router = search_router(&project, bad);
-            let out = ContextHandler::search(&project, "run", None, &router).unwrap();
+            let out =
+                ContextHandler::search(&project, "run", None, &router, &TelemetryScope::disabled())
+                    .unwrap();
             assert_eq!(first_id(&out), baseline_first, "{out}");
         }
     }
@@ -1676,5 +1700,130 @@ mod tests {
         assert_eq!(ops.len(), 1);
         assert!(!ops[0].success);
         assert_eq!(ops[0].error_class.as_deref(), Some("not_found"));
+    }
+
+    // --- efficiency telemetry (Task 3) ---
+
+    fn efficiency(
+        sink: &MockTelemetrySink,
+        tool: &str,
+    ) -> Vec<ci_core::telemetry::EfficiencySignal> {
+        sink.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match &e.signal {
+                TelemetrySignal::Efficiency(ef) if ef.tool == tool => Some(ef.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Project with one real source file, initialized; returns the path argument.
+    async fn initialized_project(server: &ContextInitServer, tmp: &TempDirGuard) -> Option<String> {
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        let body: String = (0..300)
+            .map(|i| format!("pub fn handler_{i}(value: usize) -> usize {{ value + {i} }}\n"))
+            .collect();
+        fs::write(tmp.path().join("src/lib.rs"), body).unwrap();
+        let path = Some(tmp.path().to_string_lossy().to_string());
+        server
+            .init(Parameters(McpInitParams {
+                path: path.clone(),
+                force: Some(true),
+                with_agents_md: Some(false),
+                ..Default::default()
+            }))
+            .await
+            .expect("init succeeds");
+        path
+    }
+
+    #[tokio::test]
+    async fn pack_records_efficiency() {
+        let tmp = TempDirGuard::new("eff_pack");
+        let (server, sink) = telemetry_server(&tmp, true);
+        let path = initialized_project(&server, &tmp).await;
+        let resolved = server.resolve_context(path.as_deref(), None).await;
+        let sub = resolved.load_l0_index().unwrap().subsystems[0].clone();
+        let expected = ci_core::analysis::subsystems::subsystem_tokens(&resolved.root, &sub);
+        assert!(expected > 0, "fixture must have source tokens");
+
+        server
+            .pack(Parameters(McpPackParams {
+                subsystem_id: sub.id.clone(),
+                path,
+                ..Default::default()
+            }))
+            .await
+            .expect("pack succeeds");
+
+        let effs = efficiency(&sink, "context_pack");
+        assert_eq!(effs.len(), 1, "{effs:?}");
+        assert_eq!(effs[0].source_tokens, expected);
+        assert!(effs[0].response_tokens > 0);
+        assert_eq!(effs[0].cursor_hops, 0);
+        assert!(!effs[0].empty_search);
+    }
+
+    #[tokio::test]
+    async fn search_empty_sets_flag() {
+        let tmp = TempDirGuard::new("eff_search");
+        let (server, sink) = telemetry_server(&tmp, true);
+        let path = initialized_project(&server, &tmp).await;
+
+        server
+            .search(Parameters(McpSearchParams {
+                query: "zzqxnomatchtoken".to_string(),
+                path,
+                ..Default::default()
+            }))
+            .await
+            .expect("search succeeds");
+
+        let effs = efficiency(&sink, "context_search");
+        assert_eq!(effs.len(), 1, "{effs:?}");
+        assert!(effs[0].empty_search);
+        assert_eq!(effs[0].source_tokens, 0);
+    }
+
+    #[tokio::test]
+    async fn cursor_hops_counted() {
+        let tmp = TempDirGuard::new("eff_cursor");
+        let (server, sink) = telemetry_server(&tmp, true);
+        let path = initialized_project(&server, &tmp).await;
+        fs::write(
+            tmp.path().join(".context-init.toml"),
+            "max_response_tokens = 64\n[telemetry]\nenabled = true\n",
+        )
+        .unwrap();
+
+        let page1 = server
+            .get_subsystems(Parameters(McpGetSubsystemsParams {
+                path: path.clone(),
+                ..Default::default()
+            }))
+            .await
+            .expect("page 1");
+        let cursor = page1
+            .split("next_cursor: \"")
+            .nth(1)
+            .and_then(|r| r.split('"').next())
+            .expect("page 1 must be truncated with a cursor")
+            .to_string();
+        server
+            .get_subsystems(Parameters(McpGetSubsystemsParams {
+                path,
+                cursor: Some(cursor),
+                ..Default::default()
+            }))
+            .await
+            .expect("page 2");
+
+        let effs = efficiency(&sink, "context_get_subsystems");
+        assert_eq!(effs.len(), 2, "{effs:?}");
+        assert_eq!(effs[0].cursor_hops, 0);
+        assert!(effs[0].truncated);
+        assert_eq!(effs[1].cursor_hops, 1);
     }
 }

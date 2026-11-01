@@ -5,6 +5,7 @@ use clap::Args;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use ci_core::telemetry::TelemetryScope;
 use ci_mcp::handlers::DEFAULT_SEARCH_TOP_K;
 use ci_mcp::ContextHandler;
 
@@ -35,7 +36,8 @@ pub fn run(global: &GlobalArgs, args: &SearchArgs) -> Result<ExitCode> {
             &args.query,
             args.cursor.as_deref(),
             &router,
-            args.top_k
+            args.top_k,
+            &TelemetryScope::disabled()
         )?
     );
     Ok(ExitCode::SUCCESS)
