@@ -251,6 +251,15 @@ pub struct HandlerReply {
     pub pending_package: Option<AgentWorkPackage>,
 }
 
+/// Reply of `context_submit`.
+#[derive(Debug, Clone)]
+pub struct SubmitReply {
+    /// Paginated `SubmitResult` JSON returned to the MCP client.
+    pub text: String,
+    /// Whether the submission was applied; an accepted package is consumed.
+    pub accepted: bool,
+}
+
 /// Core handler implementations for MCP tools.
 pub struct ContextHandler;
 
@@ -569,9 +578,11 @@ impl ContextHandler {
                 .with_context(|| format!("Subsystem '{id}': summary must not be empty"))?;
             updates.push(SummaryUpdate {
                 name: str_field(item, "name").filter(|n| !n.trim().is_empty()),
+                // An empty list keeps the existing tags, as in LLM enrichment.
                 tags: item
                     .get("tags")
-                    .and_then(|t| serde_json::from_value::<Vec<String>>(t.clone()).ok()),
+                    .and_then(|t| serde_json::from_value::<Vec<String>>(t.clone()).ok())
+                    .filter(|t| !t.is_empty()),
                 id,
                 summary,
             });
@@ -580,7 +591,9 @@ impl ContextHandler {
         let analysis = pipeline::detect(project, pkg.deep)
             .context("Re-analysis of the project failed; the knowledge base is unchanged")?;
         let model = (!pkg.alias.is_empty()).then_some(pkg.alias.as_str());
-        let agents_md = project.config.touch_agents_md.then_some(project.storage);
+        // Refresh AGENTS.md when the originating init/update wrote it, or the project asks to.
+        let agents_md =
+            (pkg.agents_md || project.config.touch_agents_md).then_some(project.storage);
         generator::apply_summaries(
             &analysis,
             kd,
@@ -591,66 +604,62 @@ impl ContextHandler {
         )
     }
 
-    /// Handler for `context_submit` (D14, D29, R4).
+    /// Handler for `context_submit` (D14, D29, R4). `accepted` tells the server whether the
+    /// package was consumed (packages are single-use).
     pub fn submit(
         project: &ResolvedProject,
         package_id: &str,
         work_package: Option<&AgentWorkPackage>,
         submission: &serde_json::Value,
-    ) -> Result<String> {
-        let Some(pkg_ref) = work_package else {
-            let result = SubmitResult {
-                valid: false,
-                package_id: package_id.to_string(),
-                role: String::new(),
-                errors: vec![format!(
+    ) -> Result<SubmitReply> {
+        let result = Self::submit_result(project, package_id, work_package, submission);
+        let json_text = serde_json::to_string_pretty(&result)?;
+        Ok(SubmitReply {
+            text: paginate_content(&json_text, None, project.config.max_response_tokens, false)
+                .rendered,
+            accepted: result.valid,
+        })
+    }
+
+    fn submit_result(
+        project: &ResolvedProject,
+        package_id: &str,
+        work_package: Option<&AgentWorkPackage>,
+        submission: &serde_json::Value,
+    ) -> SubmitResult {
+        let rejected = |role: String, errors: Vec<String>, message: &str| SubmitResult {
+            valid: false,
+            package_id: package_id.to_string(),
+            role,
+            errors,
+            message: message.to_string(),
+        };
+        let Some(pkg) = work_package else {
+            return rejected(
+                String::new(),
+                vec![format!(
                     "Unknown package_id '{package_id}': request a work package via context_init/context_update first"
                 )],
-                message: "Agent submission rejected: unknown work package.".to_string(),
-            };
-            let json_text = serde_json::to_string_pretty(&result)?;
-            return Ok(paginate_content(
-                &json_text,
-                None,
-                project.config.max_response_tokens,
-                false,
-            )
-            .rendered);
+                "Agent submission rejected: unknown work package.",
+            );
         };
+        if pkg.project_root.as_deref() != Some(project.root.as_path()) {
+            let issued_for = pkg
+                .project_root
+                .as_ref()
+                .map_or_else(|| "no project".to_string(), |r| r.display().to_string());
+            return rejected(
+                pkg.role.to_string(),
+                vec![format!(
+                    "Work package '{package_id}' was issued for {issued_for}, not for {}",
+                    project.root.display()
+                )],
+                "Agent submission rejected: the work package belongs to another project.",
+            );
+        }
 
-        match validate_agent_submission(pkg_ref, submission) {
-            Ok(validated) => {
-                if let Err(e) = Self::persist_submission(project, pkg_ref, &validated.payload) {
-                    let result = SubmitResult {
-                        valid: false,
-                        package_id: validated.package_id,
-                        role: validated.role.to_string(),
-                        errors: e.chain().map(|c| c.to_string()).collect(),
-                        message: "Agent submission rejected: it could not be persisted."
-                            .to_string(),
-                    };
-                    let json_text = serde_json::to_string_pretty(&result)?;
-                    return Ok(paginate_content(
-                        &json_text,
-                        None,
-                        project.config.max_response_tokens,
-                        false,
-                    )
-                    .rendered);
-                }
-
-                let result = SubmitResult {
-                    valid: true,
-                    package_id: validated.package_id,
-                    role: validated.role.to_string(),
-                    errors: Vec::new(),
-                    message: "Agent submission successfully validated and accepted.".to_string(),
-                };
-                let json_text = serde_json::to_string_pretty(&result)?;
-                let paginated =
-                    paginate_content(&json_text, None, project.config.max_response_tokens, false);
-                Ok(paginated.rendered)
-            }
+        let validated = match validate_agent_submission(pkg, submission) {
+            Ok(validated) => validated,
             Err(e) => {
                 let mut errors = Vec::new();
                 for cause in e.chain() {
@@ -659,19 +668,26 @@ impl ContextHandler {
                         errors.push(s);
                     }
                 }
-                let result = SubmitResult {
-                    valid: false,
-                    package_id: package_id.to_string(),
-                    role: pkg_ref.role.to_string(),
+                return rejected(
+                    pkg.role.to_string(),
                     errors,
-                    message: "Agent submission rejected: JSON schema validation failed."
-                        .to_string(),
-                };
-                let json_text = serde_json::to_string_pretty(&result)?;
-                let paginated =
-                    paginate_content(&json_text, None, project.config.max_response_tokens, false);
-                Ok(paginated.rendered)
+                    "Agent submission rejected: JSON schema validation failed.",
+                );
             }
+        };
+        if let Err(e) = Self::persist_submission(project, pkg, &validated.payload) {
+            return rejected(
+                validated.role.to_string(),
+                e.chain().map(|c| c.to_string()).collect(),
+                "Agent submission rejected: it could not be persisted.",
+            );
+        }
+        SubmitResult {
+            valid: true,
+            package_id: validated.package_id,
+            role: validated.role.to_string(),
+            errors: Vec::new(),
+            message: "Agent submission successfully validated and accepted.".to_string(),
         }
     }
 

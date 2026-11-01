@@ -789,8 +789,10 @@ impl AgentProvider {
             instruction,
             json_schema,
             alias: self.alias.clone(),
-            // The provider sees no analysis options; the pipeline stamps the real depth.
+            // The provider sees no project or analysis options; the pipeline stamps them.
             deep: false,
+            agents_md: false,
+            project_root: None,
         }
     }
 }

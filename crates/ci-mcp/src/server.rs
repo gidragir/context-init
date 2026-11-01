@@ -414,15 +414,36 @@ impl ContextInitServer {
         params: Parameters<McpSubmitParams>,
     ) -> Result<String, rmcp::ErrorData> {
         let p = params.0;
-        let pkg = self.work_packages.read().await.get(&p.package_id).cloned();
+        // Packages are single-use: taken out of the map for the duration of the call, so two
+        // concurrent submissions cannot both apply it, and put back only when rejected so the
+        // agent can retry.
+        let pkg = self.work_packages.write().await.remove(&p.package_id);
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
         let recorder = resolved.recorder(self.telemetry_sink.clone());
-        self.instrumented("context_submit", recorder, || async {
-            ContextHandler::submit(&resolved, &p.package_id, pkg.as_ref(), &p.submission)
-        })
-        .await
+        let mut accepted = false;
+        let accepted_flag = &mut accepted;
+        let (resolved_ref, params_ref, pkg_ref) = (&resolved, &p, pkg.as_ref());
+        let out = self
+            .instrumented("context_submit", recorder, move || async move {
+                let reply = ContextHandler::submit(
+                    resolved_ref,
+                    &params_ref.package_id,
+                    pkg_ref,
+                    &params_ref.submission,
+                )?;
+                *accepted_flag = reply.accepted;
+                Ok(reply.text)
+            })
+            .await;
+        if let (false, Some(pkg)) = (accepted, pkg) {
+            self.work_packages
+                .write()
+                .await
+                .insert(p.package_id.clone(), pkg);
+        }
+        out
     }
 
     /// Record agent feedback signal on tool utility and freshness.

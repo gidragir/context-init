@@ -34,7 +34,9 @@ pub fn crate_info() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ci_core::storage::{L0Index, SubsystemFile, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION};
+    use ci_core::storage::{
+        L0Index, SubsystemFile, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION, SUBSYSTEM_ID_PATTERN,
+    };
     use ci_core::telemetry::{TelemetryEvent, TelemetryScope, TelemetrySignal, TelemetrySink};
     use ci_llm::{AgentWorkPackage, RoleName};
     use rmcp::handler::server::wrapper::Parameters;
@@ -340,6 +342,8 @@ mod tests {
             json_schema: ci_llm::default_role_json_schema(role),
             alias: "test".to_string(),
             deep: false,
+            agents_md: false,
+            project_root: Some(fs::canonicalize(root).unwrap()),
         };
         server.register_work_package(pkg.clone()).await;
         let out = server
@@ -710,6 +714,206 @@ mod tests {
             .unwrap();
         let card = fs::read_to_string(resolved.knowledge_dir.join(&sub.l1_path)).unwrap();
         assert!(card.contains("LLM-written summary"), "{card}");
+    }
+
+    /// Writes a project config whose `role` chain is a `command` model answering `reply`.
+    fn write_command_model_config(root: &Path, role: &str, reply: &serde_json::Value) {
+        let reply_path = root.join("llm_reply.json");
+        fs::write(&reply_path, reply.to_string()).unwrap();
+        fs::write(
+            root.join(".context-init.toml"),
+            format!(
+                "[models.mock]\nkind = \"command\"\ncommand = [\"cat\", {:?}]\n\n[roles]\n{role} = [\"mock\"]\n",
+                reply_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn llm_update_keeps_manual_and_agent_summaries() {
+        let tmp = TempDirGuard::new("llm_keeps_manual");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let index_path = resolved.knowledge_dir.join("L0_index.json");
+        let mut index = L0Index::load_from_file(&index_path).unwrap();
+        assert!(index.subsystems.len() >= 3, "{:?}", index.subsystems);
+        let ids: Vec<String> = index.subsystems.iter().map(|s| s.id.clone()).collect();
+        index.subsystems[0].summary = "Hand-written summary".to_string();
+        index.subsystems[0].summary_source = ci_core::SummarySource::Manual;
+        index.subsystems[1].summary = "Agent-written summary".to_string();
+        index.subsystems[1].summary_source = ci_core::SummarySource::Agent;
+        index.subsystems[1].summary_model = Some("h".to_string());
+        index.save_to_file(&index_path).unwrap();
+
+        let items: Vec<serde_json::Value> = ids
+            .iter()
+            .map(|id| {
+                json!({
+                    "id": id, "name": "LLM", "summary": format!("LLM summary of {id}"),
+                    "tags": ["llm"]
+                })
+            })
+            .collect();
+        // Until the `update` role schema is unified with `init` (B4), it still demands the
+        // single-card fields; the reply carries them next to `subsystems`, which enrichment reads.
+        let reply = json!({
+            "id": ids[0], "summary": "unused", "body": "unused", "subsystems": items
+        });
+        write_command_model_config(tmp.path(), "update", &reply);
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let reply = server
+            .update(Parameters(McpUpdateParams {
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..McpUpdateParams::default()
+            }))
+            .await
+            .expect("update");
+        assert!(reply.contains("LLM enrichment (mock) updated 1"), "{reply}");
+
+        let after = L0Index::load_from_file(&index_path).unwrap();
+        let get = |id: &str| after.subsystems.iter().find(|s| s.id == id).unwrap();
+        let manual = get(&ids[0]);
+        assert_eq!(manual.summary, "Hand-written summary");
+        assert_eq!(manual.summary_source, ci_core::SummarySource::Manual);
+        let agent = get(&ids[1]);
+        assert_eq!(agent.summary, "Agent-written summary");
+        assert_eq!(agent.summary_source, ci_core::SummarySource::Agent);
+        assert_eq!(agent.summary_model.as_deref(), Some("h"));
+        let heuristic = get(&ids[2]);
+        assert_eq!(heuristic.summary, format!("LLM summary of {}", ids[2]));
+        assert_eq!(heuristic.summary_source, ci_core::SummarySource::Llm);
+        assert_eq!(heuristic.summary_model.as_deref(), Some("mock"));
+    }
+
+    #[tokio::test]
+    async fn submit_refreshes_agents_md_written_by_init() {
+        let tmp = TempDirGuard::new("submit_agents_md");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        fs::write(tmp.path().join(".context-init.toml"), AGENT_CONFIG).unwrap();
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        // Default `context_init`: AGENTS.md is written while `touch_agents_md` stays false.
+        let reply = server
+            .init(Parameters(McpInitParams {
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                force: Some(true),
+                ..McpInitParams::default()
+            }))
+            .await
+            .expect("init");
+        let package_id = reply
+            .lines()
+            .find_map(|l| l.strip_prefix("package_id: "))
+            .unwrap_or_else(|| panic!("no package_id line in: {reply}"))
+            .trim()
+            .to_string();
+        let agents_md = tmp.path().join("AGENTS.md");
+        assert!(agents_md.is_file());
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        assert!(!resolved.config.touch_agents_md);
+        let id = resolved.load_l0_index().unwrap().subsystems[0].id.clone();
+
+        let out = submit_payload(
+            &server,
+            tmp.path(),
+            &package_id,
+            json!({"subsystems": [{
+                "id": id, "name": "N", "summary": "Summary refreshed into AGENTS", "tags": []
+            }]}),
+        )
+        .await;
+        assert!(out.valid, "{:?}", out.errors);
+        let text = fs::read_to_string(&agents_md).unwrap();
+        assert!(text.contains("Summary refreshed into AGENTS"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn submit_package_is_single_use() {
+        let tmp = TempDirGuard::new("submit_single_use");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let package_id = init_with_agent_package(&server, tmp.path()).await;
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let index_path = resolved.knowledge_dir.join("L0_index.json");
+        let id = resolved.load_l0_index().unwrap().subsystems[0].id.clone();
+        let payload = |summary: &str| json!({"subsystems": [{"id": id, "name": "N", "summary": summary, "tags": []}]});
+
+        // A rejected submission keeps the package for a retry.
+        let bad = submit_payload(
+            &server,
+            tmp.path(),
+            &package_id,
+            json!({"subsystems": [{"id": "ghost", "name": "G", "summary": "g", "tags": []}]}),
+        )
+        .await;
+        assert!(!bad.valid);
+        let first = submit_payload(&server, tmp.path(), &package_id, payload("First")).await;
+        assert!(first.valid, "{:?}", first.errors);
+        let index_after_first = fs::read(&index_path).unwrap();
+
+        let second = submit_payload(&server, tmp.path(), &package_id, payload("Second")).await;
+        assert!(!second.valid);
+        assert!(
+            second
+                .errors
+                .iter()
+                .any(|e| e.contains("Unknown package_id")),
+            "{:?}",
+            second.errors
+        );
+        assert_eq!(fs::read(&index_path).unwrap(), index_after_first);
+    }
+
+    #[tokio::test]
+    async fn submit_rejects_package_of_another_project() {
+        let tmp = TempDirGuard::new("submit_cross_project");
+        isolate_config_dirs(&tmp);
+        let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
+        for root in [&a, &b] {
+            fs::create_dir_all(root).unwrap();
+            write_fixture(root);
+        }
+        let server = ContextInitServer::new(Some(a.clone()));
+        let package_id = init_with_agent_package(&server, &a).await;
+        server
+            .init(Parameters(init_params(&b)))
+            .await
+            .expect("init b");
+        let b_resolved = server
+            .resolve_context(Some(&b.to_string_lossy()), None)
+            .await;
+        let b_index = b_resolved.knowledge_dir.join("L0_index.json");
+        let b_before = fs::read(&b_index).unwrap();
+        let id = b_resolved.load_l0_index().unwrap().subsystems[0].id.clone();
+
+        let out = submit_payload(
+            &server,
+            &b,
+            &package_id,
+            json!({"subsystems": [{"id": id, "name": "N", "summary": "Cross", "tags": []}]}),
+        )
+        .await;
+        assert!(!out.valid);
+        assert!(
+            out.errors.iter().any(|e| e.contains("was issued for")),
+            "{:?}",
+            out.errors
+        );
+        assert_eq!(fs::read(&b_index).unwrap(), b_before);
     }
 
     #[tokio::test]
@@ -1290,13 +1494,17 @@ mod tests {
         let upd = submit_with_package(
             &server,
             tmp.path(),
-            RoleName::Update,
-            json!({"id": "../escape", "summary": "s", "body": "b"}),
+            RoleName::Init,
+            json!({"subsystems": [{
+                "id": "../escape", "name": "x", "summary": "s", "tags": []
+            }]}),
         )
         .await;
         assert!(!upd.valid);
         assert!(
-            upd.errors.iter().any(|e| e.contains("id")),
+            upd.errors
+                .iter()
+                .any(|e| e.contains("../escape") && e.contains(SUBSYSTEM_ID_PATTERN)),
             "{:?}",
             upd.errors
         );
@@ -1365,11 +1573,17 @@ mod tests {
         let index_before = fs::read(kd.join("L0_index.json")).unwrap();
         let card_before = fs::read(kd.join(&target.l1_path)).unwrap();
 
-        let set_mode = |mode| fs::set_permissions(&kd, fs::Permissions::from_mode(mode)).unwrap();
-        set_mode(0o555);
+        /// Restores write access even when an assertion panics.
+        struct ReadOnly<'a>(&'a Path);
+        impl Drop for ReadOnly<'_> {
+            fn drop(&mut self) {
+                let _ = fs::set_permissions(self.0, fs::Permissions::from_mode(0o755));
+            }
+        }
+        fs::set_permissions(&kd, fs::Permissions::from_mode(0o555)).unwrap();
+        let read_only = ReadOnly(&kd);
         if fs::write(kd.join(".probe"), "").is_ok() {
             // Running with privileges that ignore permissions: nothing to observe.
-            set_mode(0o755);
             return;
         }
         let out = submit_payload(
@@ -1381,7 +1595,7 @@ mod tests {
             }]}),
         )
         .await;
-        set_mode(0o755);
+        drop(read_only);
 
         assert!(!out.valid, "{out:?}");
         assert!(!out.errors.is_empty());
@@ -1419,6 +1633,8 @@ mod tests {
             json_schema: ci_llm::default_role_json_schema(RoleName::Init),
             alias: "worker".to_string(),
             deep: false,
+            agents_md: false,
+            project_root: Some(resolved.root.clone()),
         };
         server.register_work_package(pkg.clone()).await;
 
@@ -1453,7 +1669,9 @@ mod tests {
         assert!(valid_out.errors.is_empty());
         assert!(valid_out.message.contains("validated and accepted"));
 
-        // 2. Invalid submission missing required `summary` field
+        // 2. Invalid submission missing required `summary` field (the accepted submission
+        // consumed the package, so it is issued again)
+        server.register_work_package(pkg.clone()).await;
         let invalid_payload = json!({
             "subsystems": [
                 {

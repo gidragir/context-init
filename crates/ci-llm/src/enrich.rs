@@ -72,6 +72,7 @@ pub fn enrich_subsystems(
                     id: item.id,
                     name: (!item.name.trim().is_empty()).then_some(item.name),
                     summary: item.summary,
+                    // An empty list keeps the existing tags, as in `context_submit`.
                     tags: (!item.tags.is_empty()).then_some(item.tags),
                 });
             }
@@ -310,6 +311,8 @@ mod tests {
             json_schema: crate::default_role_json_schema(RoleName::Init),
             alias: "h".to_string(),
             deep: false,
+            agents_md: false,
+            project_root: None,
         };
         let msg = cli_outcome_message(&EnrichOutcome::PendingAgent(pkg)).unwrap();
         assert!(msg.contains("agent") && msg.contains("MCP"), "{msg}");

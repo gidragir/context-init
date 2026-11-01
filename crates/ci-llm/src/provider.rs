@@ -30,6 +30,13 @@ pub struct AgentWorkPackage {
     /// to a re-analysis of the same depth.
     #[serde(default)]
     pub deep: bool,
+    /// Whether the originating init/update wrote `AGENTS.md`; the submission then refreshes it.
+    #[serde(default)]
+    pub agents_md: bool,
+    /// Canonical root of the project the package was issued for; a submission for any other
+    /// project is rejected.
+    #[serde(default)]
+    pub project_root: Option<std::path::PathBuf>,
 }
 
 /// Validated submission produced by `validate_agent_submission` for `context_submit` (D14).

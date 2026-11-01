@@ -455,7 +455,8 @@ pub fn default_role_json_schema(role: RoleName) -> Value {
                             "summary": { "type": "string", "minLength": 1 },
                             "tags": {
                                 "type": "array",
-                                "items": { "type": "string" }
+                                "items": { "type": "string" },
+                                "description": "An empty array keeps the subsystem's existing tags."
                             }
                         }
                     }

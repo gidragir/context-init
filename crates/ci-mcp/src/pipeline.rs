@@ -221,8 +221,11 @@ fn analyze(
         opts.model_override,
     );
     if let EnrichOutcome::PendingAgent(pkg) = &mut enrich {
-        // `context_submit` re-analyzes at the same depth before applying the answer.
+        // `context_submit` applies the answer to this project only, re-analyzed at the same
+        // depth, and refreshes AGENTS.md when this run wrote it.
         pkg.deep = opts.deep;
+        pkg.agents_md = opts.with_agents_md;
+        pkg.project_root = Some(project.root.clone());
     }
     Ok((analysis, subsystems, enrich))
 }
@@ -240,34 +243,48 @@ pub fn detect(project: &ResolvedProject, deep: bool) -> Result<ProjectAnalysis> 
     )
 }
 
-/// Applies LLM summaries to the freshly written knowledge base with `llm` provenance. Like
-/// enrichment itself, a failure here never fails the pipeline: the deterministic base stays
-/// and the outcome turns into a warning.
+/// Applies LLM summaries to the freshly written knowledge base with `llm` provenance. Only
+/// subsystems whose summary is still heuristic, or flagged `needs_review` (a non-heuristic
+/// summary whose file set changed), are overwritten: manual, agent and earlier LLM summaries
+/// stay (B1). Like enrichment itself, a failure here never fails the pipeline: the
+/// deterministic base stays and the outcome turns into a warning.
 fn apply_enrichment(
     analysis: &ProjectAnalysis,
     knowledge_dir: &Path,
     enrich: EnrichOutcome,
     agents_md: Option<StorageMode>,
 ) -> EnrichOutcome {
-    let EnrichOutcome::Enriched { updates, model } = &enrich else {
+    let EnrichOutcome::Enriched { updates, model } = enrich else {
         return enrich;
     };
-    if updates.is_empty() {
-        return enrich;
+    let failed = |e: anyhow::Error| EnrichOutcome::Failed {
+        warning: format!("{e:#}"),
+    };
+    let index = match L0Index::load_from_file(&knowledge_dir.join("L0_index.json")) {
+        Ok(index) => index,
+        Err(e) => return failed(e),
+    };
+    let updates: Vec<_> = updates
+        .into_iter()
+        .filter(|u| {
+            index.subsystems.iter().any(|s| {
+                s.id == u.id && (s.summary_source == SummarySource::Heuristic || s.needs_review)
+            })
+        })
+        .collect();
+    if !updates.is_empty() {
+        if let Err(e) = generator::apply_summaries(
+            analysis,
+            knowledge_dir,
+            &updates,
+            SummarySource::Llm,
+            Some(&model),
+            agents_md,
+        ) {
+            return failed(e);
+        }
     }
-    match generator::apply_summaries(
-        analysis,
-        knowledge_dir,
-        updates,
-        SummarySource::Llm,
-        Some(model),
-        agents_md,
-    ) {
-        Ok(_) => enrich,
-        Err(e) => EnrichOutcome::Failed {
-            warning: format!("{e:#}"),
-        },
-    }
+    EnrichOutcome::Enriched { updates, model }
 }
 
 #[cfg(test)]
