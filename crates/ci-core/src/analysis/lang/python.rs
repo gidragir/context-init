@@ -1,6 +1,5 @@
 use super::LanguageAdapter;
 use crate::analysis::detector::extract_multiline_symbols;
-use crate::analysis::pack::compress_code;
 
 /// Python: top-level `def`/`class` signatures; compression normalizes whitespace.
 pub struct PythonAdapter;

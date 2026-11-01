@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn rust_and_python_adapters_preserve_existing_pack_compression() {
-        use crate::analysis::pack::{compress_code, compress_rust_ast, compress_source};
+        use crate::analysis::pack::{compress_rust_ast, compress_source};
         for (name, id) in [
             ("a.rs", "rust"),
             ("a.py", "python"),

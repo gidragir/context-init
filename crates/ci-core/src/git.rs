@@ -5,7 +5,8 @@ use crate::storage::{normalize_line_endings, normalize_path};
 use anyhow::{bail, Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Single parsed entry from `git status --porcelain=v1 -z` (D3).
@@ -27,6 +28,15 @@ impl GitStatusEntry {
     pub fn status_code(&self) -> String {
         format!("{}{}", self.index_status, self.worktree_status)
     }
+}
+
+/// Batched snapshot of repository Git state for efficient multi-card staleness checking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RepoGitSnapshot {
+    /// Current `HEAD` commit SHA.
+    pub head_commit: String,
+    /// Working-tree and index status entries.
+    pub status_entries: Vec<GitStatusEntry>,
 }
 
 /// Result of checking an OKF card's staleness against the current Git state (D2).
@@ -81,6 +91,42 @@ pub trait GitBackend: Send + Sync {
         paths: &[String],
     ) -> Result<String>;
 
+    /// Returns a batched Git snapshot combining HEAD commit and working tree status.
+    fn repo_snapshot(&self, repo_root: &Path) -> Result<RepoGitSnapshot> {
+        let head_commit = self.head_commit(repo_root)?;
+        let status_entries = self.status_porcelain_z(repo_root)?;
+        Ok(RepoGitSnapshot {
+            head_commit,
+            status_entries,
+        })
+    }
+
+    /// Computes the blob or tree SHA for the given subsystem paths.
+    fn paths_tree_sha(&self, repo_root: &Path, paths: &[String]) -> Result<String> {
+        if paths.is_empty() {
+            return self
+                .blob_sha(repo_root, Path::new("."))
+                .map(|s| s.unwrap_or_default());
+        }
+        if paths.len() == 1 {
+            return self
+                .blob_sha(repo_root, Path::new(&paths[0]))
+                .map(|s| s.unwrap_or_default());
+        }
+        let mut parts = Vec::new();
+        for p in paths {
+            let sha = self.blob_sha(repo_root, Path::new(p))?.unwrap_or_default();
+            parts.push(format!("{p}:{sha}"));
+        }
+        parts.sort();
+        let mut hasher = Sha256::new();
+        for item in parts {
+            hasher.update(item.as_bytes());
+            hasher.update(b"\n");
+        }
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
     /// Current branch name (`HEAD` when detached).
     fn current_branch(&self, _repo_root: &Path) -> Result<String> {
         bail!("branch lookup is not supported by this backend")
@@ -117,6 +163,151 @@ pub trait GitBackend: Send + Sync {
     ) -> Result<String> {
         bail!("diff is not supported by this backend")
     }
+}
+
+/// Resolves the actual `.git` directory for a repository, resolving `.git` gitfiles (submodules, worktrees).
+pub fn resolve_git_dir(repo_root: &Path) -> Option<PathBuf> {
+    let dot_git = repo_root.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    if dot_git.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&dot_git) {
+            for line in content.lines() {
+                let line = line.trim();
+                if let Some(target) = line.strip_prefix("gitdir:") {
+                    let target = target.trim();
+                    let target_path = Path::new(target);
+                    let resolved = if target_path.is_absolute() {
+                        target_path.to_path_buf()
+                    } else {
+                        repo_root.join(target_path)
+                    };
+                    if resolved.exists() {
+                        return Some(resolved);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolves the common git directory for linked worktrees (reading `<git_dir>/commondir` if present).
+pub fn resolve_common_git_dir(git_dir: &Path) -> PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    if let Ok(content) = std::fs::read_to_string(&commondir_file) {
+        let trimmed = content.trim();
+        if !trimmed.is_empty() {
+            let p = Path::new(trimmed);
+            let resolved = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                git_dir.join(p)
+            };
+            if resolved.exists() {
+                return resolved;
+            }
+        }
+    }
+    git_dir.to_path_buf()
+}
+
+/// Reads current HEAD commit SHA in-process without shelling out to git.
+pub fn read_head_commit_in_process(repo_root: &Path) -> Option<String> {
+    let git_dir = resolve_git_dir(repo_root)?;
+    let head_content = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head_trimmed = head_content.trim();
+    if is_hex_sha(head_trimmed) {
+        return Some(head_trimmed.to_string());
+    }
+    let ref_path = head_trimmed.strip_prefix("ref:")?.trim();
+    // 1. Try loose ref in git_dir
+    let loose_in_git = git_dir.join(ref_path);
+    if let Ok(c) = std::fs::read_to_string(&loose_in_git) {
+        let sha = c.trim();
+        if is_hex_sha(sha) {
+            return Some(sha.to_string());
+        }
+    }
+    // 2. Try loose ref in common_dir
+    let common_dir = resolve_common_git_dir(&git_dir);
+    if common_dir != git_dir {
+        let loose_in_common = common_dir.join(ref_path);
+        if let Ok(c) = std::fs::read_to_string(&loose_in_common) {
+            let sha = c.trim();
+            if is_hex_sha(sha) {
+                return Some(sha.to_string());
+            }
+        }
+    }
+    // 3. Try packed-refs in common_dir, then git_dir
+    for dir in [&common_dir, &git_dir] {
+        let packed_file = dir.join("packed-refs");
+        if let Ok(packed) = std::fs::read_to_string(&packed_file) {
+            for line in packed.lines() {
+                let line = line.trim();
+                if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
+                    continue;
+                }
+                let mut parts = line.split_whitespace();
+                if let (Some(sha), Some(r)) = (parts.next(), parts.next()) {
+                    if r == ref_path && is_hex_sha(sha) {
+                        return Some(sha.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Reads the primary remote URL in-process from `.git/config` without shelling out to git.
+pub fn read_remote_url_in_process(repo_root: &Path) -> Option<String> {
+    let git_dir = resolve_git_dir(repo_root)?;
+    let common_dir = resolve_common_git_dir(&git_dir);
+    let config_paths = if common_dir != git_dir {
+        vec![common_dir.join("config"), git_dir.join("config")]
+    } else {
+        vec![git_dir.join("config")]
+    };
+
+    for config_path in config_paths {
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            let mut current_section = String::new();
+            let mut origin_url = None;
+            let mut first_remote_url = None;
+
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                    current_section = trimmed[1..trimmed.len() - 1].trim().to_string();
+                    continue;
+                }
+                if let Some((k, v)) = trimmed.split_once('=') {
+                    let k = k.trim();
+                    let v = v.trim();
+                    if k == "url" {
+                        if current_section == "remote \"origin\"" {
+                            origin_url = Some(v.to_string());
+                        } else if current_section.starts_with("remote ")
+                            && first_remote_url.is_none()
+                        {
+                            first_remote_url = Some(v.to_string());
+                        }
+                    }
+                }
+            }
+
+            if let Some(url) = origin_url {
+                return Some(url);
+            }
+            if let Some(url) = first_remote_url {
+                return Some(url);
+            }
+        }
+    }
+    None
 }
 
 /// System `git` CLI implementation of `GitBackend` using `-z` / `--porcelain=v1 -z` (D3).
@@ -161,6 +352,9 @@ impl SystemGitBackend {
 
 impl GitBackend for SystemGitBackend {
     fn head_commit(&self, repo_root: &Path) -> Result<String> {
+        if let Some(sha) = read_head_commit_in_process(repo_root) {
+            return Ok(sha);
+        }
         let output = self.run_git(repo_root, &["rev-parse", "HEAD"])?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -181,6 +375,9 @@ impl GitBackend for SystemGitBackend {
     }
 
     fn remote_url(&self, repo_root: &Path) -> Result<Option<String>> {
+        if let Some(url) = read_remote_url_in_process(repo_root) {
+            return Ok(Some(url));
+        }
         let origin_out = self.run_git(repo_root, &["config", "--get", "remote.origin.url"])?;
         if origin_out.status.success() {
             let url = String::from_utf8_lossy(&origin_out.stdout)
@@ -498,18 +695,46 @@ pub fn check_frontmatter_staleness(
     repo_root: &Path,
     frontmatter: &CardFrontmatter,
 ) -> Result<StalenessReport> {
-    let dir = normalize_path(&frontmatter.directory);
-    let recorded_commit = frontmatter.source.commit_sha.trim().to_string();
-    let recorded_blob = frontmatter.source.blob_sha.trim().to_string();
-
     let current_commit = backend.head_commit(repo_root)?;
-    let current_blob = backend.blob_sha(repo_root, Path::new(&dir))?;
+    let mut status_lookup_failed = false;
+    let snapshot = match backend.repo_snapshot(repo_root) {
+        Ok(s) => s,
+        Err(_) => {
+            status_lookup_failed = true;
+            RepoGitSnapshot {
+                head_commit: current_commit,
+                status_entries: Vec::new(),
+            }
+        }
+    };
+    let mut report =
+        check_frontmatter_staleness_with_snapshot(backend, repo_root, &snapshot, frontmatter)?;
+    if status_lookup_failed {
+        report.stale = true;
+        if report.diff_stat.is_empty() {
+            report.diff_stat = "working tree status check failed".to_string();
+        }
+    }
+    Ok(report)
+}
+
+/// Verifies whether subsystem paths are stale using a precomputed Git repository snapshot.
+pub fn check_subsystem_staleness_with_snapshot(
+    backend: &dyn GitBackend,
+    repo_root: &Path,
+    snapshot: &RepoGitSnapshot,
+    paths: &[String],
+    recorded_commit_sha: &str,
+    recorded_blob_sha: &str,
+) -> Result<StalenessReport> {
+    let recorded_commit = recorded_commit_sha.trim().to_string();
+    let recorded_blob = recorded_blob_sha.trim().to_string();
+    let current_commit = snapshot.head_commit.clone();
+    let current_blob = backend.paths_tree_sha(repo_root, paths).ok();
 
     let mut changed_files = Vec::new();
     let mut commit_lookup_failed = false;
-    let mut status_lookup_failed = false;
 
-    // Frontmatter comes from the repository (possibly untrusted): only hex ids reach git.
     let recorded_commit_ok = recorded_commit.is_empty() || is_hex_sha(&recorded_commit);
     if !recorded_commit_ok {
         commit_lookup_failed = true;
@@ -517,7 +742,7 @@ pub fn check_frontmatter_staleness(
         match backend.diff_name_only(repo_root, &recorded_commit, &current_commit) {
             Ok(diff_files) => {
                 for f in diff_files {
-                    if path_matches_directory(&f, &dir) {
+                    if paths.is_empty() || paths.iter().any(|dir| path_matches_directory(&f, dir)) {
                         changed_files.push(f);
                     }
                 }
@@ -528,21 +753,18 @@ pub fn check_frontmatter_staleness(
         }
     }
 
-    match backend.status_porcelain_z(repo_root) {
-        Ok(status_entries) => {
-            for entry in status_entries {
-                if path_matches_directory(&entry.path, &dir) {
-                    changed_files.push(entry.path);
-                }
-                if let Some(orig) = entry.orig_path {
-                    if path_matches_directory(&orig, &dir) {
-                        changed_files.push(orig);
-                    }
-                }
-            }
+    for entry in &snapshot.status_entries {
+        if paths.is_empty()
+            || paths
+                .iter()
+                .any(|dir| path_matches_directory(&entry.path, dir))
+        {
+            changed_files.push(entry.path.clone());
         }
-        Err(_) => {
-            status_lookup_failed = true;
+        if let Some(orig) = &entry.orig_path {
+            if paths.is_empty() || paths.iter().any(|dir| path_matches_directory(orig, dir)) {
+                changed_files.push(orig.clone());
+            }
         }
     }
 
@@ -550,16 +772,14 @@ pub fn check_frontmatter_staleness(
     changed_files.dedup();
 
     let blob_mismatch = current_blob.as_deref().unwrap_or("") != recorded_blob.as_str();
-
-    let stale =
-        blob_mismatch || !changed_files.is_empty() || commit_lookup_failed || status_lookup_failed;
+    let stale = blob_mismatch || !changed_files.is_empty() || commit_lookup_failed;
 
     let diff_stat = if stale {
-        let scope_paths = if dir.is_empty() || dir == "." {
-            Vec::new()
-        } else {
-            vec![dir.clone()]
-        };
+        let scope_paths: Vec<String> = paths
+            .iter()
+            .map(|p| normalize_path(p))
+            .filter(|p| !p.is_empty() && p != ".")
+            .collect();
 
         let stat_from_git = if recorded_commit_ok
             && !recorded_commit.is_empty()
@@ -580,12 +800,10 @@ pub fn check_frontmatter_staleness(
                 changed_files.len(),
                 changed_files.join(", ")
             )
-        } else if status_lookup_failed {
-            "working tree status check failed".to_string()
         } else {
             format!(
                 "{} blob changed ({} -> {})",
-                if dir.is_empty() { "." } else { &dir },
+                if paths.is_empty() { "." } else { &paths[0] },
                 if recorded_blob.is_empty() {
                     "none"
                 } else {
@@ -609,6 +827,39 @@ pub fn check_frontmatter_staleness(
     })
 }
 
+/// Verifies whether an `OkfCard` is stale relative to the current repository state via `GitBackend` using a snapshot.
+pub fn check_card_staleness_with_snapshot(
+    backend: &dyn GitBackend,
+    repo_root: &Path,
+    snapshot: &RepoGitSnapshot,
+    card: &OkfCard,
+) -> Result<StalenessReport> {
+    check_frontmatter_staleness_with_snapshot(backend, repo_root, snapshot, &card.frontmatter)
+}
+
+/// Verifies whether a `CardFrontmatter` is stale relative to the current repository state via `GitBackend` using a snapshot.
+pub fn check_frontmatter_staleness_with_snapshot(
+    backend: &dyn GitBackend,
+    repo_root: &Path,
+    snapshot: &RepoGitSnapshot,
+    frontmatter: &CardFrontmatter,
+) -> Result<StalenessReport> {
+    let dir = normalize_path(&frontmatter.directory);
+    let paths = if dir.is_empty() || dir == "." {
+        Vec::new()
+    } else {
+        vec![dir]
+    };
+    check_subsystem_staleness_with_snapshot(
+        backend,
+        repo_root,
+        snapshot,
+        &paths,
+        &frontmatter.source.commit_sha,
+        &frontmatter.source.blob_sha,
+    )
+}
+
 fn path_matches_directory(file_path: &str, directory: &str) -> bool {
     let norm_file = normalize_path(file_path);
     let norm_dir = normalize_path(directory);
@@ -621,4 +872,67 @@ fn path_matches_directory(file_path: &str, directory: &str) -> bool {
     norm_file
         .strip_prefix(&norm_dir)
         .is_some_and(|rest| rest.starts_with('/'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn in_process_head_commit_and_remote_url_work_without_git_binary_and_support_gitfile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let real_git = root.join(".actual_git");
+        std::fs::create_dir_all(real_git.join("refs/heads")).unwrap();
+        // .git is a gitfile pointing to .actual_git (worktree/submodule style)
+        std::fs::write(root.join(".git"), "gitdir: .actual_git\n").unwrap();
+        let fake_sha = "0123456789abcdef0123456789abcdef01234567";
+        std::fs::write(real_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(real_git.join("refs/heads/main"), format!("{fake_sha}\n")).unwrap();
+        std::fs::write(
+            real_git.join("config"),
+            "[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = git@github.com:org/repo.git\n",
+        ).unwrap();
+
+        // Use a non-existent git binary to prove zero-fork in-process parsing!
+        let git = SystemGitBackend::with_binary("/nonexistent/git-binary");
+        assert_eq!(git.head_commit(root).unwrap(), fake_sha);
+        assert_eq!(
+            git.remote_url(root).unwrap().as_deref(),
+            Some("git@github.com:org/repo.git")
+        );
+    }
+
+    #[test]
+    fn repo_snapshot_matches_individual_staleness_checks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        run_git(root, &["init"]);
+        run_git(root, &["config", "user.email", "t@example.com"]);
+        run_git(root, &["config", "user.name", "Test"]);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn a() {}\n").unwrap();
+        run_git(root, &["add", "."]);
+        run_git(root, &["commit", "-m", "init"]);
+
+        let git = SystemGitBackend::new();
+        let snap = git.repo_snapshot(root).unwrap();
+        let paths = vec!["src".to_string()];
+        let sha = git.paths_tree_sha(root, &paths).unwrap();
+        let head = git.head_commit(root).unwrap();
+
+        let report =
+            check_subsystem_staleness_with_snapshot(&git, root, &snap, &paths, &head, &sha)
+                .unwrap();
+        assert!(!report.stale);
+    }
 }

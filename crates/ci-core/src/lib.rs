@@ -18,8 +18,10 @@ pub use config::{
     TelemetryConfig, DEFAULT_LANGUAGE, DEFAULT_MAX_RESPONSE_TOKENS, ROLE_NONE,
 };
 pub use git::{
-    check_card_staleness, check_frontmatter_staleness, parse_nul_paths, parse_porcelain_z,
-    GitBackend, GitStatusEntry, StalenessReport, SystemGitBackend,
+    check_card_staleness, check_card_staleness_with_snapshot, check_frontmatter_staleness,
+    check_frontmatter_staleness_with_snapshot, check_subsystem_staleness_with_snapshot,
+    parse_nul_paths, parse_porcelain_z, GitBackend, GitStatusEntry, RepoGitSnapshot,
+    StalenessReport, SystemGitBackend,
 };
 pub use openviking::{
     extract_l0_abstract, extract_l0_abstract_with_limit, CardFreshness, CardFrontmatter,

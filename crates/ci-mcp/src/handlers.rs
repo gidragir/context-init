@@ -13,7 +13,10 @@ use ci_core::analysis::task::{build_task_digest, TaskDigestRequest};
 use ci_core::analysis::workspace::{analyze_workspace, render_workspace_l0};
 use ci_core::config::ROLE_NONE;
 use ci_core::config::{CliOverrides, Config, StorageMode, StoragePaths};
-use ci_core::git::{check_card_staleness, GitBackend, SystemGitBackend};
+use ci_core::git::{
+    check_card_staleness, check_card_staleness_with_snapshot, GitBackend, RepoGitSnapshot,
+    SystemGitBackend,
+};
 use ci_core::openviking::OkfCard;
 use ci_core::search::{Bm25Retriever, Retriever, SearchHit};
 use ci_core::storage::{
@@ -150,8 +153,13 @@ impl ResolvedProject {
             })
     }
 
-    /// Checks if a subsystem card is stale relative to Git.
-    pub fn check_subsystem_staleness(&self, subsystem: &SubsystemInfo) -> (bool, Option<String>) {
+    /// Checks if a subsystem card is stale relative to Git using a precomputed snapshot.
+    pub fn check_subsystem_staleness_with_snap(
+        &self,
+        subsystem: &SubsystemInfo,
+        snapshot: &RepoGitSnapshot,
+        backend: &dyn GitBackend,
+    ) -> (bool, Option<String>) {
         let Some(path) = self.card_file(subsystem) else {
             return (false, None);
         };
@@ -161,8 +169,9 @@ impl ResolvedProject {
         };
 
         if let Ok(card) = OkfCard::parse(&content) {
-            let backend = SystemGitBackend::new();
-            if let Ok(report) = check_card_staleness(&backend, &self.root, &card) {
+            if let Ok(report) =
+                check_card_staleness_with_snapshot(backend, &self.root, snapshot, &card)
+            {
                 if report.stale {
                     return (true, Some(report.diff_stat));
                 }
@@ -170,6 +179,32 @@ impl ResolvedProject {
         }
 
         (false, None)
+    }
+
+    /// Checks if a subsystem card is stale relative to Git.
+    pub fn check_subsystem_staleness(&self, subsystem: &SubsystemInfo) -> (bool, Option<String>) {
+        let backend = SystemGitBackend::new();
+        if let Ok(snapshot) = backend.repo_snapshot(&self.root) {
+            self.check_subsystem_staleness_with_snap(subsystem, &snapshot, &backend)
+        } else {
+            let Some(path) = self.card_file(subsystem) else {
+                return (false, None);
+            };
+
+            let Ok(content) = fs::read_to_string(&path) else {
+                return (false, None);
+            };
+
+            if let Ok(card) = OkfCard::parse(&content) {
+                if let Ok(report) = check_card_staleness(&backend, &self.root, &card) {
+                    if report.stale {
+                        return (true, Some(report.diff_stat));
+                    }
+                }
+            }
+
+            (false, None)
+        }
     }
 }
 
@@ -316,9 +351,15 @@ impl ContextHandler {
         tel: &TelemetryScope,
     ) -> Result<String> {
         let index = project.load_l0_index()?;
+        let git = SystemGitBackend::new();
+        let snapshot = git.repo_snapshot(&project.root).ok();
         let mut any_stale = false;
         for sub in &index.subsystems {
-            let (stale, _) = project.check_subsystem_staleness(sub);
+            let (stale, _) = if let Some(snap) = &snapshot {
+                project.check_subsystem_staleness_with_snap(sub, snap, &git)
+            } else {
+                project.check_subsystem_staleness(sub)
+            };
             if stale {
                 any_stale = true;
                 break;
@@ -522,9 +563,15 @@ impl ContextHandler {
             return Ok(paginated.rendered);
         }
 
-        let any_stale = matched_subs
-            .iter()
-            .any(|s| project.check_subsystem_staleness(s).0);
+        let git = SystemGitBackend::new();
+        let snapshot = git.repo_snapshot(&project.root).ok();
+        let any_stale = matched_subs.iter().any(|s| {
+            if let Some(snap) = &snapshot {
+                project.check_subsystem_staleness_with_snap(s, snap, &git).0
+            } else {
+                project.check_subsystem_staleness(s).0
+            }
+        });
 
         let paginated = paginate_content(
             &packed_content,

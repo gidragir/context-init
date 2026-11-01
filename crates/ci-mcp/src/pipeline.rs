@@ -9,6 +9,7 @@ use ci_core::analysis::generator::{self, GenerateOptions};
 use ci_core::analysis::subsystems::build_deterministic;
 use ci_core::analysis::{detector, ProjectAnalysis};
 use ci_core::config::{Config, StorageMode, ROLE_NONE};
+use ci_core::git::{GitBackend, SystemGitBackend};
 use ci_core::storage::{L0Index, SubsystemInfo};
 use ci_core::SummarySource;
 use ci_llm::enrich::{enrich_subsystems, EnrichOutcome};
@@ -136,12 +137,23 @@ pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport> {
         },
     )?;
     let report = generator::audit(&analysis, &project.knowledge_dir)?;
-    let stale_subsystems: Vec<String> = index
-        .subsystems
-        .iter()
-        .filter(|s| project.check_subsystem_staleness(s).0)
-        .map(|s| s.id.clone())
-        .collect();
+    let git = SystemGitBackend::new();
+    let snapshot = git.repo_snapshot(&project.root).ok();
+    let stale_subsystems: Vec<String> = if let Some(snap) = &snapshot {
+        index
+            .subsystems
+            .iter()
+            .filter(|s| project.check_subsystem_staleness_with_snap(s, snap, &git).0)
+            .map(|s| s.id.clone())
+            .collect()
+    } else {
+        index
+            .subsystems
+            .iter()
+            .filter(|s| project.check_subsystem_staleness(s).0)
+            .map(|s| s.id.clone())
+            .collect()
+    };
     // A subsystem already counted as missing was never in `up_to_date_count`.
     let up_to_date_count = report.up_to_date_count.saturating_sub(
         stale_subsystems
@@ -203,15 +215,23 @@ pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String> {
         StorageMode::Central => StorageMode::Repo,
     };
     let other_dir = project.knowledge_dir_for(other);
-    other_dir.join("L0_index.json").is_file().then(|| {
-        format!(
+    if other_dir.join("L0_index.json").is_file() {
+        return Some(format!(
             "Knowledge base found at {}, but storage = \"{}\". Run `context-init migrate --to {}` or set storage = \"{}\" in .context-init.toml.",
             other_dir.display(),
             project.storage.as_str(),
             other.as_str(),
             other.as_str()
-        )
-    })
+        ));
+    }
+    let legacy_dir = project.root.join(".agents/knowledge");
+    if legacy_dir.join("L0_index.json").is_file() {
+        return Some(format!(
+            "Legacy knowledge base found at {}, but context-init now uses .context-init/knowledge. Run `context-init update` to refresh to the modern location.",
+            legacy_dir.display()
+        ));
+    }
+    None
 }
 
 /// Ids of the fresh subsystems whose summary an LLM should (re)write on `update`: new ones,
