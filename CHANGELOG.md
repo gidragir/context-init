@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/gidragir/context-init/compare/v0.3.0...v0.3.1) - 2026-11-01
+
+### Other
+
+- *(plan)* implementation plan for observability, integrity and adoption
+- *(spec)* design observability, pipeline integrity and agent adoption
+- *(kb)* regenerate knowledge base with deep signatures and agent summaries
+
 ### Added
 - v0.3 hardening: one `check` pipeline for CLI and MCP (missing index is an error, Git-stale cards count as drift), strict `--model` validation, atomic and pre-planned `setup` writes, `mise.toml` tasks, CI/release workflows, `context-audit` gate.
 - v0.4: L1 cards are OpenViking OKF sidecars (YAML frontmatter with `directory`, `source` SHAs, `generated_by`, `freshness`); lazy Git staleness in `context_get_subsystem` with optional `auto_refresh`; two-phase `scan`/`init` with `.gitignore` and `[scope]` (`--include`, `--exclude`, `--ext`); `LanguageAdapter` for Rust, Python, BSL and `.os`; `.mdo` metadata subsystems and lazy L2 object cards.

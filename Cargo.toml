@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 authors = ["gidragir"]
 license = "MIT"
@@ -16,9 +16,9 @@ repository = "https://github.com/gidragir/context-init"
 homepage = "https://github.com/gidragir/context-init"
 
 [workspace.dependencies]
-ci-core = { path = "crates/ci-core", version = "0.3.0" }
-ci-llm = { path = "crates/ci-llm", version = "0.3.0" }
-ci-mcp = { path = "crates/ci-mcp", version = "0.3.0" }
+ci-core = { path = "crates/ci-core", version = "0.3.1" }
+ci-llm = { path = "crates/ci-llm", version = "0.3.1" }
+ci-mcp = { path = "crates/ci-mcp", version = "0.3.1" }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 colored = "2.1"
