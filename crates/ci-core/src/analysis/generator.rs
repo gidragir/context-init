@@ -492,6 +492,7 @@ pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftRe
 }
 
 /// Numeric components of a `major.minor.patch[-pre][+build]` version; unparsable ones are 0.
+/// Pre-release and build suffixes are ignored (`0.3.0-rc1` compares equal to `0.3.0`).
 fn version_components(v: &str) -> Vec<u64> {
     v.split(['-', '+'])
         .next()

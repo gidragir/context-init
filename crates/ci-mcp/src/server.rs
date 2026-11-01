@@ -36,35 +36,54 @@ pub struct ContextInitServer {
     /// Modification time of the running executable when the server started; `None` when
     /// it could not be read (no stale-binary detection then).
     pub(crate) exe_mtime_at_start: Option<SystemTime>,
+    /// Path of the running executable captured at start. Kept because after an atomic
+    /// `mv` install Linux reports `current_exe()` as `<path> (deleted)`.
+    pub(crate) exe_path: Option<PathBuf>,
 }
 
 /// Appended to responses once the executable on disk is newer than the running process.
 const STALE_BINARY_FOOTER: &str = "⚠ context-init обновлён на диске — перезапустите MCP-сервер";
 
-fn current_exe_mtime() -> Option<SystemTime> {
+/// Path of the running executable, without the `" (deleted)"` suffix Linux appends once the
+/// file was replaced or removed.
+fn current_exe_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    fs::metadata(exe).ok()?.modified().ok()
+    let text = exe.to_string_lossy();
+    Some(match text.strip_suffix(" (deleted)") {
+        Some(stripped) => PathBuf::from(stripped),
+        None => exe,
+    })
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).ok()?.modified().ok()
 }
 
 impl ContextInitServer {
     /// Creates a new `ContextInitServer` with an optional fallback project root.
     pub fn new(default_root: Option<PathBuf>) -> Self {
+        let exe_path = current_exe_path();
         Self {
             default_root: default_root.map(|p| normalize_existing_path(&p)),
             roots: Arc::new(RwLock::new(Vec::new())),
             work_packages: Arc::new(RwLock::new(HashMap::new())),
             telemetry_sink: None,
             client_harness: Arc::new(std::sync::RwLock::new(HarnessId::Other)),
-            exe_mtime_at_start: current_exe_mtime(),
+            exe_mtime_at_start: exe_path.as_deref().and_then(file_mtime),
+            exe_path,
         }
     }
 
     /// Footer warning that the binary on disk changed since this server started (so the
     /// harness is still talking to an outdated process); `None` while it is unchanged.
+    ///
+    /// Compares the mtime of the path remembered at start with its mtime now. A path that
+    /// is gone (replaced and not yet recreated, or removed) counts as changed, as long as
+    /// the start mtime is known; without a known start mtime nothing can be detected.
     pub fn stale_binary_footer(&self) -> Option<&'static str> {
         let at_start = self.exe_mtime_at_start?;
-        let now = current_exe_mtime()?;
-        (now != at_start).then_some(STALE_BINARY_FOOTER)
+        let now = self.exe_path.as_deref().and_then(file_mtime);
+        (now != Some(at_start)).then_some(STALE_BINARY_FOOTER)
     }
 
     /// Injects an explicit telemetry sink for recording feedback and operational events.

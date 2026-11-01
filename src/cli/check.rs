@@ -70,7 +70,7 @@ pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode> {
                 println!("      - {}", issue.yellow());
             }
             println!(
-                "\nRun `context-init init --force` to regenerate the base, or upgrade the binary."
+                "\nRun `context-init update` to regenerate cards without frontmatter, or upgrade the binary."
             );
         }
         if !has_drift {

@@ -461,6 +461,47 @@ mod tests {
         assert!(stale.ends_with(&format!("\n{footer}")), "{stale}");
     }
 
+    #[test]
+    fn stale_binary_footer_follows_real_file_replacement() {
+        let tmp = TempDirGuard::new("stale_real");
+        let exe = tmp.path().join("fake-exe");
+        fs::write(&exe, "v1").unwrap();
+        let server_for = |exe: &Path| {
+            let mut s = ContextInitServer::new(None);
+            s.exe_path = Some(exe.to_path_buf());
+            s.exe_mtime_at_start = fs::metadata(exe).and_then(|m| m.modified()).ok();
+            s
+        };
+        let server = server_for(&exe);
+        assert_eq!(server.stale_binary_footer(), None, "untouched");
+
+        // Atomic install: write a sibling, give it a different mtime, rename over the target.
+        let new = tmp.path().join(".fake-exe.new");
+        fs::write(&new, "v2").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(&new)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        fs::rename(&new, &exe).unwrap();
+        assert!(server.stale_binary_footer().is_some(), "replaced");
+
+        // Removed, then recreated with a different mtime.
+        let server = server_for(&exe);
+        fs::remove_file(&exe).unwrap();
+        assert!(server.stale_binary_footer().is_some(), "deleted");
+        fs::write(&exe, "v3").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&exe)
+            .unwrap()
+            .set_modified(later + std::time::Duration::from_secs(60))
+            .unwrap();
+        assert!(server.stale_binary_footer().is_some(), "recreated");
+    }
+
     #[tokio::test]
     async fn context_init_on_fixture_produces_real_subsystems() {
         let tmp = TempDirGuard::new("init_real");
