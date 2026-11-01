@@ -28,11 +28,12 @@ pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode> {
     if global.compact {
         if has_drift {
             println!(
-                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}], git_stale={}",
+                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}], git_stale={}, format=[{}]",
                 report.up_to_date_count,
                 report.missing_in_fs.join(", "),
                 report.untracked_in_knowledge.join(", "),
-                report.git_stale
+                report.git_stale,
+                report.format_issues.join("; ")
             );
         } else {
             println!("OK: {} subsystems up-to-date", report.up_to_date_count);
@@ -62,6 +63,15 @@ pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode> {
                 println!("      - {}", st.yellow());
             }
             println!("\nRun `context-init update` to refresh them.");
+        }
+        if !report.format_issues.is_empty() {
+            println!("   ! Format drift:");
+            for issue in &report.format_issues {
+                println!("      - {}", issue.yellow());
+            }
+            println!(
+                "\nRun `context-init init --force` to regenerate the base, or upgrade the binary."
+            );
         }
         if !has_drift {
             println!(

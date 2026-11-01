@@ -272,6 +272,7 @@ impl ContextHandler {
             untracked_in_knowledge,
             up_to_date_count,
             git_stale,
+            format_issues,
             ..
         } = pipeline::run_check(project)?;
 
@@ -279,11 +280,12 @@ impl ContextHandler {
             format!("OK: {} subsystems verified up-to-date", up_to_date_count)
         } else {
             format!(
-                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}], git_stale={}",
+                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}], git_stale={}, format=[{}]",
                 up_to_date_count,
                 missing_in_fs.join(", "),
                 untracked_in_knowledge.join(", "),
-                git_stale
+                git_stale,
+                format_issues.join("; ")
             )
         };
 
@@ -293,6 +295,7 @@ impl ContextHandler {
             untracked_in_knowledge,
             up_to_date_count,
             git_stale,
+            format_issues,
             message,
         };
 

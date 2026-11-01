@@ -544,6 +544,9 @@ pub struct DriftReport {
     pub missing_in_fs: Vec<String>,
     pub untracked_in_knowledge: Vec<String>,
     pub up_to_date_count: usize,
+    /// Format problems: cards without OKF frontmatter, an index written by a newer generator.
+    #[serde(default)]
+    pub format_issues: Vec<String>,
 }
 
 /// Options for [`copy_knowledge`].

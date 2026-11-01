@@ -275,6 +275,30 @@ fn cli_check_exit_code_tracks_drift() {
 }
 
 #[test]
+fn cli_check_exit_code_on_format_drift() {
+    let sb = Sandbox::new("format_drift");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let subsystems = sb.project().join(".context-init/knowledge/subsystems");
+    let card = fs::read_dir(&subsystems)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "md"))
+        .expect("a card");
+    let text = fs::read_to_string(&card).unwrap();
+    let body = text.splitn(3, "---\n").nth(2).unwrap().to_string();
+    fs::write(&card, body).unwrap();
+
+    let out = sb.run(&["check", ".", "--exit-code", "--compact"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("missing OKF frontmatter"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn cli_config_validate_exit_codes() {
     let sb = Sandbox::new("cfg_validate");
     let ok = sb.run(&["config", "validate"]);

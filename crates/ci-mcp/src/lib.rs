@@ -435,6 +435,33 @@ mod tests {
     const AGENT_CONFIG: &str = "[models.h]\nkind = \"agent\"\n\n[roles]\ninit = [\"h\"]\n";
 
     #[tokio::test]
+    async fn stale_binary_footer_appears_when_mtime_changes() {
+        let tmp = TempDirGuard::new("stale_footer");
+        write_fixture(tmp.path());
+        let mut server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        let footer = "⚠ context-init обновлён на диске — перезапустите MCP-сервер";
+        let params = || {
+            Parameters(McpCheckParams {
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..McpCheckParams::default()
+            })
+        };
+
+        assert_eq!(server.stale_binary_footer(), None);
+        let fresh = server.check_drift(params()).await.unwrap();
+        assert!(!fresh.contains(footer), "{fresh}");
+
+        server.exe_mtime_at_start = Some(std::time::UNIX_EPOCH);
+        assert_eq!(server.stale_binary_footer(), Some(footer));
+        let stale = server.check_drift(params()).await.unwrap();
+        assert!(stale.ends_with(&format!("\n{footer}")), "{stale}");
+    }
+
+    #[tokio::test]
     async fn context_init_on_fixture_produces_real_subsystems() {
         let tmp = TempDirGuard::new("init_real");
         write_fixture(tmp.path());

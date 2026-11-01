@@ -30,6 +30,9 @@ pub struct McpCheckResult {
     pub up_to_date_count: usize,
     /// Indicates whether underlying OKF cards are stale relative to Git.
     pub git_stale: bool,
+    /// Format problems: cards without OKF frontmatter, an index from a newer generator.
+    #[serde(default)]
+    pub format_issues: Vec<String>,
     /// Human-readable summary message.
     pub message: String,
 }

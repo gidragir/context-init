@@ -11,7 +11,7 @@ use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use tokio::sync::RwLock;
 
 use ci_core::config::{Config, StoragePaths};
@@ -33,6 +33,17 @@ pub struct ContextInitServer {
     pub(crate) telemetry_sink: Option<Arc<dyn TelemetrySink>>,
     /// Harness of the connected client, normalized from `clientInfo.name` on `initialized`.
     pub(crate) client_harness: Arc<std::sync::RwLock<HarnessId>>,
+    /// Modification time of the running executable when the server started; `None` when
+    /// it could not be read (no stale-binary detection then).
+    pub(crate) exe_mtime_at_start: Option<SystemTime>,
+}
+
+/// Appended to responses once the executable on disk is newer than the running process.
+const STALE_BINARY_FOOTER: &str = "⚠ context-init обновлён на диске — перезапустите MCP-сервер";
+
+fn current_exe_mtime() -> Option<SystemTime> {
+    let exe = std::env::current_exe().ok()?;
+    fs::metadata(exe).ok()?.modified().ok()
 }
 
 impl ContextInitServer {
@@ -44,7 +55,16 @@ impl ContextInitServer {
             work_packages: Arc::new(RwLock::new(HashMap::new())),
             telemetry_sink: None,
             client_harness: Arc::new(std::sync::RwLock::new(HarnessId::Other)),
+            exe_mtime_at_start: current_exe_mtime(),
         }
+    }
+
+    /// Footer warning that the binary on disk changed since this server started (so the
+    /// harness is still talking to an outdated process); `None` while it is unchanged.
+    pub fn stale_binary_footer(&self) -> Option<&'static str> {
+        let at_start = self.exe_mtime_at_start?;
+        let now = current_exe_mtime()?;
+        (now != at_start).then_some(STALE_BINARY_FOOTER)
     }
 
     /// Injects an explicit telemetry sink for recording feedback and operational events.
@@ -209,7 +229,10 @@ impl ContextInitServer {
         match f().await {
             Ok(text) => {
                 recorder.record_call(&ctx, tool, started, CallOutcome::Ok);
-                Ok(text)
+                Ok(match self.stale_binary_footer() {
+                    Some(footer) => format!("{text}\n{footer}"),
+                    None => text,
+                })
             }
             Err(e) => {
                 let (class, mcp_err) = match e.downcast_ref::<rmcp::ErrorData>() {

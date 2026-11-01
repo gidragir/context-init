@@ -414,8 +414,14 @@ pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftRe
 
     let mut missing_in_fs = Vec::new();
     let mut up_to_date_count = 0;
+    let mut format_issues = Vec::new();
 
     for sub in &index.subsystems {
+        if let Ok(text) = fs::read_to_string(base_dir.join(&sub.l1_path)) {
+            if OkfCard::parse(&text).is_err() {
+                format_issues.push(format!("{}: missing OKF frontmatter", sub.id));
+            }
+        }
         let exists = if sub.parent.is_some() {
             // A split-off module lives only while its crate is still split.
             fs_module_ids.contains(&sub.id)
@@ -467,11 +473,41 @@ pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftRe
         }
     }
 
+    if let Some(stamp) = &index.generator {
+        if version_newer(&stamp.version, crate::VERSION) {
+            format_issues.push(format!(
+                "generator {} is newer than running {}",
+                stamp.version,
+                crate::VERSION
+            ));
+        }
+    }
+
     Ok(DriftReport {
         missing_in_fs,
         untracked_in_knowledge,
         up_to_date_count,
+        format_issues,
     })
+}
+
+/// Numeric components of a `major.minor.patch[-pre][+build]` version; unparsable ones are 0.
+fn version_components(v: &str) -> Vec<u64> {
+    v.split(['-', '+'])
+        .next()
+        .unwrap_or("")
+        .split('.')
+        .map(|c| c.trim().parse::<u64>().unwrap_or(0))
+        .collect()
+}
+
+/// Whether `candidate` is a strictly newer version than `running` (per-component compare).
+fn version_newer(candidate: &str, running: &str) -> bool {
+    let (mut a, mut b) = (version_components(candidate), version_components(running));
+    let n = a.len().max(b.len());
+    a.resize(n, 0);
+    b.resize(n, 0);
+    a > b
 }
 
 /// Incrementally merges `new_subsystems` into the knowledge base in `knowledge_dir`
@@ -1254,6 +1290,57 @@ mod tests {
         assert!(content.contains("- `core` (Core) — Core module"));
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn audit_flags_card_without_frontmatter() {
+        let root = split_drift_fixture();
+        let kb = root.with_extension("kb_fmt");
+        let whole = analyze_at(&root, 1_000_000);
+        let subs = crate::analysis::subsystems::build_deterministic(&whole);
+        generate(&whole, &subs, &kb, &GenerateOptions::default()).unwrap();
+        assert!(audit(&whole, &kb).unwrap().format_issues.is_empty());
+
+        let index = L0Index::load_from_file(&kb.join("L0_index.json")).unwrap();
+        let sub = &index.subsystems[0];
+        let card = kb.join(&sub.l1_path);
+        let text = fs::read_to_string(&card).unwrap();
+        let parsed = OkfCard::parse(&text).unwrap();
+        fs::write(&card, parsed.body).unwrap();
+
+        let report = audit(&whole, &kb).unwrap();
+        assert_eq!(
+            report.format_issues,
+            vec![format!("{}: missing OKF frontmatter", sub.id)]
+        );
+    }
+
+    #[test]
+    fn audit_flags_newer_generator() {
+        let root = split_drift_fixture();
+        let kb = root.with_extension("kb_gen");
+        let whole = analyze_at(&root, 1_000_000);
+        let subs = crate::analysis::subsystems::build_deterministic(&whole);
+        generate(&whole, &subs, &kb, &GenerateOptions::default()).unwrap();
+
+        let path = kb.join("L0_index.json");
+        let mut index = L0Index::load_from_file(&path).unwrap();
+        index.generator = Some(GeneratorStamp {
+            version: "99.0.0".into(),
+            build: "x".into(),
+        });
+        index.save_to_file(&path).unwrap();
+
+        let report = audit(&whole, &kb).unwrap();
+        assert_eq!(
+            report.format_issues,
+            vec![format!(
+                "generator 99.0.0 is newer than running {}",
+                crate::VERSION
+            )]
+        );
+        assert!(version_newer("0.10.0", "0.9.9"));
+        assert!(!version_newer("0.3.0", "0.3.0"));
     }
 
     fn split_drift_fixture() -> std::path::PathBuf {

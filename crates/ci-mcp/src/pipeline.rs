@@ -118,6 +118,8 @@ pub struct FullDriftReport {
     pub up_to_date_count: usize,
     pub git_stale: bool,
     pub stale_subsystems: Vec<String>,
+    /// Cards without OKF frontmatter, an index from a newer generator.
+    pub format_issues: Vec<String>,
 }
 
 /// Compares the knowledge base with the source tree and with Git (M1). A missing index is an
@@ -149,7 +151,8 @@ pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport> {
     );
     let has_drift = !report.missing_in_fs.is_empty()
         || !report.untracked_in_knowledge.is_empty()
-        || !stale_subsystems.is_empty();
+        || !stale_subsystems.is_empty()
+        || !report.format_issues.is_empty();
     Ok(FullDriftReport {
         has_drift,
         missing_in_fs: report.missing_in_fs,
@@ -157,6 +160,7 @@ pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport> {
         up_to_date_count,
         git_stale: !stale_subsystems.is_empty(),
         stale_subsystems,
+        format_issues: report.format_issues,
     })
 }
 
