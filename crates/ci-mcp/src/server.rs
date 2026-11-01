@@ -131,35 +131,59 @@ impl ContextInitServer {
         arg_path: Option<&str>,
         arg_project: Option<&str>,
     ) -> PathBuf {
-        // Cascade Step 1: Explicit tool argument `project` or `path`
         let candidate_arg = arg_project
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| arg_path.filter(|s| !s.trim().is_empty()));
-
-        if let Some(name) = arg_project
             .map(str::trim)
-            .filter(|n| !n.is_empty() && *n != "." && *n != ".." && !n.contains(['/', '\\']))
-        {
-            if let Some(child) = self.child_repo(name).await {
-                return child;
-            }
-        }
+            .filter(|s| !s.is_empty())
+            .or_else(|| arg_path.map(str::trim).filter(|s| !s.is_empty()));
 
         if let Some(target) = candidate_arg {
-            let p = PathBuf::from(target.trim());
-            let abs_candidate = if p.is_absolute() {
-                p
-            } else if let Ok(cwd) = std::env::current_dir() {
-                cwd.join(p)
+            let p = PathBuf::from(target);
+            if p.is_absolute() {
+                if p.exists() {
+                    if let Some(root) = find_project_root_upward(&p) {
+                        return root;
+                    }
+                    return normalize_existing_path(&p);
+                }
             } else {
-                p
-            };
+                // 1. Try child_repo (which checks roots, default_root, sibling to default_root, and workspace_roots)
+                if let Some(child) = self.child_repo(target).await {
+                    return child;
+                }
 
-            if let Some(root) = find_project_root_upward(&abs_candidate) {
-                return root;
-            }
-            if abs_candidate.exists() {
-                return normalize_existing_path(&abs_candidate);
+                // 2. Try cwd.join(p) only if it actually exists
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let cwd_cand = cwd.join(&p);
+                if cwd_cand.exists() {
+                    if let Some(root) = find_project_root_upward(&cwd_cand) {
+                        return root;
+                    }
+                    return normalize_existing_path(&cwd_cand);
+                }
+
+                // 3. Try sibling of cwd
+                if let Some(parent) = cwd.parent() {
+                    let sib = parent.join(&p);
+                    if sib.exists() {
+                        if let Some(root) = find_project_root_upward(&sib) {
+                            return root;
+                        }
+                        return normalize_existing_path(&sib);
+                    }
+                }
+
+                // 4. Try workspace_roots
+                for ws in &Config::default().workspace_roots {
+                    let cand = ws.join(&p);
+                    if cand.exists() {
+                        if let Some(root) = find_project_root_upward(&cand) {
+                            return root;
+                        }
+                        return normalize_existing_path(&cand);
+                    }
+                }
+
+                return cwd_cand;
             }
         }
 
@@ -189,10 +213,16 @@ impl ContextInitServer {
     }
 
     /// `<workspace>/<name>` for a bare repository name, looked up under the registered roots,
-    /// and the default root (D6); never above them.
+    /// the default root, its siblings, and configured workspace roots; never above them.
     async fn child_repo(&self, name: &str) -> Option<PathBuf> {
         let mut bases: Vec<PathBuf> = self.roots.read().await.clone();
         bases.extend(self.default_root.clone());
+        if let Some(def) = &self.default_root {
+            if let Some(parent) = def.parent() {
+                bases.push(parent.to_path_buf());
+            }
+        }
+        bases.extend(Config::default().workspace_roots);
         bases
             .into_iter()
             .map(|b| b.join(name))
@@ -254,13 +284,16 @@ impl ContextInitServer {
                 })
             }
             Err(e) => {
-                let (class, mcp_err) = match e.downcast_ref::<rmcp::ErrorData>() {
+                let (class, mut mcp_err) = match e.downcast_ref::<rmcp::ErrorData>() {
                     Some(data) => (ErrorClass::InvalidParams, data.clone()),
                     None => (
                         classify_error(&e),
                         rmcp::ErrorData::internal_error(format!("{:#}", e), None),
                     ),
                 };
+                if let Some(footer) = self.stale_binary_footer() {
+                    mcp_err.message = format!("{}\n{footer}", mcp_err.message).into();
+                }
                 recorder.record_call(&ctx, tool, started, CallOutcome::Err(class));
                 Err(mcp_err)
             }

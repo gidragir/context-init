@@ -86,30 +86,76 @@ fn repo_symbols(repo: &Path) -> BTreeSet<String> {
     symbols
 }
 
-/// Child directories of `workspace_root` that are Git repositories (symlinks are ignored),
-/// with branch, dirty-file count and symbols declared in two or more repositories.
+/// Child directories of `workspace_root` that are Git repositories (symlinks followed, dot-dirs skipped,
+/// nested subdirectories inspected 1 level deeper), with branch, dirty-file count and symbols declared
+/// in two or more repositories.
 pub fn analyze_workspace(workspace_root: &Path, git: &dyn GitBackend) -> Result<WorkspaceReport> {
-    let mut dirs: Vec<(String, std::path::PathBuf)> = fs::read_dir(workspace_root)
-        .with_context(|| format!("Cannot read workspace {workspace_root:?}"))?
-        .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-        .filter(|e| e.path().join(".git").exists())
-        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
-        .collect();
+    let mut dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let entries = fs::read_dir(workspace_root)
+        .with_context(|| format!("Cannot read workspace {workspace_root:?}"))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || !path.is_dir() {
+            continue;
+        }
+        if path.join(".git").exists() {
+            dirs.push((name, path));
+        } else {
+            // Check 1 level deeper (e.g. wasmbridge-projects/*)
+            if let Ok(sub_entries) = fs::read_dir(&path) {
+                for sub_entry in sub_entries.flatten() {
+                    let sub_path = sub_entry.path();
+                    let sub_name = sub_entry.file_name().to_string_lossy().into_owned();
+                    if sub_name.starts_with('.') || !sub_path.is_dir() {
+                        continue;
+                    }
+                    if sub_path.join(".git").exists() {
+                        dirs.push((format!("{name}/{sub_name}"), sub_path));
+                    }
+                }
+            }
+        }
+    }
     dirs.sort();
 
-    let mut repos = Vec::new();
+    // Parallel analysis across discovered repositories using std::thread::scope
+    let mut repos_and_symbols = Vec::with_capacity(dirs.len());
+    std::thread::scope(|s| {
+        let handles: Vec<_> = dirs
+            .iter()
+            .map(|(name, path)| {
+                s.spawn(move || {
+                    let branch = git.current_branch(path).unwrap_or_else(|_| "?".to_string());
+                    let dirty_files = git.status_porcelain_z(path).map_or(0, |s| s.len());
+                    let symbols = repo_symbols(path);
+                    (
+                        WorkspaceRepo {
+                            name: name.clone(),
+                            branch,
+                            dirty_files,
+                        },
+                        symbols,
+                    )
+                })
+            })
+            .collect();
+        for h in handles {
+            repos_and_symbols.push(h.join().unwrap());
+        }
+    });
+
+    let mut repos = Vec::with_capacity(repos_and_symbols.len());
     let mut owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (name, path) in &dirs {
-        repos.push(WorkspaceRepo {
-            name: name.clone(),
-            branch: git.current_branch(path).unwrap_or_else(|_| "?".to_string()),
-            dirty_files: git.status_porcelain_z(path).map_or(0, |s| s.len()),
-        });
-        for sym in repo_symbols(path) {
+    for (repo, symbols) in repos_and_symbols {
+        let name = repo.name.clone();
+        repos.push(repo);
+        for sym in symbols {
             owners.entry(sym).or_default().push(name.clone());
         }
     }
+
     let links = owners
         .into_iter()
         .filter(|(_, repos)| repos.len() >= 2)
@@ -232,5 +278,57 @@ mod tests {
             "{md}"
         );
         let _ = fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn workspace_follows_symlinks_and_scans_nested_repos_and_skips_dot_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+
+        // 1. Direct repo
+        make_repo(
+            ws,
+            "repo-a",
+            "main",
+            &[("src/lib.rs", "pub struct SharedType;\n")],
+        );
+
+        // 2. Symlinked repo
+        let external = tmp.path().join("external_repo");
+        make_repo(
+            tmp.path(),
+            "external_repo",
+            "main",
+            &[("src/lib.rs", "pub struct SharedType;\n")],
+        );
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external, ws.join("repo-symlink")).unwrap();
+
+        // 3. Dot directory with repo (should be ignored)
+        let dot_dir = ws.join(".hidden");
+        make_repo(
+            &dot_dir,
+            "hidden-repo",
+            "main",
+            &[("src/lib.rs", "pub struct Hidden;\n")],
+        );
+
+        // 4. Nested container directory with child repos (e.g. wasmbridge-projects/sub-repo)
+        let container = ws.join("group");
+        fs::create_dir_all(&container).unwrap();
+        make_repo(
+            &container,
+            "sub-repo",
+            "main",
+            &[("src/lib.rs", "pub struct SharedType;\n")],
+        );
+
+        let report = analyze_workspace(ws, &SystemGitBackend::new()).unwrap();
+        let names: Vec<String> = report.repos.iter().map(|r| r.name.clone()).collect();
+        assert!(names.contains(&"repo-a".to_string()));
+        #[cfg(unix)]
+        assert!(names.contains(&"repo-symlink".to_string()));
+        assert!(!names.iter().any(|n| n.starts_with('.')));
+        assert!(names.contains(&"group/sub-repo".to_string()));
     }
 }

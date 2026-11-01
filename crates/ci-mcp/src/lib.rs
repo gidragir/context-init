@@ -1273,6 +1273,20 @@ mod tests {
         assert!(map.contains("OrderDto"), "{map}");
     }
 
+    #[tokio::test]
+    async fn mcp_resolves_sibling_repo_when_relative_to_parent() {
+        let tmp = TempDirGuard::new("ws_sibling");
+        let repo_a = tmp.path().join("repo_a");
+        let repo_b = tmp.path().join("repo_b");
+        for r in [&repo_a, &repo_b] {
+            fs::create_dir_all(r.join("src")).unwrap();
+            git(r, &["init", "-q"]);
+        }
+        let server = ContextInitServer::new(Some(repo_a.clone()));
+        let resolved = server.resolve_project_root(None, Some("repo_b")).await;
+        assert_eq!(resolved, fs::canonicalize(&repo_b).unwrap());
+    }
+
     struct ScriptedSearch {
         reply: Option<String>,
     }

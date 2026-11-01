@@ -679,6 +679,20 @@ fn default_split_threshold_tokens() -> usize {
     DEFAULT_SPLIT_THRESHOLD_TOKENS
 }
 
+fn default_workspace_roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from("/data/projects")];
+    if let Some(home) = std::env::var_os("HOME")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+    {
+        let p = home.join("projects");
+        if !roots.contains(&p) {
+            roots.push(p);
+        }
+    }
+    roots
+}
+
 /// Complete resolved configuration for `context-init` (D1, D10–D12, D16, D19, D28).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
@@ -692,6 +706,9 @@ pub struct Config {
     /// into per-module subsystems (default `15000`; `0` disables splitting).
     #[serde(default = "default_split_threshold_tokens")]
     pub split_threshold_tokens: usize,
+    /// Workspace root directories searched when resolving relative multi-project roots.
+    #[serde(default = "default_workspace_roots")]
+    pub workspace_roots: Vec<PathBuf>,
     /// Whether to modify in-repo `AGENTS.md` by default (default `false`, D1).
     #[serde(default)]
     pub touch_agents_md: bool,
@@ -749,6 +766,7 @@ impl Default for Config {
             language: default_language(),
             max_response_tokens: default_max_response_tokens(),
             split_threshold_tokens: default_split_threshold_tokens(),
+            workspace_roots: default_workspace_roots(),
             touch_agents_md: false,
             auto_refresh: false,
             scope: ScopeConfig::default(),
