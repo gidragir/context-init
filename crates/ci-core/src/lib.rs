@@ -825,6 +825,7 @@ init = ["m_ollama", "m_cmd", "m_agent", "m_oai", "m_anth", "m_gem", "m_samp", "n
                 "proj-1",
                 "2026-10-19",
                 TelemetrySignal::Efficiency(EfficiencySignal {
+                    harness: None,
                     tool: "context_pack".to_string(),
                     response_tokens: 900,
                     source_tokens: 4500,

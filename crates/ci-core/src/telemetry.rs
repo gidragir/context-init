@@ -225,6 +225,7 @@ impl TelemetryScope {
         empty_search: bool,
     ) {
         self.recorder.record_efficiency(EfficiencySignal {
+            harness: Some(self.ctx.harness.as_str().to_string()),
             tool: tool.to_string(),
             response_tokens: crate::tokens::count_tokens(response),
             source_tokens,
@@ -239,6 +240,9 @@ impl TelemetryScope {
 /// Context efficiency telemetry signal: response vs source tokens, truncations, cursor hops, staleness, empty search (D29).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EfficiencySignal {
+    /// Harness identifier (e.g. `"claude-code"`, `"antigravity"`), if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
     /// Tool identifier.
     pub tool: String,
     /// Number of tokens returned in the response.
@@ -542,7 +546,7 @@ pub fn render_telemetry_report(events: &[TelemetryEvent], include_notes: bool) -
 
     let mut op_groups: OpGroups = BTreeMap::new();
     let mut op_nested = 0usize;
-    // Efficiency signals carry no harness, so savings aggregate under `unknown`.
+    // Efficiency savings grouped by harness ("unknown" if absent).
     let mut savings_by_harness: BTreeMap<String, usize> = BTreeMap::new();
     let mut search_total = 0usize;
     let mut search_empty = 0usize;
@@ -607,7 +611,8 @@ pub fn render_telemetry_report(events: &[TelemetryEvent], include_notes: bool) -
             TelemetrySignal::Efficiency(eff) => {
                 eff_count += 1;
                 let saved = eff.source_tokens.saturating_sub(eff.response_tokens);
-                let entry = savings_by_harness.entry("unknown".to_string()).or_insert(0);
+                let harness = eff.harness.as_deref().unwrap_or("unknown");
+                let entry = savings_by_harness.entry(harness.to_string()).or_insert(0);
                 *entry = entry.saturating_add(saved);
                 if matches!(eff.tool.as_str(), "context_search" | "search") {
                     search_total += 1;
@@ -1047,6 +1052,31 @@ mod recorder_tests {
     }
 
     #[test]
+    fn telemetry_scope_efficiency_populates_harness() {
+        let dir = unique_dir("scope_eff");
+        let sink = Arc::new(JsonlTelemetrySink::with_exact_dir(&dir, true));
+        let rec = Recorder::new(Some(sink.clone()), Some("raw-project".to_string()));
+        let scope = TelemetryScope {
+            recorder: rec,
+            ctx: CallContext {
+                harness: HarnessId::ClaudeCode,
+                channel: Channel::Mcp,
+                nested: false,
+            },
+        };
+        scope.efficiency("context_pack", 1000, "resp", false, 0, false, false);
+        let events = sink.read_all_events().unwrap();
+        assert_eq!(events.len(), 1);
+        let TelemetrySignal::Efficiency(eff) = &events[0].signal else {
+            panic!("expected efficiency signal");
+        };
+        assert_eq!(eff.harness.as_deref(), Some("claude-code"));
+        assert_eq!(eff.tool, "context_pack");
+        assert_eq!(eff.source_tokens, 1000);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn reads_v1_events_without_nested() {
         let dir = unique_dir("rec_v1");
         fs::create_dir_all(&dir).unwrap();
@@ -1114,11 +1144,18 @@ mod report_usage_tests {
         )
     }
 
-    fn eff(tool: &str, source: usize, response: usize, empty: bool) -> TelemetryEvent {
+    fn eff(
+        harness: Option<&str>,
+        tool: &str,
+        source: usize,
+        response: usize,
+        empty: bool,
+    ) -> TelemetryEvent {
         TelemetryEvent::with_timestamp(
             "p",
             "2026-01-02",
             TelemetrySignal::Efficiency(EfficiencySignal {
+                harness: harness.map(str::to_string),
                 tool: tool.to_string(),
                 response_tokens: response,
                 source_tokens: source,
@@ -1134,10 +1171,12 @@ mod report_usage_tests {
             op("claude-code", "mcp", "context_pack", true, false),
             op("claude-code", "mcp", "context_pack", true, true),
             op("antigravity", "cli", "pack", false, false),
-            eff("context_pack", 5000, 1000, false),
-            eff("context_pack", 2000, 3000, false),
-            eff("context_search", 0, 0, true),
-            eff("context_search", 5, 5, false),
+            eff(Some("claude-code"), "context_pack", 5000, 1000, false),
+            eff(Some("claude-code"), "context_pack", 2000, 3000, false),
+            eff(Some("antigravity"), "context_pack", 1500, 500, false),
+            eff(None, "context_pack", 1000, 500, false),
+            eff(Some("claude-code"), "context_search", 0, 0, true),
+            eff(None, "context_search", 5, 5, false),
         ];
         let report = render_telemetry_report(&events, false);
         assert!(report.contains("## По харнессам и каналам"), "{report}");
@@ -1152,7 +1191,10 @@ mod report_usage_tests {
         assert!(report.contains("## Вложенные вызовы"), "{report}");
         assert!(report.contains("Вложенных: 1 из 3 (33%)"), "{report}");
         assert!(report.contains("## Экономия токенов"), "{report}");
-        assert!(report.contains("Сэкономлено токенов: 4000"), "{report}");
+        assert!(report.contains("Сэкономлено токенов: 5500"), "{report}");
+        assert!(report.contains("- `antigravity`: 1000"), "{report}");
+        assert!(report.contains("- `claude-code`: 4000"), "{report}");
+        assert!(report.contains("- `unknown`: 500"), "{report}");
         assert!(report.contains("## Пустой поиск"), "{report}");
         assert!(report.contains("Пустых: 1 из 2 (50%)"), "{report}");
     }

@@ -25,7 +25,7 @@ run = "cargo run --quiet -- check . --exit-code --compact"
 
 [tasks.install]
 description = "Build release binary and install it to ~/.local/bin atomically"
-run = "cargo build --release --bin context-init && install -m755 target/release/context-init ~/.local/bin/.context-init.new && mv ~/.local/bin/.context-init.new ~/.local/bin/context-init"
+run = "mkdir -p ~/.local/bin && cargo build --release --bin context-init && install -m755 target/release/context-init ~/.local/bin/.context-init.new && mv ~/.local/bin/.context-init.new ~/.local/bin/context-init"
 
 [tasks.dist]
 description = "Build the distributable binary with the dist profile"

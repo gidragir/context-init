@@ -18,6 +18,16 @@ fn main() {
         None => "unknown".to_string(),
     };
     println!("cargo:rustc-env=CONTEXT_INIT_BUILD={build}");
-    println!("cargo:rerun-if-changed=../../.git/HEAD");
-    println!("cargo:rerun-if-changed=../../.git/index");
+    if let Some(head) = git(&["rev-parse", "--git-path", "HEAD"]) {
+        let p = std::path::Path::new(&head);
+        if p.exists() {
+            println!("cargo:rerun-if-changed={head}");
+        }
+    }
+    if let Some(idx) = git(&["rev-parse", "--git-path", "index"]) {
+        let p = std::path::Path::new(&idx);
+        if p.exists() {
+            println!("cargo:rerun-if-changed={idx}");
+        }
+    }
 }
