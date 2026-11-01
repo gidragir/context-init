@@ -222,6 +222,9 @@ pub enum ProjectType {
     Python,
     Go,
     DevOps,
+    Java,
+    Kotlin,
+    OneC,
     Generic,
 }
 
@@ -234,6 +237,9 @@ impl ProjectType {
             Self::Python => "Python (uv/pip/poetry)",
             Self::Go => "Go (Go Modules)",
             Self::DevOps => "Infrastructure / DevOps (Docker/K8s/Ansible)",
+            Self::Java => "Java (Maven/Gradle)",
+            Self::Kotlin => "Kotlin (Gradle)",
+            Self::OneC => "1C:Enterprise (BSL/MDO)",
             Self::Generic => "Generic / Multi-language",
         }
     }

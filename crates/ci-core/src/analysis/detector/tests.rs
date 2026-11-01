@@ -926,3 +926,93 @@ fn test_only_subsystem_tagged() {
     assert!(!api.tags.iter().any(|t| t == "tests"));
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn detects_deep_containers_astro_gradle_maven_and_avoids_doc_leaf_subsystems() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(
+        root.join("settings.gradle.kts"),
+        "rootProject.name = \"mimir\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("build.gradle.kts"),
+        "plugins { kotlin(\"jvm\") }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("README.md"),
+        "<div align=\"center\">\n<img src=\"logo.png\"/>\n</div>\n\nReal project description.\n",
+    )
+    .unwrap();
+
+    // infra/ has NO files at depth 1, only nested subdirectories up to depth 7
+    let deep_stow = root.join("infra/stow/antigravity/config/plugins/rules");
+    std::fs::create_dir_all(&deep_stow).unwrap();
+    std::fs::write(deep_stow.join("init.lua"), "return { ok = true }\n").unwrap();
+
+    // libs/zkbio-client/src/client.ts
+    let lib_src = root.join("libs/zkbio-client/src");
+    std::fs::create_dir_all(&lib_src).unwrap();
+    std::fs::write(lib_src.join("client.ts"), "export class ZkClient {}\n").unwrap();
+
+    // Astro component in src/components/Card.astro
+    std::fs::create_dir_all(root.join("src/components")).unwrap();
+    std::fs::write(
+        root.join("src/components/Card.astro"),
+        "---\nconst x = 1;\n---\n<div>{x}</div>\n",
+    )
+    .unwrap();
+
+    let meta = analyze_project(root, false, false).unwrap();
+    assert_eq!(meta.name, "mimir");
+    assert_eq!(meta.description, "Real project description.");
+    let ids: Vec<&str> = meta
+        .detected_modules
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect();
+    assert!(
+        ids.iter().any(|id| id.starts_with("infra")),
+        "missing infra in {ids:?}"
+    );
+    assert!(
+        ids.iter().any(|id| id.starts_with("libs")),
+        "missing libs in {ids:?}"
+    );
+    assert!(
+        ids.iter().any(|id| id.contains("components")),
+        "missing astro components in {ids:?}"
+    );
+}
+
+#[test]
+fn split_context_promotes_sibling_code_files_and_keeps_readme_pinned() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    let cli_rs = "fn test_case() { assert_eq!(1 + 1, 2); }\n".repeat(1600);
+    let bench_rs = "fn bench_case() { assert_eq!(2 + 2, 4); }\n".repeat(900);
+    let readme_md = "# Test Documentation\nDetailed explanation of test suite.\n".repeat(400);
+    std::fs::write(root.join("tests/cli.rs"), cli_rs).unwrap();
+    std::fs::write(root.join("tests/regression_benchmark.rs"), bench_rs).unwrap();
+    std::fs::write(root.join("tests/README.md"), readme_md).unwrap();
+
+    let opts = AnalyzeOptions {
+        split_threshold_tokens: 15_000,
+        ..Default::default()
+    };
+    let meta = analyze_project_with(root, &opts).unwrap();
+    let ids: Vec<&str> = meta
+        .detected_modules
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect();
+    assert!(ids.contains(&"tests_cli"), "ids: {ids:?}");
+    assert!(ids.contains(&"tests_regression_benchmark"), "ids: {ids:?}");
+    assert!(
+        !ids.contains(&"tests_readme"),
+        "README must never become standalone subsystem: {ids:?}"
+    );
+}

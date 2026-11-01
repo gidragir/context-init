@@ -1,6 +1,7 @@
 use crate::analysis::generator::sanitize_id;
 use crate::analysis::lang::mdo;
-use crate::analysis::scope::ScopeFilter;
+use crate::analysis::scan::is_likely_binary;
+use crate::analysis::scope::{is_ignored_filename, ScopeFilter};
 use crate::analysis::types::{DiscoveredModule, ProjectAnalysis};
 use crate::config::{ScopeConfig, DEFAULT_SPLIT_THRESHOLD_TOKENS};
 use crate::storage::{ProjectCommands, ProjectType, SubsystemFile};
@@ -56,10 +57,29 @@ pub(crate) const IGNORED_DIRS: &[&str] = &[
     ".uv-cache",
 ];
 
-const CODE_EXTENSIONS: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "py", "go", "c", "cpp", "h", "hpp", "java", "kt", "rb", "php",
-    "sh", "bash", "zsh", "sql", "yaml", "yml", "json", "toml", "bsl", "os",
+pub const SOURCE_CODE_EXTENSIONS: &[&str] = &[
+    "rs", "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "astro", "vue", "svelte",
+    "go", "bsl", "os", "mdo", "java", "kt", "kts", "cs", "c", "cpp", "h", "hpp", "sh", "bash",
+    "zsh", "fish", "ps1", "psm1", "lua", "nu", "sql", "prisma", "graphql", "proto", "css", "scss",
 ];
+
+pub const CONFIG_AND_DOC_EXTENSIONS: &[&str] = &[
+    "toml", "yaml", "yml", "json", "xml", "md", "mdc", "kdl", "just",
+];
+
+pub const CODE_EXTENSIONS: &[&str] = &[
+    "rs", "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "astro", "vue", "svelte",
+    "go", "bsl", "os", "mdo", "java", "kt", "kts", "cs", "c", "cpp", "h", "hpp", "sh", "bash",
+    "zsh", "fish", "ps1", "psm1", "lua", "nu", "sql", "prisma", "graphql", "proto", "css", "scss",
+    "toml", "yaml", "yml", "json", "xml", "md", "mdc", "kdl", "just",
+];
+
+/// Fast heuristic BPE token estimation without tiktoken BPE dictionary initialization.
+pub fn estimate_tokens_fast(text: &str) -> usize {
+    let ascii = text.bytes().filter(|b| b.is_ascii()).count();
+    let non_ascii = text.len() - ascii;
+    ascii / 3 + non_ascii / 3 + 1
+}
 
 thread_local! {
     /// Scope of the analysis running on this thread (`.gitignore` + `[scope]`, D9).
@@ -190,7 +210,22 @@ fn detect_type_and_name(root: &Path) -> (ProjectType, Option<String>, Vec<String
         return (ProjectType::Rust, name, ws_members);
     }
 
-    // 2. TypeScript / JavaScript
+    // 2. Gradle (Kotlin/Java) - check before package.json so KMP / Android projects classify correctly
+    if let Some((ptype, name, ws_members)) = parse_gradle(root) {
+        return (ptype, name, ws_members);
+    }
+
+    // 3. Maven (Java)
+    if let Some((ptype, name, ws_members)) = parse_maven(root) {
+        return (ptype, name, ws_members);
+    }
+
+    // 4. 1C:Enterprise (BSL/MDO)
+    if let Some((ptype, name, ws_members)) = parse_one_c(root) {
+        return (ptype, name, ws_members);
+    }
+
+    // 5. TypeScript / JavaScript
     if root.join("package.json").exists() || root.join("pnpm-workspace.yaml").exists() {
         let (name, mut ws_members) = parse_package_json(&root.join("package.json"));
         let pnpm_ws = parse_pnpm_workspace_yaml(&root.join("pnpm-workspace.yaml"));
@@ -202,7 +237,7 @@ fn detect_type_and_name(root: &Path) -> (ProjectType, Option<String>, Vec<String
         return (ProjectType::TypeScript, name, ws_members);
     }
 
-    // 3. Python
+    // 6. Python
     if root.join("pyproject.toml").exists()
         || root.join("requirements.txt").exists()
         || root.join("Pipfile").exists()
@@ -211,13 +246,13 @@ fn detect_type_and_name(root: &Path) -> (ProjectType, Option<String>, Vec<String
         return (ProjectType::Python, name, Vec::new());
     }
 
-    // 4. Go
+    // 7. Go
     if root.join("go.mod").exists() {
         let name = parse_go_mod_name(&root.join("go.mod"));
         return (ProjectType::Go, name, Vec::new());
     }
 
-    // 5. DevOps / IaC
+    // 8. DevOps / IaC
     if root.join("docker-compose.yml").exists()
         || root.join("compose.yaml").exists()
         || root.join("Dockerfile").exists()
@@ -227,6 +262,84 @@ fn detect_type_and_name(root: &Path) -> (ProjectType, Option<String>, Vec<String
     }
 
     (ProjectType::Generic, None, Vec::new())
+}
+
+fn parse_gradle(root: &Path) -> Option<(ProjectType, Option<String>, Vec<String>)> {
+    let settings_kts = root.join("settings.gradle.kts");
+    let settings = root.join("settings.gradle");
+    let build_kts = root.join("build.gradle.kts");
+    let build = root.join("build.gradle");
+
+    if !settings_kts.exists() && !settings.exists() && !build_kts.exists() && !build.exists() {
+        return None;
+    }
+
+    let mut name = None;
+    for p in [&settings_kts, &settings] {
+        if let Ok(content) = fs::read_to_string(p) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("rootProject.name") {
+                    if let Some((_, right)) = trimmed.split_once('=') {
+                        let n = right
+                            .trim()
+                            .trim_matches(|c| c == '"' || c == '\'' || c == ';' || c == ' ');
+                        if !n.is_empty() {
+                            name = Some(n.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if name.is_some() {
+            break;
+        }
+    }
+
+    let is_kotlin = settings_kts.exists() || build_kts.exists() || {
+        let b = fs::read_to_string(&build).unwrap_or_default();
+        b.contains("kotlin")
+    };
+
+    let ptype = if is_kotlin {
+        ProjectType::Kotlin
+    } else {
+        ProjectType::Java
+    };
+
+    Some((ptype, name, Vec::new()))
+}
+
+fn parse_maven(root: &Path) -> Option<(ProjectType, Option<String>, Vec<String>)> {
+    let pom = root.join("pom.xml");
+    if !pom.exists() {
+        return None;
+    }
+    let name = fs::read_to_string(&pom).ok().and_then(|content| {
+        let extract = |tag: &str| -> Option<String> {
+            let open = format!("<{tag}>");
+            let close = format!("</{tag}>");
+            let start = content.find(&open)? + open.len();
+            let end = content[start..].find(&close)? + start;
+            Some(content[start..end].trim().to_string())
+        };
+        extract("artifactId").or_else(|| extract("name"))
+    });
+    Some((ProjectType::Java, name, Vec::new()))
+}
+
+fn parse_one_c(root: &Path) -> Option<(ProjectType, Option<String>, Vec<String>)> {
+    if root.join("Configuration.xml").exists()
+        || root.join("src/cf").exists()
+        || root.join("src/Configuration").exists()
+        || root.join("ibcmd.inf").exists()
+        || root.join("packagedef").exists()
+    {
+        Some((ProjectType::OneC, None, Vec::new()))
+    } else {
+        None
+    }
 }
 
 fn parse_cargo_toml(path: &Path) -> (Option<String>, Vec<String>) {
@@ -449,12 +562,29 @@ fn extract_description(root: &Path, fallback_name: &str) -> String {
     for readme_name in &["README.md", "readme.md", "README.txt"] {
         let readme_path = root.join(readme_name);
         if let Ok(content) = fs::read_to_string(readme_path) {
+            let mut in_comment = false;
             for line in content.lines() {
                 let trimmed = line.trim();
+                if in_comment {
+                    if trimmed.contains("-->") {
+                        in_comment = false;
+                    }
+                    continue;
+                }
+                if trimmed.starts_with("<!--") {
+                    if !trimmed.contains("-->") {
+                        in_comment = true;
+                    }
+                    continue;
+                }
                 if !trimmed.is_empty()
                     && !trimmed.starts_with('#')
                     && !trimmed.starts_with("![")
+                    && !trimmed.starts_with("[![")
                     && !trimmed.starts_with('[')
+                    && !trimmed.starts_with('<')
+                    && !trimmed.starts_with("---")
+                    && !trimmed.starts_with("```")
                     && trimmed.len() > 15
                 {
                     return trimmed.chars().take(220).collect();
@@ -578,6 +708,29 @@ fn detect_commands(root: &Path, pt: &ProjectType, with_rtk: bool) -> ProjectComm
                 cmds.run = Some("docker compose up -d".to_string());
                 cmds.test = Some("docker compose config".to_string());
             }
+        }
+        ProjectType::Kotlin | ProjectType::Java => {
+            let gradlew = root.join("gradlew");
+            let cmd_prefix = if gradlew.exists() {
+                "./gradlew"
+            } else if root.join("pom.xml").exists() {
+                "mvn"
+            } else {
+                "gradle"
+            };
+            if cmd_prefix == "mvn" {
+                cmds.build = Some("mvn compile".to_string());
+                cmds.test = Some("mvn test".to_string());
+                cmds.run = Some("mvn exec:java".to_string());
+            } else {
+                cmds.build = Some(format!("{cmd_prefix} build"));
+                cmds.test = Some(format!("{cmd_prefix} test"));
+                cmds.run = Some(format!("{cmd_prefix} run"));
+            }
+        }
+        ProjectType::OneC => {
+            cmds.build = Some("ibcmd infobase update".to_string());
+            cmds.test = Some("vrunner runtest".to_string());
         }
         ProjectType::Generic => {
             if root.join("Makefile").exists() {
@@ -710,22 +863,61 @@ fn discover_subsystems(
 
     // 2. Стандартные папки монорепозиториев и сервисов
     for common_parent in &[
-        "crates", "packages", "apps", "services", "modules", "plugins", "internal", "cmd", "pkg",
+        "crates",
+        "packages",
+        "apps",
+        "services",
+        "modules",
+        "plugins",
+        "internal",
+        "cmd",
+        "pkg",
+        "libs",
+        "profiles",
+        "infra",
+        "home",
+        "linked",
+        "dot_config",
+        "submodules",
     ] {
         let parent_dir = root.join(common_parent);
         if parent_dir.is_dir() {
+            let is_container = matches!(
+                *common_parent,
+                "infra"
+                    | "libs"
+                    | "plugins"
+                    | "profiles"
+                    | "home"
+                    | "linked"
+                    | "dot_config"
+                    | "submodules"
+            );
+            let mut has_subdirs = false;
             if let Ok(entries) = fs::read_dir(&parent_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_dir() {
                         let name = entry.file_name().to_string_lossy().to_string();
-                        if !IGNORED_DIRS.contains(&name.as_str())
-                            && !dirs_to_inspect.contains(&path)
+                        if !name.starts_with('.')
+                            && !IGNORED_DIRS.contains(&name.as_str())
+                            && !is_ignored_path(&path, root)
+                            && contains_relevant_files(&path)
                         {
-                            dirs_to_inspect.push(path);
+                            has_subdirs = true;
+                            if !dirs_to_inspect.contains(&path) {
+                                dirs_to_inspect.push(path);
+                            }
                         }
                     }
                 }
+            }
+            if is_container
+                && !has_subdirs
+                && contains_relevant_files(&parent_dir)
+                && !dirs_to_inspect.contains(&parent_dir)
+            {
+                dirs_to_inspect.push(parent_dir);
             }
         }
     }
@@ -870,7 +1062,7 @@ fn discover_subsystems(
             .unwrap_or_else(|| rel_path.clone());
 
         let mut all_files = Vec::new();
-        collect_files_recursive(&dir, root, &mut all_files, 0, 4);
+        collect_files_recursive(&dir, root, &mut all_files, 0, 12);
         if all_files.is_empty() {
             continue;
         }
@@ -942,15 +1134,38 @@ fn discover_subsystems(
 }
 
 fn contains_relevant_files(dir: &Path) -> bool {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && scope_allows_file(&path) {
+    contains_relevant_files_depth(dir, 0, 8)
+}
+
+fn contains_relevant_files_depth(dir: &Path, current_depth: usize, max_depth: usize) -> bool {
+    if current_depth >= max_depth {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let path = entry.path();
+        if path.is_file() {
+            if is_ignored_filename(&name_str) {
+                continue;
+            }
+            if scope_allows_file(&path) {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if CODE_EXTENSIONS.contains(&ext) || ext == "md" {
+                    let ext_lower = ext.to_ascii_lowercase();
+                    if CODE_EXTENSIONS.contains(&ext_lower.as_str()) || ext_lower == "md" {
                         return true;
                     }
                 }
+            }
+        } else if path.is_dir() {
+            if name_str.starts_with('.') || IGNORED_DIRS.contains(&name_str.as_ref()) {
+                continue;
+            }
+            if contains_relevant_files_depth(&path, current_depth + 1, max_depth) {
+                return true;
             }
         }
     }
@@ -990,6 +1205,24 @@ fn tokens_if_over(root: &Path, files: &[SubsystemFile], threshold: usize) -> Opt
     if bytes <= threshold as u64 {
         return None;
     }
+
+    // Fast heuristic pre-check to avoid tiktoken BPE initialization on cold start
+    let fast_estimated_tokens: usize = files
+        .iter()
+        .filter_map(|f| {
+            let full_path = root.join(&f.path);
+            if is_likely_binary(&full_path) {
+                return None;
+            }
+            fs::read_to_string(&full_path).ok()
+        })
+        .map(|text| estimate_tokens_fast(&text))
+        .sum();
+
+    if fast_estimated_tokens <= threshold {
+        return None;
+    }
+
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
     let chunk = files.len().div_ceil(workers).max(1);
     let counts: TokenCounts = std::thread::scope(|scope| {
@@ -1009,9 +1242,13 @@ fn tokenize_files(root: &Path, files: &[SubsystemFile]) -> Vec<(String, usize)> 
     files
         .iter()
         .map(|f| {
+            let full_path = root.join(&f.path);
+            if is_likely_binary(&full_path) {
+                return (f.path.clone(), 0);
+            }
             static MEMO: FileMemo<usize> = FileMemo::new();
             let tokens = MEMO
-                .get_or_compute(&root.join(&f.path), false, count_tokens)
+                .get_or_compute(&full_path, false, count_tokens)
                 .unwrap_or(0);
             (f.path.clone(), tokens)
         })
@@ -1082,7 +1319,7 @@ fn module_entries(
                 if IGNORED_DIRS.contains(&name.as_str()) || !scope_allows_dir(&path) {
                     continue;
                 }
-                collect_files_recursive(&path, root, &mut files, depth, 4);
+                collect_files_recursive(&path, root, &mut files, depth, 12);
             } else if path.is_file() {
                 files.extend(subsystem_file(&path, &name, root));
             }
@@ -1097,7 +1334,13 @@ fn module_entries(
                     .unwrap_or_else(|| name.clone())
             };
             let tokens = files_tokens(counts, &files);
-            let pinned = !is_dir && is_file_entrypoint(&name);
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let is_source = SOURCE_CODE_EXTENSIONS.contains(&ext.as_str());
+            let pinned = !is_dir && (is_file_entrypoint(&name) || !is_source);
             let entry = by_stem.entry(stem.clone()).or_insert_with(|| ModuleEntry {
                 stem,
                 dir: None,
@@ -1142,6 +1385,22 @@ impl SplitContext<'_> {
         entries: Vec<ModuleEntry>,
         out: &mut Vec<DiscoveredModule>,
     ) {
+        let is_pure_doc_dir = (id == "docs" || id == "reports" || id == "references")
+            && entries.iter().all(|e| {
+                !e.files.iter().any(|f| {
+                    let ext = Path::new(&f.path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    SOURCE_CODE_EXTENSIONS.contains(&ext)
+                })
+            });
+        if is_pure_doc_dir {
+            let all_files = entries.into_iter().flat_map(|e| e.files).collect();
+            out.push(self.module(dir, dir, id, name, parent, all_files));
+            return;
+        }
+
         let mut order: Vec<usize> = (0..entries.len()).filter(|&i| !entries[i].pinned).collect();
         order.sort_by(|&a, &b| {
             entries[b]
@@ -1157,6 +1416,37 @@ impl SplitContext<'_> {
             }
             promoted[i] = true;
             kept_tokens -= entries[i].tokens;
+        }
+
+        let has_promoted_file = entries
+            .iter()
+            .enumerate()
+            .any(|(i, e)| promoted[i] && e.dir.is_none());
+        let has_pinned_code_entrypoint = entries.iter().any(|e| {
+            e.pinned
+                && e.files.iter().any(|f| {
+                    f.is_entrypoint
+                        && Path::new(&f.path)
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .map_or(false, |ext| SOURCE_CODE_EXTENSIONS.contains(&ext))
+                })
+        });
+
+        if has_promoted_file && !has_pinned_code_entrypoint {
+            for (i, entry) in entries.iter().enumerate() {
+                if !promoted[i] && !entry.pinned && entry.dir.is_none() && entry.tokens >= 300 {
+                    let is_source = entry.files.iter().any(|f| {
+                        Path::new(&f.path)
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .map_or(false, |ext| SOURCE_CODE_EXTENSIONS.contains(&ext))
+                    });
+                    if is_source {
+                        promoted[i] = true;
+                    }
+                }
+            }
         }
 
         let mut kept_files = Vec::new();
@@ -1295,6 +1585,9 @@ fn collect_files_recursive(
 
 /// A code or markdown file (named `name`) as a subsystem file; `None` for other files.
 fn subsystem_file(path: &Path, name: &str, root: &Path) -> Option<SubsystemFile> {
+    if is_ignored_filename(name) {
+        return None;
+    }
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -2088,6 +2381,19 @@ fn generate_default_rules(pt: &ProjectType, with_rtk: bool) -> Vec<String> {
                 .to_string(),
             "Все пароли и API-ключи шифруются через SOPS / Age / Vault, запрещен коммит `.env`."
                 .to_string(),
+        ],
+        ProjectType::Kotlin => vec![
+            "Код форматируется согласно Kotlin Coding Conventions (ktlint).".to_string(),
+            "Предпочитать неизменяемые структуры данных (`val`, immutable collections)."
+                .to_string(),
+        ],
+        ProjectType::Java => vec![
+            "Соблюдать стандартную структуру пакетов Maven/Gradle (`src/main/java`).".to_string(),
+            "Обрабатывать исключения явно, избегать пустых catch-блоков.".to_string(),
+        ],
+        ProjectType::OneC => vec![
+            "Соблюдать стандарты разработки 1С:Предприятие (BSL/MDO).".to_string(),
+            "Проверять код статическим анализатором BSL LS / vrunner.".to_string(),
         ],
         ProjectType::Generic => vec![
             "Поддерживать актуальность карт модулей и документации архитектуры.".to_string(),
