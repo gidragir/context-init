@@ -648,7 +648,11 @@ pub struct SummaryUpdate {
 /// updated.
 ///
 /// Whether a card is untouched is judged against the render of the index *before* the
-/// merge: judged after it, every card would look hand-edited and freeze forever.
+/// merge: judged after it, every card would look hand-edited and freeze forever. A card
+/// that was edited (by hand or otherwise) keeps its old text, while `L0_index.md`,
+/// `L0_index.json` and `AGENTS.md` still get the new summary. A re-rendered card keeps the
+/// `source` recorded on disk (only the summary changes, not the binding to the sources), so
+/// Git drift stays visible to `check` until `update` runs.
 ///
 /// Rejects the whole call, writing nothing, when any id is not in the index. Files are
 /// written through [`commit_files`] (temporary files, then `rename`; index last).
@@ -720,9 +724,19 @@ pub fn apply_summaries(
             continue;
         }
         if let Some(card) = safe_join(knowledge_dir, &sub.l1_path) {
-            // Always a fresh render: `generated_by` must follow the new provenance even when
-            // the summary text itself is unchanged.
-            files.push((card, render_card_for(sub, &card_analysis, "update")));
+            // A fresh render so `generated_by` follows the new provenance even when the text
+            // is unchanged, but bound to the sources the card on disk recorded: the body comes
+            // from index fields that may lag HEAD, and restamping would hide that drift.
+            let mut content = render_card_for(sub, &card_analysis, "update");
+            let disk_source = fs::read_to_string(&card)
+                .ok()
+                .and_then(|d| OkfCard::parse(&d).ok())
+                .map(|c| c.frontmatter.source);
+            if let (Some(source), Ok(mut fresh)) = (disk_source, OkfCard::parse(&content)) {
+                fresh.frontmatter.source = source;
+                content = fresh.to_markdown();
+            }
+            files.push((card, content));
         }
     }
     files.push((
@@ -1545,6 +1559,8 @@ mod tests {
 
     fn git(root: &Path, args: &[&str]) {
         let out = std::process::Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .arg("-C")
             .arg(root)
             .args([
@@ -1697,12 +1713,63 @@ mod tests {
         assert_eq!(sub.summary_source, crate::storage::SummarySource::Agent);
         assert_eq!(sub.summary_model.as_deref(), Some("agent"));
         assert!(!sub.needs_review);
-        let leftovers: Vec<_> = fs::read_dir(kd.join("subsystems"))
-            .unwrap()
-            .flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
+        // Temporaries of cards, L0_index.{md,json} and AGENTS.md are all gone.
+        let leftovers: Vec<_> = [kd.join("subsystems"), kd.clone(), root.clone()]
+            .iter()
+            .flat_map(|d| fs::read_dir(d).unwrap().flatten())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .map(|e| e.path())
             .collect();
         assert!(leftovers.is_empty(), "temp files left: {leftovers:?}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn apply_summaries_keeps_card_source_of_stale_card() {
+        use crate::git::{check_card_staleness, SystemGitBackend};
+        let root = git_repo("apply_stale");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+        let sub = subs
+            .iter()
+            .find(|s| s.files.iter().any(|f| f.path == "src/api/mod.rs"))
+            .unwrap();
+        let card_path = kd.join(&sub.l1_path);
+        let source_before = OkfCard::parse(&fs::read_to_string(&card_path).unwrap())
+            .unwrap()
+            .frontmatter
+            .source;
+        // Sources move on in a new commit, `update` is not run.
+        fs::write(
+            root.join("src/api/mod.rs"),
+            "pub fn run_api() -> u32 {\n    7\n}\npub fn more() {}\n",
+        )
+        .unwrap();
+        git(&root, &["commit", "-q", "-am", "edit api"]);
+        let stale_before = |text: &str| {
+            let card = OkfCard::parse(text).unwrap();
+            check_card_staleness(&SystemGitBackend::new(), &root, &card)
+                .unwrap()
+                .stale
+        };
+        assert!(stale_before(&fs::read_to_string(&card_path).unwrap()));
+
+        let (analysis, _) = deterministic(&root);
+        apply_summaries(
+            &analysis,
+            &kd,
+            &[agent_update(&sub.id)],
+            SummarySource::Agent,
+            Some("agent"),
+            None,
+        )
+        .unwrap();
+        let text = fs::read_to_string(&card_path).unwrap();
+        assert!(text.contains("Новая сводка"), "{text}");
+        let card = OkfCard::parse(&text).unwrap();
+        assert_eq!(card.frontmatter.source, source_before);
+        assert!(stale_before(&text), "apply_summaries hid the drift");
         let _ = fs::remove_dir_all(&root);
     }
 
