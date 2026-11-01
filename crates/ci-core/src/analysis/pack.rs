@@ -691,10 +691,10 @@ mod tests {
         std::fs::write(&out_nc, &nc_str).unwrap();
         assert!(nc_str.contains("    result = a + b    \n\n\n    return result"));
 
-        // With compress: trailing whitespace and excessive empty lines collapsed, but python indentation strictly kept
+        // With compress: bodies are elided with ELIDED_BODY
         let comp_str = pack_files(&temp_dir, &[&sub], &files, true, PackStyle::parse("xml"));
         std::fs::write(&out_comp, &comp_str).unwrap();
-        assert!(comp_str.contains("    result = a + b\n\n    return result"));
+        assert!(comp_str.contains(crate::analysis::lang::ELIDED_BODY));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

@@ -1,5 +1,6 @@
 //! Language adapters (D7): symbol extraction and signature-level compression per language.
 
+mod brace;
 mod bsl;
 pub mod mdo;
 mod python;
@@ -7,6 +8,7 @@ mod rust;
 
 use std::path::Path;
 
+pub use brace::BraceLangAdapter;
 pub use bsl::BslAdapter;
 pub use python::PythonAdapter;
 pub use rust::RustAdapter;
@@ -30,9 +32,10 @@ pub trait LanguageAdapter: Send + Sync {
 static RUST: RustAdapter = RustAdapter;
 static PYTHON: PythonAdapter = PythonAdapter;
 static BSL: BslAdapter = BslAdapter;
+static BRACE: BraceLangAdapter = BraceLangAdapter;
 
-fn all() -> [&'static dyn LanguageAdapter; 3] {
-    [&RUST, &PYTHON, &BSL]
+fn all() -> [&'static dyn LanguageAdapter; 4] {
+    [&RUST, &PYTHON, &BSL, &BRACE]
 }
 
 /// Adapter for a file extension (with or without the dot, any case).
@@ -143,10 +146,10 @@ mod tests {
         assert_eq!(adapter_for_ext("rs").unwrap().compress_source(rs), expected);
         assert_eq!(compress_source(rs, "rs"), expected);
         let py = "def f(x):\n\n\n    return x   \n";
-        assert_eq!(
-            adapter_for_ext("py").unwrap().compress_source(py),
-            compress_code(py)
-        );
+        assert!(adapter_for_ext("py")
+            .unwrap()
+            .compress_source(py)
+            .contains(ELIDED_BODY));
 
         // The packer dispatches through the adapters, so BSL bodies are elided in a pack.
         let root = std::env::temp_dir().join(format!("lang_pack_{}", std::process::id()));
@@ -164,5 +167,36 @@ mod tests {
             "{packed}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn typescript_and_python_adapters_compress_bodies_over_65_percent() {
+        let ts_adapter = adapter_for_ext("ts").expect("ts adapter");
+        let mut ts_src = String::from("export interface User {\n  id: string;\n  name: string;\n}\n\nexport async function processUsers(users: User[]): Promise<number> {\n");
+        for i in 0..40 {
+            ts_src.push_str(&format!("  const v{i} = users.length + {i};\n  if (v{i} > 10) {{ console.log('item', v{i}); }}\n"));
+        }
+        ts_src.push_str("  return users.length;\n}\n");
+        let ts_compressed = ts_adapter.compress_source(&ts_src);
+        assert!(ts_compressed.contains("export interface User"));
+        assert!(ts_compressed.contains("id: string;"));
+        assert!(ts_compressed.contains("export async function processUsers"));
+        assert!(ts_compressed.contains(ELIDED_BODY));
+        let (ts_before, ts_after) = (count_tokens(&ts_src), count_tokens(&ts_compressed));
+        assert!((ts_before - ts_after) * 100 / ts_before >= 65);
+
+        let py_adapter = adapter_for_ext("py").expect("py adapter");
+        let mut py_src = String::from("class Processor:\n    def run(self, items: list[int]) -> int:\n        \"\"\"Run processor.\"\"\"\n");
+        for i in 0..40 {
+            py_src.push_str(&format!(
+                "        val_{i} = len(items) + {i}\n        print(val_{i})\n"
+            ));
+        }
+        py_src.push_str("        return len(items)\n");
+        let py_compressed = py_adapter.compress_source(&py_src);
+        assert!(py_compressed.contains("def run(self, items: list[int]) -> int:"));
+        assert!(py_compressed.contains(ELIDED_BODY));
+        let (py_before, py_after) = (count_tokens(&py_src), count_tokens(&py_compressed));
+        assert!((py_before - py_after) * 100 / py_before >= 65);
     }
 }

@@ -85,13 +85,14 @@ fn read_card_text(knowledge_dir: &Path, rel: &str) -> Option<String> {
 /// Tag marking a test-only subsystem (see the detector); its hits are demoted.
 const TESTS_TAG: &str = "tests";
 /// Score multiplier for subsystems tagged [`TESTS_TAG`].
-const TESTS_SCORE_FACTOR: f32 = 0.5;
+const TESTS_SCORE_FACTOR: f32 = 0.35;
 
 struct Entry {
     name: String,
     tags: Vec<String>,
     summary: String,
     symbols: Vec<String>,
+    id_stems: HashSet<String>,
 }
 
 /// In-memory tantivy index over the subsystems of an [`L0Index`].
@@ -152,6 +153,17 @@ impl Bm25Retriever {
                 doc.add_text(*field, normalized(text));
             }
             writer.add_document(doc)?;
+            let id_and_paths = format!(
+                "{} {} {}",
+                sub.id,
+                sub.key_files.join(" "),
+                sub.files
+                    .iter()
+                    .map(|f| f.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            let id_stems: HashSet<String> = stems(&id_and_paths).into_iter().collect();
             entries.insert(
                 sub.id.clone(),
                 Entry {
@@ -159,6 +171,7 @@ impl Bm25Retriever {
                     tags: sub.tags.clone(),
                     summary: sub.summary.clone(),
                     symbols: sub.key_symbols.clone(),
+                    id_stems,
                 },
             );
         }
@@ -193,6 +206,9 @@ impl Retriever for Bm25Retriever {
         let searcher = self.reader.searcher();
         let top = searcher.search(&parsed, &TopDocs::with_limit(top_k * 2))?;
         let wanted: HashSet<&String> = terms.iter().collect();
+        let is_test_query = wanted
+            .iter()
+            .any(|t| t.contains("test") || t.contains("bench") || t.contains("тест"));
         let mut hits = Vec::new();
         for (score, addr) in top {
             let doc: TantivyDocument = searcher.doc(addr)?;
@@ -208,11 +224,17 @@ impl Retriever for Bm25Retriever {
                 .filter(|sym| stems(sym).iter().any(|t| wanted.contains(t)))
                 .cloned()
                 .collect();
-            let score = if entry.tags.iter().any(|t| t == TESTS_TAG) {
-                score * TESTS_SCORE_FACTOR
-            } else {
-                score
-            };
+            let id_matches = wanted
+                .iter()
+                .filter(|t| entry.id_stems.contains(**t))
+                .count();
+            let score =
+                if entry.tags.iter().any(|t| t == TESTS_TAG) && id_matches == 0 && !is_test_query {
+                    score * TESTS_SCORE_FACTOR
+                } else {
+                    score
+                };
+            let score = score * (1.0 + 0.6 * (id_matches as f32));
             hits.push(SearchHit {
                 subsystem_id: sub_id.to_string(),
                 name: entry.name.clone(),
@@ -358,5 +380,31 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = hits.iter().map(|h| h.subsystem_id.as_str()).collect();
         assert_eq!(ids, ["detector", "detector_tests"], "{hits:?}");
+    }
+
+    #[test]
+    fn search_ranks_test_subsystem_first_when_query_matches_its_id_or_path() {
+        let mut index = L0Index::default();
+        let mut rep = sub(
+            "reports",
+            "benchmark regression reports",
+            "BENCHMARK_REPORT.md — benchmark regression reports summary",
+            &[],
+        );
+        rep.key_files = vec!["reports/BENCHMARK_REPORT.md".into()];
+        let mut bench = sub(
+            "tests_regression_benchmark",
+            "Tests regression_benchmark",
+            "Регрессионные тесты бенчмарка",
+            &["bench_search_quality_and_latency"],
+        );
+        bench.key_files = vec!["tests/regression_benchmark.rs".into()];
+        bench.tags = vec!["tests".into()];
+        index.subsystems = vec![rep, bench];
+
+        let tmp = tempfile::tempdir().unwrap();
+        let retriever = Bm25Retriever::build(&index, tmp.path()).unwrap();
+        let hits = retriever.search("benchmark regression", 5).unwrap();
+        assert_eq!(hits[0].subsystem_id, "tests_regression_benchmark");
     }
 }
