@@ -798,6 +798,9 @@ impl ContextHandler {
         if let Some(hint) = hint {
             text.push_str(&format!("\n{hint}"));
         }
+        if out.nothing_to_enrich {
+            text.push_str("\nОбогащение не требуется: изменений нет.");
+        }
         Ok(Self::finish_reply(project, text, out.enrich))
     }
 

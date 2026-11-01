@@ -2,6 +2,7 @@
 //! enrichment (`ci-llm`) → generate/update the knowledge base (`ci-core`).
 
 use anyhow::{bail, Result};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use ci_core::analysis::generator::{self, GenerateOptions};
@@ -42,6 +43,8 @@ pub struct PipelineOutcome {
     pub added: usize,
     /// Existing subsystems refreshed (`update` only).
     pub updated: usize,
+    /// `update` found no subsystem that needs LLM enrichment (no model was consulted).
+    pub nothing_to_enrich: bool,
 }
 
 /// Builds a fresh knowledge base in the configured storage (`config.storage`).
@@ -50,7 +53,8 @@ pub fn run_init(
     router: &RoleRouter,
     opts: &PipelineOptions,
 ) -> Result<PipelineOutcome> {
-    let (analysis, mut subsystems, enrich) = analyze(project, router, RoleName::Init, opts)?;
+    let (analysis, mut subsystems, enrich, _) =
+        analyze(project, router, RoleName::Init, opts, None)?;
     let knowledge_dir = project.knowledge_dir.clone();
     let agents_md = opts.with_agents_md.then_some(project.storage);
     let gen_opts = GenerateOptions {
@@ -73,6 +77,7 @@ pub fn run_init(
     Ok(PipelineOutcome {
         added: subsystems.len(),
         updated: 0,
+        nothing_to_enrich: false,
         analysis,
         subsystems,
         knowledge_dir,
@@ -86,7 +91,9 @@ pub fn run_update(
     router: &RoleRouter,
     opts: &PipelineOptions,
 ) -> Result<PipelineOutcome> {
-    let (analysis, subsystems, enrich) = analyze(project, router, RoleName::Update, opts)?;
+    let existing = project.load_l0_index().unwrap_or_default();
+    let (analysis, subsystems, enrich, nothing_to_enrich) =
+        analyze(project, router, RoleName::Update, opts, Some(&existing))?;
     let knowledge_dir = project.knowledge_dir.clone();
     let agents_md = opts.with_agents_md.then_some(project.storage);
     let (added, updated) = generator::update(&analysis, &subsystems, &knowledge_dir, agents_md)?;
@@ -98,6 +105,7 @@ pub fn run_update(
         enrich,
         added,
         updated,
+        nothing_to_enrich,
     })
 }
 
@@ -202,24 +210,68 @@ pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String> {
     })
 }
 
+/// Ids of the fresh subsystems whose summary an LLM should (re)write on `update`: new ones,
+/// ones whose set of file paths changed, ones already flagged `needs_review`, and ones whose
+/// summary is still heuristic. Manual, agent and earlier LLM summaries of unchanged
+/// subsystems are left alone (B4).
+pub fn subsystems_needing_enrichment(existing: &L0Index, fresh: &[SubsystemInfo]) -> Vec<String> {
+    let paths = |s: &SubsystemInfo| -> BTreeSet<String> {
+        s.files.iter().map(|f| f.path.clone()).collect()
+    };
+    fresh
+        .iter()
+        .filter(
+            |f| match existing.subsystems.iter().find(|e| e.id == f.id) {
+                None => true,
+                Some(e) => {
+                    e.needs_review
+                        || e.summary_source == SummarySource::Heuristic
+                        || paths(e) != paths(f)
+                }
+            },
+        )
+        .map(|f| f.id.clone())
+        .collect()
+}
+
+/// Detects the project and asks the role's model about its subsystems; with `existing` (the
+/// `update` case) only about [`subsystems_needing_enrichment`]. The last element is true when
+/// `update` had nothing to enrich, so no model was consulted and no package was created.
 fn analyze(
     project: &ResolvedProject,
     router: &RoleRouter,
     role: RoleName,
     opts: &PipelineOptions,
-) -> Result<(ProjectAnalysis, Vec<SubsystemInfo>, EnrichOutcome)> {
+    existing: Option<&L0Index>,
+) -> Result<(ProjectAnalysis, Vec<SubsystemInfo>, EnrichOutcome, bool)> {
     validate_model_override(&project.config, opts.model_override)?;
     let analysis = detect(project, opts.deep)?;
     let subsystems = build_deterministic(&analysis);
     let prompts = PromptTemplateRegistry::new(project.config.language.clone());
-    let mut enrich = enrich_subsystems(
-        router,
-        &prompts,
-        role,
-        &analysis,
-        &subsystems,
-        opts.model_override,
-    );
+    let targets: Vec<SubsystemInfo> = match existing {
+        Some(existing) => {
+            let ids = subsystems_needing_enrichment(existing, &subsystems);
+            subsystems
+                .iter()
+                .filter(|s| ids.contains(&s.id))
+                .cloned()
+                .collect()
+        }
+        None => subsystems.clone(),
+    };
+    let nothing_to_enrich = existing.is_some() && targets.is_empty();
+    let mut enrich = if nothing_to_enrich {
+        EnrichOutcome::Skipped
+    } else {
+        enrich_subsystems(
+            router,
+            &prompts,
+            role,
+            &analysis,
+            &targets,
+            opts.model_override,
+        )
+    };
     if let EnrichOutcome::PendingAgent(pkg) = &mut enrich {
         // `context_submit` applies the answer to this project only, re-analyzed at the same
         // depth, and refreshes AGENTS.md when this run wrote it.
@@ -227,7 +279,7 @@ fn analyze(
         pkg.agents_md = opts.with_agents_md;
         pkg.project_root = Some(project.root.clone());
     }
-    Ok((analysis, subsystems, enrich))
+    Ok((analysis, subsystems, enrich, nothing_to_enrich))
 }
 
 /// Deterministic project analysis with the project's scope, split threshold and RTK setting.

@@ -633,8 +633,7 @@ mod tests {
         let index_before = fs::read(kd.join("L0_index.json")).unwrap();
         let card_before = fs::read(kd.join(&target.l1_path)).unwrap();
 
-        // The `update` role schema still describes the single-card form, so the payload passes
-        // schema validation and must be refused by the submission itself.
+        // The single-card form matches no role schema any more and must be refused.
         let out = submit_with_package(
             &server,
             tmp.path(),
@@ -763,11 +762,7 @@ mod tests {
                 })
             })
             .collect();
-        // Until the `update` role schema is unified with `init` (B4), it still demands the
-        // single-card fields; the reply carries them next to `subsystems`, which enrichment reads.
-        let reply = json!({
-            "id": ids[0], "summary": "unused", "body": "unused", "subsystems": items
-        });
+        let reply = json!({ "subsystems": items });
         write_command_model_config(tmp.path(), "update", &reply);
         let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
         let reply = server
@@ -792,6 +787,79 @@ mod tests {
         assert_eq!(heuristic.summary, format!("LLM summary of {}", ids[2]));
         assert_eq!(heuristic.summary_source, ci_core::SummarySource::Llm);
         assert_eq!(heuristic.summary_model.as_deref(), Some("mock"));
+    }
+
+    const AGENT_UPDATE_CONFIG: &str =
+        "[models.h]\nkind = \"agent\"\n\n[roles]\ninit = [\"h\"]\nupdate = [\"h\"]\n";
+
+    /// Inits the fixture with an agent model and submits an agent summary for every subsystem.
+    async fn init_with_all_agent_summaries(server: &ContextInitServer, root: &Path) {
+        let package_id = init_with_agent_package(server, root).await;
+        fs::write(root.join(".context-init.toml"), AGENT_UPDATE_CONFIG).unwrap();
+        let resolved = server
+            .resolve_context(Some(&root.to_string_lossy()), None)
+            .await;
+        let items: Vec<serde_json::Value> = resolved
+            .load_l0_index()
+            .unwrap()
+            .subsystems
+            .iter()
+            .map(|s| json!({"id": s.id, "name": s.name, "summary": format!("Agent {}", s.id), "tags": []}))
+            .collect();
+        let out = submit_payload(server, root, &package_id, json!({ "subsystems": items })).await;
+        assert!(out.valid, "{:?}", out.errors);
+    }
+
+    async fn run_context_update(server: &ContextInitServer, root: &Path) -> String {
+        server
+            .update(Parameters(McpUpdateParams {
+                path: Some(root.to_string_lossy().to_string()),
+                ..McpUpdateParams::default()
+            }))
+            .await
+            .expect("update")
+    }
+
+    #[tokio::test]
+    async fn update_package_lists_only_changed() {
+        let tmp = TempDirGuard::new("update_only_changed");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        init_with_all_agent_summaries(&server, tmp.path()).await;
+        let resolved = server
+            .resolve_context(Some(&tmp.path().to_string_lossy()), None)
+            .await;
+        let total = resolved.load_l0_index().unwrap().subsystems.len();
+        assert!(total >= 3, "{total}");
+
+        fs::write(tmp.path().join("src/api/extra.rs"), "pub fn extra() {}\n").unwrap();
+        let reply = run_context_update(&server, tmp.path()).await;
+        assert!(reply.contains("package_id: "), "{reply}");
+        let facts = reply
+            .lines()
+            .find_map(|l| l.strip_prefix("facts: "))
+            .unwrap_or_else(|| panic!("no facts line in: {reply}"));
+        assert_eq!(facts.matches("- id `").count(), 1, "{facts}");
+        assert!(facts.contains("src/api/extra.rs"), "{facts}");
+    }
+
+    #[tokio::test]
+    async fn update_without_changes_creates_no_package() {
+        let tmp = TempDirGuard::new("update_no_changes");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        init_with_all_agent_summaries(&server, tmp.path()).await;
+        let reply = run_context_update(&server, tmp.path()).await;
+        assert!(
+            reply
+                .lines()
+                .any(|l| l == "Обогащение не требуется: изменений нет."),
+            "{reply}"
+        );
+        assert!(!reply.contains("package_id"), "{reply}");
+        assert!(server.work_packages.read().await.is_empty());
     }
 
     #[tokio::test]

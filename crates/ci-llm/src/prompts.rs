@@ -484,15 +484,18 @@ fn builtin_template_for_role(role: RoleName) -> PromptTemplate {
                 "You are an incremental architecture card updater for role '{role}'.\n",
                 "Target language code: {language}.\n",
                 "{language_instruction}\n",
-                "Update only the affected subsystem card based on the git diff stat, modified files, and current symbols. ",
-                "Return strictly valid JSON matching the requested schema.",
+                "Refresh the summaries of the listed subsystems based on their files and current symbols. ",
+                "Ground every statement strictly in the provided facts. ",
+                "Return only the listed subsystems, using exactly their ids. ",
+                "Return strictly valid JSON conforming to the requested schema: ",
+                "{\"subsystems\": [{\"id\": \"...\", \"name\": \"...\", \"summary\": \"...\", \"tags\": [\"...\"]}]}.",
             )
             .to_string(),
             user_template: concat!(
                 "Project: {project}\n",
                 "Target output language: {language}\n\n",
-                "Incremental change facts and diff summary:\n{facts}\n\n",
-                "Return the updated card JSON matching schema:\n{json_schema}",
+                "Subsystems to refresh (return only these):\n{facts}\n\n",
+                "Return the subsystems JSON matching schema:\n{json_schema}",
             )
             .to_string(),
             source: PromptTemplateSource::BuiltIn,

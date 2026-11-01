@@ -440,7 +440,8 @@ fn json_type_name(val: &Value) -> &'static str {
 /// Returns the default JSON Schema for a given `RoleName` (D14, D16).
 pub fn default_role_json_schema(role: RoleName) -> Value {
     match role {
-        RoleName::Init => json!({
+        // `update` answers in the same envelope as `init`, restricted to the listed subsystems.
+        RoleName::Init | RoleName::Update => json!({
             "type": "object",
             "required": ["subsystems"],
             "properties": {
@@ -460,19 +461,6 @@ pub fn default_role_json_schema(role: RoleName) -> Value {
                             }
                         }
                     }
-                }
-            }
-        }),
-        RoleName::Update => json!({
-            "type": "object",
-            "required": ["id", "summary", "body"],
-            "properties": {
-                "id": { "type": "string", "minLength": 1, "pattern": ci_core::storage::SUBSYSTEM_ID_PATTERN },
-                "summary": { "type": "string", "minLength": 1 },
-                "body": { "type": "string", "minLength": 1 },
-                "tags": {
-                    "type": "array",
-                    "items": { "type": "string" }
                 }
             }
         }),
