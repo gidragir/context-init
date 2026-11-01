@@ -357,12 +357,12 @@ fn normalize_existing_path(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-#[tool_router]
+#[tool_router(vis = "pub(crate)")]
 impl ContextInitServer {
     /// Check knowledge base freshness against disk files and Git status.
     #[tool(
         name = "context_check",
-        description = "Check knowledge base freshness against disk files and Git status."
+        description = "Check knowledge base freshness against disk files and Git status, reporting drift. Run before finishing a task that changed structure (added/moved modules). Cheap, compact report."
     )]
     pub async fn check_drift(
         &self,
@@ -382,7 +382,7 @@ impl ContextInitServer {
     /// List all project subsystems and metrics from L0 index.
     #[tool(
         name = "context_get_subsystems",
-        description = "List all project subsystems and metrics from L0 index."
+        description = "List all project subsystems and metrics from the L0 index. Use at the start of unfamiliar work to see the whole map. One compact page instead of exploring directories."
     )]
     pub async fn get_subsystems(
         &self,
@@ -403,7 +403,7 @@ impl ContextInitServer {
     /// Get L1 overview card for a specific subsystem by ID.
     #[tool(
         name = "context_get_subsystem",
-        description = "Get L1 overview card for a specific subsystem by ID."
+        description = "Get the L1 overview card (files, key symbols, entrypoints, tests) of one subsystem by ID. Use before opening files of one subsystem. A few hundred tokens instead of reading sources."
     )]
     pub async fn get_subsystem(
         &self,
@@ -424,7 +424,7 @@ impl ContextInitServer {
     /// Pack subsystem code into AST-compressed context for LLM analysis.
     #[tool(
         name = "context_pack",
-        description = "Pack subsystem code into AST-compressed context for LLM analysis."
+        description = "Pack a subsystem's code into AST-compressed context. Use instead of reading 3+ files of one subsystem; bodies elided, signatures kept, far fewer tokens than raw files."
     )]
     pub async fn pack(&self, params: Parameters<McpPackParams>) -> Result<String, rmcp::ErrorData> {
         let p = params.0;
@@ -449,7 +449,7 @@ impl ContextInitServer {
     /// Submit agent work package results for schema validation and integration.
     #[tool(
         name = "context_submit",
-        description = "Submit agent work package results for schema validation and integration."
+        description = "Submit agent work package results for schema validation and integration. Use after context_init/context_update returned a package_id and you produced the JSON answer."
     )]
     pub async fn submit(
         &self,
@@ -491,7 +491,7 @@ impl ContextInitServer {
     /// Record agent feedback signal on tool utility and freshness.
     #[tool(
         name = "context_feedback",
-        description = "Record agent feedback signal on tool utility and freshness."
+        description = "Record agent feedback signal on tool utility and freshness. Use after a context_* answer was clearly helpful, wrong or stale; one short call."
     )]
     pub async fn feedback(
         &self,
@@ -517,7 +517,7 @@ impl ContextInitServer {
     /// Initialize OpenViking L0-L2 knowledge base for a project.
     #[tool(
         name = "context_init",
-        description = "Initialize OpenViking L0-L2 knowledge base for a project."
+        description = "Initialize the OpenViking L0-L2 knowledge base for a project. Use once when a project has no knowledge base yet (other context_* tools report it missing)."
     )]
     pub async fn init(&self, params: Parameters<McpInitParams>) -> Result<String, rmcp::ErrorData> {
         let p = params.0;
@@ -536,7 +536,7 @@ impl ContextInitServer {
     /// Incrementally update knowledge base when architectural drift is detected.
     #[tool(
         name = "context_update",
-        description = "Incrementally update knowledge base when architectural drift is detected."
+        description = "Incrementally update the knowledge base after architectural drift. Use when context_check reports drift or stale cards; refreshes only changed subsystems."
     )]
     pub async fn update(
         &self,
@@ -558,7 +558,7 @@ impl ContextInitServer {
     /// Map of the Git repositories inside a workspace directory.
     #[tool(
         name = "context_workspace",
-        description = "List the Git repositories of a multi-repo workspace with branches, dirty counts and cross-project shared symbols."
+        description = "List the Git repositories of a multi-repo workspace with branches, dirty counts and cross-project shared symbols. Use when the root holds several repos, to pick one before other context_* calls."
     )]
     pub async fn workspace(
         &self,
@@ -588,7 +588,7 @@ impl ContextInitServer {
     /// Scan project topology, directories, and file extensions without LLM.
     #[tool(
         name = "context_scan",
-        description = "Scan project topology, directories, and file extensions without LLM."
+        description = "Scan project topology, directories and file extensions without LLM. Use for a quick structural overview of a project that has no knowledge base yet."
     )]
     pub async fn scan(&self, params: Parameters<McpScanParams>) -> Result<String, rmcp::ErrorData> {
         let p = params.0;
@@ -605,7 +605,7 @@ impl ContextInitServer {
     /// Generate task digest and modified subsystem context from Git diff.
     #[tool(
         name = "context_task",
-        description = "Generate task digest and modified subsystem context from Git diff."
+        description = "Generate a task digest and the subsystems touched by a Git diff. Use with a diff/branch to see which subsystems a change touches before reviewing or extending it."
     )]
     pub async fn task(&self, params: Parameters<McpTaskParams>) -> Result<String, rmcp::ErrorData> {
         let p = params.0;
@@ -630,7 +630,7 @@ impl ContextInitServer {
     /// Search subsystems, cards, and symbols by query.
     #[tool(
         name = "context_search",
-        description = "Search subsystems, cards, and symbols by query."
+        description = "Search subsystems, cards and symbols by query. Start here when you do not know which module handles a concept; returns ranked subsystems with signatures (~1-2k tokens) instead of reading files."
     )]
     pub async fn search(
         &self,

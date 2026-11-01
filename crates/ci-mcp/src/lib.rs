@@ -2385,4 +2385,36 @@ mod tests {
         assert!(effs[0].truncated);
         assert_eq!(effs[1].cursor_hops, 1);
     }
+
+    #[test]
+    fn tool_descriptions_have_triggers_and_fit() {
+        let tools = ContextInitServer::tool_router().list_all();
+        assert_eq!(tools.len(), 12, "{tools:?}");
+        let routed = [
+            "context_search",
+            "context_get_subsystems",
+            "context_get_subsystem",
+            "context_pack",
+            "context_task",
+            "context_check",
+        ];
+        for tool in &tools {
+            let desc = tool.description.as_deref().unwrap_or_default();
+            assert!(
+                desc.chars().count() <= 300,
+                "{}: {} chars",
+                tool.name,
+                desc.chars().count()
+            );
+            if routed.contains(&tool.name.as_ref()) {
+                assert!(
+                    desc.contains("Use ")
+                        || desc.contains("Start here")
+                        || desc.contains("Run before"),
+                    "{}: no routing trigger in {desc:?}",
+                    tool.name
+                );
+            }
+        }
+    }
 }
