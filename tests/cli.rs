@@ -991,3 +991,187 @@ fn cli_setup_all_keeps_the_original_of_a_shared_rules_file() {
         "{backups:?}"
     );
 }
+
+// --- CLI operational telemetry (Task 4) ---
+
+impl Sandbox {
+    /// Runs the binary with `CLAUDECODE` explicitly set or cleared, independent of the host env.
+    fn run_with_claudecode(&self, args: &[&str], claudecode: bool) -> Output {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_context-init"));
+        cmd.args(args)
+            .current_dir(self.project())
+            .env("HOME", self.home())
+            .env("XDG_CONFIG_HOME", self.home().join(".config"))
+            .env("XDG_DATA_HOME", self.data_home())
+            .env("NO_COLOR", "1");
+        if claudecode {
+            cmd.env("CLAUDECODE", "1");
+        } else {
+            cmd.env_remove("CLAUDECODE");
+        }
+        for (k, _) in std::env::vars() {
+            if k.starts_with("CONTEXT_INIT_") {
+                cmd.env_remove(k);
+            }
+        }
+        cmd.output().expect("run context-init")
+    }
+
+    fn set_telemetry(&self, enabled: bool) {
+        let dir = self.home().join(".config/context-init");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("config.toml"),
+            format!("[telemetry]\nenabled = {enabled}\n"),
+        )
+        .unwrap();
+    }
+
+    fn recorded_events(&self) -> Vec<ci_core::telemetry::TelemetryEvent> {
+        ci_core::telemetry::JsonlTelemetrySink::new(self.data_home(), true)
+            .read_all_events()
+            .unwrap()
+    }
+
+    fn operational(&self, tool: &str) -> Vec<ci_core::telemetry::OperationalSignal> {
+        use ci_core::telemetry::TelemetrySignal;
+        self.recorded_events()
+            .into_iter()
+            .filter_map(|e| match e.signal {
+                TelemetrySignal::Operational(op) if op.tool == tool => Some(op),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn efficiency(&self, tool: &str) -> Vec<ci_core::telemetry::EfficiencySignal> {
+        use ci_core::telemetry::TelemetrySignal;
+        self.recorded_events()
+            .into_iter()
+            .filter_map(|e| match e.signal {
+                TelemetrySignal::Efficiency(ef) if ef.tool == tool => Some(ef),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Fixture project initialized with telemetry off, then telemetry switched on.
+    fn initialized_with_telemetry(&self) {
+        self.write_fixture();
+        self.set_telemetry(false);
+        let init = self.run_with_claudecode(&["init", "."], false);
+        assert!(init.status.success(), "{}", stderr(&init));
+        self.set_telemetry(true);
+    }
+}
+
+#[test]
+fn cli_records_claude_harness() {
+    let sb = Sandbox::new("tel_claude");
+    sb.initialized_with_telemetry();
+    let out = sb.run_with_claudecode(&["check", "--compact"], true);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let ops = sb.operational("check");
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    assert_eq!(ops[0].channel, "cli");
+    assert_eq!(ops[0].harness.as_deref(), Some("claude-code"));
+    assert!(ops[0].nested);
+    assert!(ops[0].success);
+}
+
+#[test]
+fn cli_without_markers_is_terminal() {
+    let sb = Sandbox::new("tel_terminal");
+    sb.initialized_with_telemetry();
+    let out = sb.run_with_claudecode(&["check", "--compact"], false);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let ops = sb.operational("check");
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    assert_eq!(ops[0].harness.as_deref(), Some("terminal"));
+    assert!(!ops[0].nested);
+}
+
+#[test]
+fn cli_mcp_subcommand_not_instrumented() {
+    let sb = Sandbox::new("tel_not_instrumented");
+    sb.initialized_with_telemetry();
+    let out = sb.run_with_claudecode(&["telemetry", "report"], false);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(sb.recorded_events().is_empty());
+}
+
+#[test]
+fn cli_telemetry_disabled_records_nothing() {
+    let sb = Sandbox::new("tel_disabled");
+    sb.initialized_with_telemetry();
+    sb.set_telemetry(false);
+    let out = sb.run_with_claudecode(&["check", "--compact"], true);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!sb.data_home().join("context-init/telemetry").exists());
+}
+
+#[test]
+fn cli_failed_command_records_error_and_keeps_exit_code() {
+    let sb = Sandbox::new("tel_error");
+    sb.initialized_with_telemetry();
+    let out = sb.run_with_claudecode(&["pack", "no-such-subsystem"], false);
+    assert!(!out.status.success());
+    let ops = sb.operational("pack");
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    assert!(!ops[0].success);
+    assert!(ops[0].error_class.is_some());
+}
+
+#[test]
+fn cli_nonzero_exit_without_error_is_ok_outcome() {
+    let sb = Sandbox::new("tel_exit_code");
+    sb.initialized_with_telemetry();
+    fs::create_dir_all(sb.project().join("src/newmod")).unwrap();
+    fs::write(sb.project().join("src/newmod/mod.rs"), "pub fn x() {}\n").unwrap();
+    let out = sb.run_with_claudecode(&["check", "--exit-code", "--compact"], false);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let ops = sb.operational("check");
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    assert!(ops[0].success);
+}
+
+#[test]
+fn cli_pack_records_efficiency() {
+    let sb = Sandbox::new("tel_eff_pack");
+    sb.initialized_with_telemetry();
+    let out = sb.run_with_claudecode(&["pack", "all"], false);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let effs = sb.efficiency("context_pack");
+    assert_eq!(effs.len(), 1, "{effs:?}");
+    assert!(effs[0].source_tokens > 0);
+    assert!(effs[0].response_tokens > 0);
+}
+
+#[test]
+fn cli_search_records_efficiency() {
+    let sb = Sandbox::new("tel_eff_search");
+    sb.initialized_with_telemetry();
+    let out = sb.run_with_claudecode(&["search", "zzqxnomatchtoken"], false);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let effs = sb.efficiency("context_search");
+    assert_eq!(effs.len(), 1, "{effs:?}");
+    assert!(effs[0].empty_search);
+}
+
+#[test]
+fn cli_task_records_efficiency() {
+    let sb = Sandbox::new("tel_eff_task");
+    sb.initialized_with_telemetry();
+    let out = sb.run_with_claudecode(&["task", "--paths", "src/api/mod.rs"], false);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let effs = sb.efficiency("context_task");
+    assert_eq!(effs.len(), 1, "{}{effs:?}", stdout(&out));
+    assert!(effs[0].source_tokens > 0);
+    assert!(effs[0].response_tokens > 0);
+}

@@ -5,11 +5,10 @@ use clap::Args;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use ci_core::telemetry::TelemetryScope;
 use ci_mcp::handlers::DEFAULT_SEARCH_TOP_K;
 use ci_mcp::ContextHandler;
 
-use super::{router_for, GlobalArgs};
+use super::{router_for, telemetry_scope, GlobalArgs};
 
 #[derive(Args, Debug, Clone)]
 pub struct SearchArgs {
@@ -37,7 +36,7 @@ pub fn run(global: &GlobalArgs, args: &SearchArgs) -> Result<ExitCode> {
             args.cursor.as_deref(),
             &router,
             args.top_k,
-            &TelemetryScope::disabled()
+            &telemetry_scope(&project)
         )?
     );
     Ok(ExitCode::SUCCESS)

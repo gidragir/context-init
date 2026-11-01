@@ -5,10 +5,9 @@ use clap::Args;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use ci_core::telemetry::TelemetryScope;
 use ci_mcp::ContextHandler;
 
-use super::GlobalArgs;
+use super::{telemetry_scope, GlobalArgs};
 
 #[derive(Args, Debug, Clone)]
 pub struct TaskArgs {
@@ -37,7 +36,7 @@ pub fn run(global: &GlobalArgs, args: &TaskArgs) -> Result<ExitCode> {
         args.base.as_deref(),
         args.target.as_deref(),
         args.cursor.as_deref(),
-        &TelemetryScope::disabled(),
+        &telemetry_scope(&project),
     )?;
     println!("{out}");
     Ok(ExitCode::SUCCESS)

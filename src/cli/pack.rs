@@ -9,9 +9,10 @@ use std::process::{Command, ExitCode};
 
 use ci_core::analysis::detector::count_tokens;
 use ci_core::analysis::pack::{pack_subsystem, PackStyle};
+use ci_core::analysis::subsystems::subsystem_tokens;
 use ci_core::config::is_binary_available;
 
-use super::GlobalArgs;
+use super::{telemetry_scope, GlobalArgs};
 
 #[derive(Args, Debug, Clone)]
 pub struct PackArgs {
@@ -49,6 +50,24 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
         compress,
         PackStyle::parse(&args.style),
     )?;
+
+    let tel = telemetry_scope(&project);
+    if tel.is_active() {
+        let source_tokens: usize = packed
+            .subsystems
+            .iter()
+            .map(|s| subsystem_tokens(&project.root, s))
+            .sum();
+        tel.efficiency(
+            "context_pack",
+            source_tokens,
+            &packed.content,
+            false,
+            0,
+            false,
+            false,
+        );
+    }
 
     if args.repomix && is_binary_available("repomix") {
         let mut cmd = Command::new("repomix");

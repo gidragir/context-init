@@ -19,8 +19,14 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Instant;
 
 use ci_core::config::{CliOverrides, RtkMode};
+use ci_core::telemetry::{
+    classify_error, harness_from_env, CallContext, CallOutcome, Channel, HarnessId,
+    JsonlTelemetrySink, TelemetryScope,
+};
 use ci_llm::RoleRouter;
 use ci_mcp::ResolvedProject;
 
@@ -122,28 +128,121 @@ enum Commands {
     Feedback(feedback::FeedbackArgs),
 }
 
-/// Parses arguments and runs the selected command.
+/// Telemetry tool name of a command; `mcp` (long-lived server) and `telemetry` are not instrumented.
+fn command_tool_name(cmd: &Commands) -> Option<&'static str> {
+    match cmd {
+        Commands::Init(_) => Some("init"),
+        Commands::Update(_) => Some("update"),
+        Commands::Check(_) => Some("check"),
+        Commands::Scan(_) => Some("scan"),
+        Commands::Task(_) => Some("task"),
+        Commands::Workspace(_) => Some("workspace"),
+        Commands::Search(_) => Some("search"),
+        Commands::Pack(_) => Some("pack"),
+        Commands::Config(_) => Some("config"),
+        Commands::Migrate(_) => Some("migrate"),
+        Commands::Setup(_) => Some("setup"),
+        Commands::Feedback(_) => Some("feedback"),
+        Commands::Mcp(_) | Commands::Telemetry(_) => None,
+    }
+}
+
+/// Project directory a command operates on (current directory when it takes none).
+fn command_path(cmd: &Commands) -> PathBuf {
+    match cmd {
+        Commands::Init(a) => a.path.clone(),
+        Commands::Update(a) => a.path.clone(),
+        Commands::Check(a) => a.path.clone(),
+        Commands::Scan(a) => a.path.clone(),
+        Commands::Task(a) => a.path.clone(),
+        Commands::Workspace(a) => a.path.clone(),
+        Commands::Search(a) => a.path.clone(),
+        Commands::Pack(a) => a.path.clone(),
+        Commands::Migrate(a) => a.path.clone(),
+        Commands::Feedback(a) => a.path.clone(),
+        Commands::Mcp(_) | Commands::Config(_) | Commands::Setup(_) | Commands::Telemetry(_) => {
+            PathBuf::from(".")
+        }
+    }
+}
+
+/// Per-call telemetry context of this process: CLI channel, harness from environment markers.
+fn call_context() -> CallContext {
+    let harness = harness_from_env(|k| std::env::var_os(k).is_some());
+    CallContext {
+        harness,
+        channel: Channel::Cli,
+        nested: harness != HarnessId::Terminal,
+    }
+}
+
+/// Telemetry scope for `project`: writes only when the project's own config enables telemetry.
+pub fn telemetry_scope(project: &ResolvedProject) -> TelemetryScope {
+    let sink = JsonlTelemetrySink::new(project.storage_paths.data_dir.clone(), true);
+    TelemetryScope {
+        recorder: project.recorder(Some(Arc::new(sink))),
+        ctx: call_context(),
+    }
+}
+
+/// Records the operational event of a finished command; a non-zero `ExitCode` without an error is `Ok`.
+/// Failures to load the project or write the event are ignored.
+fn record_call(
+    global: &GlobalArgs,
+    path: &Path,
+    tool: &'static str,
+    started: Instant,
+    result: &Result<ExitCode>,
+) {
+    let Ok(project) = global.load_project(path, None) else {
+        return;
+    };
+    let outcome = match result {
+        Ok(_) => CallOutcome::Ok,
+        Err(e) => CallOutcome::Err(classify_error(e)),
+    };
+    let scope = telemetry_scope(&project);
+    scope
+        .recorder
+        .record_call(&scope.ctx, tool, started, outcome);
+}
+
+/// Parses arguments and runs the selected command, recording one operational telemetry event.
 pub fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     if cli.global.compact {
         colored::control::set_override(false);
     }
-    match cli.command {
-        None => init_update::run_init(&cli.global, &init_update::InitArgs::default()),
-        Some(Commands::Init(args)) => init_update::run_init(&cli.global, &args),
-        Some(Commands::Update(args)) => init_update::run_update(&cli.global, &args),
-        Some(Commands::Check(args)) => check::run(&cli.global, &args),
-        Some(Commands::Scan(args)) => scan::run(&cli.global, &args),
-        Some(Commands::Task(args)) => task::run(&cli.global, &args),
-        Some(Commands::Workspace(args)) => workspace::run(&cli.global, &args),
-        Some(Commands::Search(args)) => search::run(&cli.global, &args),
-        Some(Commands::Pack(args)) => pack::run(&cli.global, &args),
+    let Cli { global, command } = cli;
+    let started = Instant::now();
+    let instrumented = match &command {
+        Some(cmd) => command_tool_name(cmd).map(|tool| (tool, command_path(cmd))),
+        None => Some(("init", PathBuf::from("."))),
+    };
+    let result = dispatch(&global, command);
+    if let Some((tool, path)) = instrumented {
+        record_call(&global, &path, tool, started, &result);
+    }
+    result
+}
+
+fn dispatch(global: &GlobalArgs, command: Option<Commands>) -> Result<ExitCode> {
+    match command {
+        None => init_update::run_init(global, &init_update::InitArgs::default()),
+        Some(Commands::Init(args)) => init_update::run_init(global, &args),
+        Some(Commands::Update(args)) => init_update::run_update(global, &args),
+        Some(Commands::Check(args)) => check::run(global, &args),
+        Some(Commands::Scan(args)) => scan::run(global, &args),
+        Some(Commands::Task(args)) => task::run(global, &args),
+        Some(Commands::Workspace(args)) => workspace::run(global, &args),
+        Some(Commands::Search(args)) => search::run(global, &args),
+        Some(Commands::Pack(args)) => pack::run(global, &args),
         Some(Commands::Mcp(args)) => mcp::run(&args),
-        Some(Commands::Config(args)) => config::run(&cli.global, &args),
-        Some(Commands::Migrate(args)) => migrate::run(&cli.global, &args),
+        Some(Commands::Config(args)) => config::run(global, &args),
+        Some(Commands::Migrate(args)) => migrate::run(global, &args),
         Some(Commands::Setup(args)) => setup::run(&args),
-        Some(Commands::Telemetry(args)) => telemetry::run(&cli.global, &args),
-        Some(Commands::Feedback(args)) => feedback::run(&cli.global, &args),
+        Some(Commands::Telemetry(args)) => telemetry::run(global, &args),
+        Some(Commands::Feedback(args)) => feedback::run(global, &args),
     }
 }
 

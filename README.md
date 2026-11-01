@@ -79,6 +79,7 @@ init = ["local", "none"]   # "none" = детерминированный реж�
 - **Конфликт слияния в базе:** разрешите конфликт любым способом и выполните `context-init update`: формат детерминирован и пересоберётся.
 - **Диффы:** добавьте в `.gitattributes` строку `.context-init/knowledge/** linguist-generated=true`, чтобы схлопнуть диффы базы в ревью.
 - **Центральное хранилище (опция):** `storage = "central"` в `.context-init.toml` (или `CONTEXT_INIT_STORAGE=central`) кладёт базу в `~/.local/share/context-init/projects/<project-id>/`. Кэш, телеметрия и feedback централизованы всегда.
+- **Телеметрия CLI:** при `[telemetry] enabled = true` каждая команда (кроме `mcp` и `telemetry`) пишет одно обезличенное событие с каналом `cli` и определённой средой запуска: `claude-code` по `CLAUDECODE`, иначе `terminal`. Antigravity CLI определяется как terminal.
 - **Переключение режима:** `context-init migrate --to repo|central [--remove-source] [--dry-run] [--force]` копирует базу (включая ручные ADR) и записывает `storage` в `.context-init.toml`, сохраняя остальные ключи и комментарии.
 - **Старый формат:** базу схемы v2 и ниже нужно пересоздать: `context-init init --force`.
 
