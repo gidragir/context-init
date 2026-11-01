@@ -816,6 +816,9 @@ fn is_test_path_matches_known_shapes() {
         "src/x_tests.rs",
         "pkg/x_test.py",
         "pkg/test_x.py",
+        "src\\a\\tests.rs",
+        "tests\\it.rs",
+        "attest_test.rs",
     ] {
         assert!(is_test_path(p), "{p}");
     }
@@ -824,6 +827,9 @@ fn is_test_path_matches_known_shapes() {
         "src/contest.rs",
         "src/latest.py",
         "src/testing/mod.rs",
+        "src/contests/x.rs",
+        "conftest.py",
+        "test_utils.rs",
     ] {
         assert!(!is_test_path(p), "{p}");
     }
@@ -852,10 +858,31 @@ fn test_files_contribute_no_symbols() {
 
 #[test]
 fn cfg_test_module_symbols_skipped() {
-    let src = "pub fn real() {}\n#[cfg(test)]\nmod t {\n    pub struct Fake;\n}\n";
+    let src = "pub fn real() {}\n#[cfg(test)]\nmod t {\n    pub struct Fake;\n}\n\
+               #[cfg(test)]\npub struct Fake;\n#[cfg(test)]\npub fn fake_helper() {}\n\
+               #[cfg(all(test, unix))]\npub fn fake_unix() {}\n";
     let syms = extract_rust_symbols(src, false);
     assert_eq!(syms.len(), 1, "{syms:?}");
     assert!(syms[0].contains("real"));
+}
+
+#[test]
+fn subsystem_without_files_is_not_tagged_tests() {
+    let root = write_tree(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\n",
+        ),
+        ("src/api/mod.rs", "pub fn api() {}\n"),
+    ]);
+    let mut analysis = analyze_project(&root, false, false).unwrap();
+    for m in &mut analysis.detected_modules {
+        m.files.clear();
+    }
+    let subs = crate::analysis::subsystems::build_deterministic(&analysis);
+    assert!(!subs.is_empty());
+    assert!(subs.iter().all(|s| !s.tags.iter().any(|t| t == "tests")));
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

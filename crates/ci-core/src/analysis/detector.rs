@@ -1487,6 +1487,9 @@ pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String> {
     let max_symbols = if deep { 30 } else { 10 };
 
     for item in file.items {
+        if item_attrs(&item).is_some_and(has_cfg_test) {
+            continue;
+        }
         match item {
             syn::Item::Fn(f) => {
                 if is_syn_pub(&f.vis) {
@@ -1605,9 +1608,6 @@ pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String> {
                     }
                 }
             }
-            // Inline modules (`#[cfg(test)] mod tests { .. }` included) are never descended
-            // into, so test fixtures stay out of the symbols.
-            syn::Item::Mod(_) => {}
             _ => {}
         }
 
@@ -1617,6 +1617,44 @@ pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String> {
     }
 
     symbols
+}
+
+fn item_attrs(item: &syn::Item) -> Option<&[syn::Attribute]> {
+    Some(match item {
+        syn::Item::Fn(i) => &i.attrs,
+        syn::Item::Struct(i) => &i.attrs,
+        syn::Item::Enum(i) => &i.attrs,
+        syn::Item::Trait(i) => &i.attrs,
+        syn::Item::Type(i) => &i.attrs,
+        syn::Item::Const(i) => &i.attrs,
+        syn::Item::Impl(i) => &i.attrs,
+        syn::Item::Mod(i) => &i.attrs,
+        _ => return None,
+    })
+}
+
+/// `#[cfg(test)]`, or `#[cfg(all(test, ..))]` where `test` is a direct operand.
+fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        if !a.path().is_ident("cfg") {
+            return false;
+        }
+        let Ok(meta) = a.parse_args::<syn::Meta>() else {
+            return false;
+        };
+        match meta {
+            syn::Meta::Path(p) => p.is_ident("test"),
+            syn::Meta::List(l) if l.path.is_ident("all") => l
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+                .is_ok_and(|ops| {
+                    ops.iter()
+                        .any(|m| matches!(m, syn::Meta::Path(p) if p.is_ident("test")))
+                }),
+            _ => false,
+        }
+    })
 }
 
 fn is_syn_pub(vis: &syn::Visibility) -> bool {
