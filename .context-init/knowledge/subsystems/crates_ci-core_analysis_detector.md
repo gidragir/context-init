@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/analysis/detector.rs
 source:
   kind: git
-  blob_sha: f549ac7cf0925c2fac31ac71e7ae888e388c9443
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  blob_sha: cf3c8a1d022ff391675305a4f19e0d76dc6c284f
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Core Analysis Detector (L1)
+# Подсистема: Детектор проекта (L1)
 
-Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (1 файлов)
+analyze_project / analyze_project_with: определение типа проекта, команд, подсистем и сигнатур (deep); список IGNORED_DIRS и префикс rtk для генерируемых команд.
 
 > **Идентификатор:** `crates_ci-core_analysis_detector`
-> **Теги:** Rust (Cargo), crates_ci-core_analysis_detector
+> **Теги:** detector, project-type, rtk
 
 ## 📁 Точки входа и структура файлов
 
@@ -35,8 +35,8 @@ pub struct AnalyzeOptions
 pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<ProjectAnalysis>
 pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<ProjectAnalysis>
 pub fn prefix_with_rtk(cmd: &str) -> String
-pub fn count_tokens(text: &str) -> usize
 pub fn is_ignored_path(path: &Path, root: &Path) -> bool
+pub fn is_test_path(rel: &str) -> bool
 pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String>
 pub fn extract_multiline_symbols(content: &str, ext: &str, deep: bool) -> Vec<String>
 pub fn clean_symbol_line(line: &str) -> String

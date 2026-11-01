@@ -2,11 +2,11 @@
 directory: src/cli
 source:
   kind: git
-  blob_sha: 368a10b80d59a10eabe1d3b0fd11cfb79a27b393
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  blob_sha: ceaaf1fb5b1d173146d06133e765886a1eacd707
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 14
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Cli (L1)
+# Подсистема: CLI (L1)
 
-Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs
+Точка входа run() и подкоманды init, update, check, pack, mcp, config, migrate, setup, telemetry, feedback; GlobalArgs (--model, --role, --config, --compact) и сборка RoleRouter.
 
 > **Идентификатор:** `src_cli`
-> **Теги:** Rust (Cargo), src_cli
+> **Теги:** clap, cli, entrypoint
 
 ## 📁 Точки входа и структура файлов
 
@@ -47,6 +47,7 @@ pub struct GlobalArgs
 pub fn overrides(&self, rtk: Option<RtkMode>) -> Result<CliOverrides>
 pub fn load_project(&self, path: &Path, rtk: Option<RtkMode>) -> Result<ResolvedProject>
 pub fn router_for(project: &ResolvedProject) -> Result<RoleRouter>
+pub fn telemetry_scope(project: &ResolvedProject) -> TelemetryScope
 pub fn run() -> Result<ExitCode>
 pub struct CheckArgs
 pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode>
@@ -72,10 +73,9 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode>
 pub struct ScanArgs
 pub fn run(global: &GlobalArgs, args: &ScanArgs) -> Result<ExitCode>
 pub struct SearchArgs
-pub fn run(global: &GlobalArgs, args: &SearchArgs) -> Result<ExitCode>
 ```
 
 ## 🧪 Запуск и тестирование
 ```bash
-rtk cargo test
+cargo test
 ```

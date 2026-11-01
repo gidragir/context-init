@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/analysis/detector/tests.rs
 source:
   kind: git
-  blob_sha: 769fa688aa3df7d83534284ec1b98d634c1060ec
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  blob_sha: c9c08e468aff90ba1f1f37d836f21f0727379ff1
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,28 +15,18 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Core Analysis Detector Tests (L1)
+# Подсистема: Тесты детектора (L1)
 
-Модуль-файл `crates/ci-core/src/analysis/detector/tests.rs`
+Юнит-тесты детектора; символы Engine, Status, MyService — фикстурный Rust-код для проверки извлечения сигнатур, а не API проекта.
 
 > **Идентификатор:** `crates_ci-core_analysis_detector_tests`
-> **Теги:** Rust (Cargo), crates_ci-core_analysis_detector_tests
+> **Теги:** fixtures, tests
 
 ## 📁 Точки входа и структура файлов
 
 | Файл | Статус |
 | :--- | :--- |
 | `crates/ci-core/src/analysis/detector/tests.rs` | Исходный код |
-
-## 🔑 Ключевой контракт и экспорты
-```text
-pub struct Engine<T: Clone>
-pub enum Status
-pub async fn run_task<T>(id: &str, payload: T) -> Result<Status, Error>
-pub trait Service
-pub struct MyService
-pub fn new() -> Self
-```
 
 ## 🧪 Запуск и тестирование
 ```bash

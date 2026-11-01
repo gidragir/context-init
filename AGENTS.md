@@ -40,6 +40,7 @@
 - `crates_ci-mcp_pagination` (Пагинация) — Подсчёт токенов, бюджетирование ответа и курсоры base64url (CursorData) для постраничной выдачи больших результатов.
 - `crates_ci-mcp_pipeline` (Конвейер init/update) — run_init / run_update: анализ, обогащение ролями, генерация базы и AGENTS.md; FullDriftReport объединяет файловый и git-дрейф.
 - `crates_ci-mcp_server` (MCP-сервер) — ContextInitServer на stdio: регистрация инструментов, MCP roots (roots/list) для выбора проекта; TelemetrySink подключается через with_telemetry_sink (в продакшен-запуске run_mcp_server не подключён).
+- `crates_ci-mcp_tools` (Ci Mcp Tools) — Модуль-файл `crates/ci-mcp/src/tools.rs`
 - `references` (Справочники) — Спецификация формата OpenViking (openviking_spec.md) — опорный документ для уровней L0-L2.
 - `reports` (Отчёты бенчмарков) — BENCHMARK_REPORT.md и benchmark_latest.json — результаты регрессионного бенчмарка (токены, точность).
 - `reports_subagents` (Отчёты субагентов) — Сводки работы субагентов по крейтам ci-core, ci-llm, ci-mcp, корню и разделению workspace.
@@ -48,7 +49,8 @@
 - `reports_subagents_ci-mcp_verification` (Верификация ci-mcp) — Отчёт субагента о проверке крейта ci-mcp.
 - `reports_subagents_context-init_verification` (Верификация context-init) — Отчёт субагента о проверке корневого бинарного крейта context-init.
 - `reports_subagents_step1_workspace_verification` (Верификация workspace (шаг 1)) — Отчёт субагента о проверке разделения на Cargo workspace (шаг 1 v0.3).
+- `scripts` (Scripts) — Модуль и компоненты директории `scripts` (8 файлов)
 - `src_cli` (CLI) — Точка входа run() и подкоманды init, update, check, pack, mcp, config, migrate, setup, telemetry, feedback; GlobalArgs (--model, --role, --config, --compact) и сборка RoleRouter.
 - `src_cli_setup` (CLI setup) — context-init setup: план регистрации MCP-сервера и короткого правила агента для харнессов (Claude Code, Antigravity и др.), слияние с существующими конфигами.
 - `tests` (Интеграционные тесты CLI) — tests/cli.rs — сквозные тесты бинаря context-init по подкомандам.
-- `tests_regression_benchmark` (Регрессионный бенчмарк) — Бенчмарк экономии токенов и качества базы знаний; результаты пишутся в reports/.
+- `tests_cli` (Tests Cli) — Тесты для `tests`

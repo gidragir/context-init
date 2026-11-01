@@ -2,11 +2,11 @@
 directory: crates/ci-llm/src/prompts.rs
 source:
   kind: git
-  blob_sha: 43d585731dfd249c16abfa2e141226a5d8940e8c
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  blob_sha: fe0aaca9b58acc61f15014dde5b419340de950f7
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Llm Prompts (L1)
+# Подсистема: Шаблоны промптов (L1)
 
-Модуль-файл `crates/ci-llm/src/prompts.rs`
+Реестр PromptTemplate с источниками (встроенные/пользовательские) и PromptVars (факты, проект, язык) для ролей init/update/task/search.
 
 > **Идентификатор:** `crates_ci-llm_prompts`
-> **Теги:** Rust (Cargo), crates_ci-llm_prompts
+> **Теги:** prompts, templates
 
 ## 📁 Точки входа и структура файлов
 

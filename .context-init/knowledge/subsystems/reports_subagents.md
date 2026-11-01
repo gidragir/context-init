@@ -3,10 +3,10 @@ directory: reports/subagents
 source:
   kind: git
   blob_sha: 54e17a4b0fc2655ac095ea0779def96e0ad5fd83
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 7
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Reports Subagents (L1)
+# Подсистема: Отчёты субагентов (L1)
 
-Модуль и компоненты директории `reports/subagents` (7 файлов)
+Сводки работы субагентов по крейтам ci-core, ci-llm, ci-mcp, корню и разделению workspace.
 
 > **Идентификатор:** `reports_subagents`
-> **Теги:** Rust (Cargo), reports_subagents
+> **Теги:** reports, subagents
 
 ## 📁 Точки входа и структура файлов
 
@@ -36,5 +36,5 @@ freshness:
 
 ## 🧪 Запуск и тестирование
 ```bash
-rtk cargo test
+cargo test
 ```

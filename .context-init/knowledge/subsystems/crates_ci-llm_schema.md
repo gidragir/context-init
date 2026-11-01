@@ -2,11 +2,11 @@
 directory: crates/ci-llm/src/schema.rs
 source:
   kind: git
-  blob_sha: b0db935e3df6e8f119a2e763614fbd51c4445ac7
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  blob_sha: b95d2c22432aa435641bfb7304baeb4fc36bbdb0
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Llm Schema (L1)
+# Подсистема: JSON-схемы ответов (L1)
 
-Модуль-файл `crates/ci-llm/src/schema.rs`
+Извлечение JSON из ответа модели, валидация по JSON Schema и схемы по умолчанию для каждой роли (default_role_json_schema).
 
 > **Идентификатор:** `crates_ci-llm_schema`
-> **Теги:** Rust (Cargo), crates_ci-llm_schema
+> **Теги:** json-schema, llm, validation
 
 ## 📁 Точки входа и структура файлов
 

@@ -3,10 +3,10 @@ directory: reports/subagents/ci-llm_verification.md
 source:
   kind: git
   blob_sha: bfba2fd996340e90e7cb43d016e60316acdc5906
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Reports Subagents Ci Llm Verification (L1)
+# Подсистема: Верификация ci-llm (L1)
 
-Модуль-файл `reports/subagents/ci-llm_verification.md`
+Отчёт субагента о проверке крейта ci-llm.
 
 > **Идентификатор:** `reports_subagents_ci-llm_verification`
-> **Теги:** Rust (Cargo), reports_subagents_ci-llm_verification
+> **Теги:** reports, verification
 
 ## 📁 Точки входа и структура файлов
 
@@ -30,5 +30,5 @@ freshness:
 
 ## 🧪 Запуск и тестирование
 ```bash
-rtk cargo test
+cargo test
 ```

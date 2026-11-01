@@ -3,10 +3,10 @@ directory: crates/ci-llm/src/decorators.rs
 source:
   kind: git
   blob_sha: a12861766d4f9eeb4625627ce0b8ff62f7baa303
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Llm Decorators (L1)
+# Подсистема: Декораторы провайдеров (L1)
 
-Модуль-файл `crates/ci-llm/src/decorators.rs`
+RetryDecorator с backoff и TimeoutDecorator — обёртки над LlmProvider для повторов и таймаутов.
 
 > **Идентификатор:** `crates_ci-llm_decorators`
-> **Теги:** Rust (Cargo), crates_ci-llm_decorators
+> **Теги:** llm, retry, timeout
 
 ## 📁 Точки входа и структура файлов
 

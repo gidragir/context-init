@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/analysis
 source:
   kind: git
-  blob_sha: 032f40c8d9ac8143b23008a6d914116c03138a60
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  blob_sha: 190ddcdb2d72a669160d557c8145d16d3c8c1b93
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 7
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Core Analysis (L1)
+# Подсистема: Анализ проекта (L1)
 
-Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs
+Сканирование дерева (scan_project, ScanReport), конфиг области (scope), выделение подсистем и задачный дайджест; resolve_knowledge_dir выбирает repo (.context-init/knowledge) или центральное хранилище.
 
 > **Идентификатор:** `crates_ci-core_analysis`
-> **Теги:** Rust (Cargo), crates_ci-core_analysis
+> **Теги:** analysis, scan, storage-mode, subsystems
 
 ## 📁 Точки входа и структура файлов
 
@@ -49,7 +49,7 @@ pub fn files(&self) -> &[String]
 pub fn allows_file(&self, path: &Path) -> bool
 pub fn allows_dir(&self, path: &Path) -> bool
 pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo>
-pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 3] = ["Подсистема `", "Модуль и компоненты директории `", "Модуль-файл `", ]
+pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 6] = ["Основная логика и компоненты проекта", "Тесты для `", "Тесты проекта", "Подсистема `", "Модуль и компоненты директории `", "Модуль-файл `", ]
 pub fn subsystem_tokens(root_dir: &Path, sub: &SubsystemInfo) -> usize
 pub struct TaskDigestRequest<'a>
 pub fn build_task_digest(root: &Path, git: &dyn GitBackend, index: Option<&L0Index>, req: &TaskDigestRequest, ) -> Result<String>

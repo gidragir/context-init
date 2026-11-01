@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis/lang
 source:
   kind: git
   blob_sha: b401a4072acc3c805e3c84134342fd8c810a3c1f
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 5
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Core Analysis Lang (L1)
+# Подсистема: Языковые адаптеры (L1)
 
-Подсистема `crates/ci-core/src/analysis/lang` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs
+Трейт LanguageAdapter (language_id, extensions, extract_symbols) и адаптеры Rust, Python, BSL и MDO (1С); ELIDED_BODY — маркер вырезанного тела при сжатии.
 
 > **Идентификатор:** `crates_ci-core_analysis_lang`
-> **Теги:** Rust (Cargo), crates_ci-core_analysis_lang
+> **Теги:** 1c, ast, languages, python, rust
 
 ## 📁 Точки входа и структура файлов
 

@@ -3,10 +3,10 @@ directory: references/openviking_spec.md
 source:
   kind: git
   blob_sha: 67a69204fe4988fdf1f396cf27e7264779586bd6
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: References (L1)
+# Подсистема: Справочники (L1)
 
-Модуль и компоненты директории `references` (1 файлов)
+Спецификация формата OpenViking (openviking_spec.md) — опорный документ для уровней L0-L2.
 
 > **Идентификатор:** `references`
-> **Теги:** Rust (Cargo), references
+> **Теги:** docs, spec
 
 ## 📁 Точки входа и структура файлов
 
@@ -30,5 +30,5 @@ freshness:
 
 ## 🧪 Запуск и тестирование
 ```bash
-rtk cargo test
+cargo test
 ```

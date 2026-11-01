@@ -3,10 +3,10 @@ directory: crates/ci-llm/src/router.rs
 source:
   kind: git
   blob_sha: 819f1b1d77abedf8a88e2d1d2433f89f80284c95
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Llm Router (L1)
+# Подсистема: Маршрутизатор ролей (L1)
 
-Модуль-файл `crates/ci-llm/src/router.rs`
+RoleRouter исполняет цепочку моделей для роли с фолбэком; RoleExecutionOutcome различает детерминированный, завершённый и фолбэк-исход.
 
 > **Идентификатор:** `crates_ci-llm_router`
-> **Теги:** Rust (Cargo), crates_ci-llm_router
+> **Теги:** fallback, llm, router
 
 ## 📁 Точки входа и структура файлов
 

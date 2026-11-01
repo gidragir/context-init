@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "schema_version": 3,
+  "schema_version": 4,
   "project": "context-init",
   "description": "CLI-утилита на Rust для автоматической инициализации и поддержания трехуровневой базы знаний (**OpenViking L0-L2**) для автономных ИИ-ассистентов (Antigravity, Hermes, Claude Code, Cursor, Aider).",
-  "updated_at": "2026-10-29",
+  "updated_at": "2026-11-01",
   "project_type": "Rust (Cargo)",
   "entrypoints": [
     "src/main.rs",
@@ -37,13 +37,19 @@
       ],
       "key_files": [
         "crates/ci-core/Cargo.toml",
+        "crates/ci-core/build.rs",
         "crates/ci-core/src/lib.rs",
-        "crates/ci-core/src/search.rs"
+        "crates/ci-core/src/search.rs",
+        "crates/ci-core/src/tokens.rs"
       ],
       "files": [
         {
           "path": "crates/ci-core/Cargo.toml",
           "is_entrypoint": true
+        },
+        {
+          "path": "crates/ci-core/build.rs",
+          "is_entrypoint": false
         },
         {
           "path": "crates/ci-core/src/lib.rs",
@@ -52,16 +58,26 @@
         {
           "path": "crates/ci-core/src/search.rs",
           "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/tokens.rs",
+          "is_entrypoint": false
         }
       ],
       "key_symbols": [
         "pub const VERSION: &str = env !(\"CARGO_PKG_VERSION\")",
+        "pub const BUILD: &str = env !(\"CONTEXT_INIT_BUILD\")",
         "pub fn crate_info() -> &'static str",
         "pub struct SearchHit",
         "pub trait Retriever",
-        "pub struct Bm25Retriever"
+        "fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>>",
+        "pub struct Bm25Retriever",
+        "pub fn build(index: &L0Index, knowledge_dir: &Path) -> Result<Self>",
+        "pub fn count_tokens(text: &str) -> usize"
       ],
-      "test_command": "rtk cargo test -p ci-core"
+      "test_command": "rtk cargo test -p ci-core",
+      "summary_source": "manual",
+      "needs_review": true
     },
     {
       "id": "crates_ci-core_analysis",
@@ -125,11 +141,27 @@
         "pub fn render_scan_markdown(project_id: &str, root: &Path, report: &ScanReport) -> String",
         "pub fn validate_scope(scope: &ScopeConfig) -> Result<()>",
         "pub struct ScopeFilter",
+        "pub fn build(root: &Path, scope: &ScopeConfig) -> Result<Self>",
+        "pub fn files(&self) -> &[String]",
+        "pub fn allows_file(&self, path: &Path) -> bool",
+        "pub fn allows_dir(&self, path: &Path) -> bool",
         "pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo>",
-        "pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 3] = [\"Подсистема `\", \"Модуль и компоненты директории `\", \"Модуль-файл `\", ]"
+        "pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 6] = [\"Основная логика и компоненты проекта\", \"Тесты для `\", \"Тесты проекта\", \"Подсистема `\", \"Модуль и компоненты директории `\", \"Модуль-файл `\", ]",
+        "pub fn subsystem_tokens(root_dir: &Path, sub: &SubsystemInfo) -> usize",
+        "pub struct TaskDigestRequest<'a>",
+        "pub fn build_task_digest(root: &Path, git: &dyn GitBackend, index: Option<&L0Index>, req: &TaskDigestRequest, ) -> Result<String>",
+        "pub struct DiscoveredModule",
+        "pub struct ProjectAnalysis",
+        "pub struct McpCheckResult",
+        "pub struct WorkspaceRepo",
+        "pub struct CrossLink",
+        "pub struct WorkspaceReport",
+        "pub fn analyze_workspace(workspace_root: &Path, git: &dyn GitBackend) -> Result<WorkspaceReport>",
+        "pub fn render_workspace_l0(report: &WorkspaceReport) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core"
+      "parent": "crates_ci-core",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_analysis_detector",
@@ -156,14 +188,16 @@
         "pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<ProjectAnalysis>",
         "pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<ProjectAnalysis>",
         "pub fn prefix_with_rtk(cmd: &str) -> String",
-        "pub fn count_tokens(text: &str) -> usize",
         "pub fn is_ignored_path(path: &Path, root: &Path) -> bool",
+        "pub fn is_test_path(rel: &str) -> bool",
         "pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String>",
         "pub fn extract_multiline_symbols(content: &str, ext: &str, deep: bool) -> Vec<String>",
-        "pub fn clean_symbol_line(line: &str) -> String"
+        "pub fn clean_symbol_line(line: &str) -> String",
+        "pub fn sanitize_symbol(raw: &str) -> Option<String>"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core_analysis"
+      "parent": "crates_ci-core_analysis",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_analysis_detector_tests",
@@ -183,13 +217,9 @@
           "is_entrypoint": false
         }
       ],
-      "key_symbols": [
-        "pub struct Engine<T: Clone>",
-        "pub enum Status",
-        "pub async fn run_task<T>(id: &str, payload: T) -> Result<Status, Error>"
-      ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core_analysis_detector"
+      "parent": "crates_ci-core_analysis_detector",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_analysis_generator",
@@ -219,10 +249,13 @@
         "pub fn generate(analysis: &ProjectAnalysis, subsystems: &[SubsystemInfo], knowledge_dir: &Path, opts: &GenerateOptions, ) -> Result<()>",
         "pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftReport>",
         "pub fn update(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, ) -> Result<(usize, usize)>",
+        "pub struct SummaryUpdate",
+        "pub fn apply_summaries(analysis: &ProjectAnalysis, knowledge_dir: &Path, updates: &[SummaryUpdate], source: SummarySource, model: Option<&str>, agents_md: Option<StorageMode>, ) -> Result<usize>",
         "pub fn sanitize_id(raw: &str) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core_analysis"
+      "parent": "crates_ci-core_analysis",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_analysis_lang",
@@ -271,17 +304,27 @@
       "key_symbols": [
         "pub const ELIDED_BODY: &str = \"⋮----\"",
         "pub trait LanguageAdapter",
+        "fn language_id(&self) -> &'static str",
+        "fn extensions(&self) -> &'static [&'static str]",
+        "fn extract_symbols(&self, source: &str) -> Vec<String>",
+        "fn compress_source(&self, source: &str) -> String",
+        "fn method_bodies(&self, source: &str) -> Vec<(String, String)>",
         "pub fn adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter>",
         "pub fn adapter_for_path(path: &Path) -> Option<&'static dyn LanguageAdapter>",
         "pub struct BslAdapter",
         "pub struct MdoObject",
+        "pub fn id(&self) -> String",
         "pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject>",
         "pub fn semantic_diff(old: Option<&MdoObject>, new: &MdoObject) -> Vec<String>",
         "pub fn render_mdo_l2_card(obj: &MdoObject) -> String",
-        "pub(crate) fn discover_mdo_subsystems(root: &Path, files: &[String], ) -> (Vec<DiscoveredModule>, BTreeSet<String>)"
+        "pub(crate) fn discover_mdo_subsystems(root: &Path, files: &[String], ) -> (Vec<DiscoveredModule>, BTreeSet<String>)",
+        "pub fn find_object_card(root: &Path, scope: &ScopeConfig, id: &str) -> Result<Option<String>>",
+        "pub struct PythonAdapter",
+        "pub struct RustAdapter"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core_analysis"
+      "parent": "crates_ci-core_analysis",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_analysis_pack",
@@ -304,6 +347,7 @@
       ],
       "key_symbols": [
         "pub enum PackStyle",
+        "pub fn parse(style: &str) -> Self",
         "pub struct PackedSubsystems",
         "pub fn pack_subsystem(root: &Path, knowledge_dir: &Path, index: &L0Index, subsystem_id: &str, compress: bool, style: PackStyle, ) -> Result<PackedSubsystems>",
         "pub fn pack_files(root: &Path, subs: &[&SubsystemInfo], files: &[String], compress: bool, style: PackStyle, ) -> String",
@@ -314,7 +358,8 @@
         "pub fn compress_code(content: &str) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core_analysis"
+      "parent": "crates_ci-core_analysis",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_config",
@@ -343,13 +388,34 @@
         "pub const MIN_RESPONSE_TOKENS: usize = 64",
         "pub const ROLE_NONE: &str = \"none\"",
         "pub struct StoragePaths",
+        "pub fn resolve(repo_root: Option<&Path>) -> Self",
+        "pub fn resolve_with_env<F>(repo_root: Option<&Path>, home_dir: Option<&Path>, get_env: F, ) -> Self where F: Fn(&str) -> Option<String>,",
+        "pub fn project_storage_dir(&self, project_id: &str) -> PathBuf",
+        "pub fn project_knowledge_dir(&self, project_id: &str) -> PathBuf",
+        "pub fn effective_global_config_path(&self) -> &Path",
+        "pub fn format_paths(&self, project_id: Option<&str>) -> String",
         "pub enum RtkMode",
+        "pub fn as_str(&self) -> &'static str",
+        "pub fn is_active(&self) -> bool",
+        "pub fn is_active_with_path(&self, path_var: Option<&OsStr>) -> bool",
         "pub enum StorageMode",
+        "pub fn as_str(self) -> &'static str",
         "pub fn is_binary_available(bin_name: &str) -> bool",
-        "pub fn is_binary_available_in_path(bin_name: &str, path_var: Option<&OsStr>) -> bool"
+        "pub fn is_binary_available_in_path(bin_name: &str, path_var: Option<&OsStr>) -> bool",
+        "pub fn is_binary_available_in_dirs<I, P>(bin_name: &str, dirs: I) -> bool where I: IntoIterator<Item = P>, P: AsRef<Path>,",
+        "pub fn is_rtk_available() -> bool",
+        "pub fn resolve_rtk_active(mode: RtkMode) -> bool",
+        "pub fn resolve_rtk_active_with_path(mode: RtkMode, path_var: Option<&OsStr>) -> bool",
+        "pub struct IntegrationsConfig",
+        "pub fn resolve_rtk_active(&self) -> bool",
+        "pub fn resolve_rtk_active_with_path(&self, path_var: Option<&OsStr>) -> bool",
+        "pub enum ModelKind",
+        "pub struct ModelConfig",
+        "pub enum RoleKind"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core"
+      "parent": "crates_ci-core",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_git",
@@ -371,16 +437,31 @@
       ],
       "key_symbols": [
         "pub struct GitStatusEntry",
+        "pub fn status_code(&self) -> String",
         "pub struct StalenessReport",
         "pub trait GitBackend",
+        "fn head_commit(&self, repo_root: &Path) -> Result<String>",
+        "fn remote_url(&self, repo_root: &Path) -> Result<Option<String>>",
+        "fn blob_sha(&self, repo_root: &Path, relative_path: &Path) -> Result<Option<String>>",
+        "fn status_porcelain_z(&self, repo_root: &Path) -> Result<Vec<GitStatusEntry>>",
+        "fn diff_name_only(&self, repo_root: &Path, from_commit: &str, to_commit: &str, ) -> Result<Vec<String>>",
+        "fn diff_stat(&self, repo_root: &Path, from_commit: &str, to_commit: &str, paths: &[String], ) -> Result<String>",
+        "fn current_branch(&self, _repo_root: &Path) -> Result<String>",
+        "fn merge_base(&self, _repo_root: &Path, _a: &str, _b: &str) -> Result<String>",
+        "fn log_oneline(&self, _repo_root: &Path, _from_commit: &str, _to_commit: &str, _limit: usize, ) -> Result<Vec<String>>",
+        "fn file_at(&self, _repo_root: &Path, _rev: &str, _path: &str) -> Result<Option<String>>",
+        "fn diff_file(&self, _repo_root: &Path, _from_commit: &str, _to_commit: &str, _path: &str, ) -> Result<String>",
         "pub struct SystemGitBackend",
+        "pub fn new() -> Self",
+        "pub fn with_binary(git_binary: impl Into<String>) -> Self",
         "pub fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitStatusEntry>",
         "pub fn parse_nul_paths(bytes: &[u8]) -> Vec<String>",
         "pub fn check_card_staleness(backend: &dyn GitBackend, repo_root: &Path, card: &OkfCard, ) -> Result<StalenessReport>",
         "pub fn check_frontmatter_staleness(backend: &dyn GitBackend, repo_root: &Path, frontmatter: &CardFrontmatter, ) -> Result<StalenessReport>"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core"
+      "parent": "crates_ci-core",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_openviking",
@@ -407,12 +488,19 @@
         "pub struct CardGeneratedBy",
         "pub struct CardFreshness",
         "pub struct CardFrontmatter",
+        "pub fn to_yaml(&self) -> String",
+        "pub fn parse_yaml(yaml_text: &str) -> Result<Self>",
         "pub struct OkfCard",
+        "pub fn new(mut frontmatter: CardFrontmatter, body: impl Into<String>) -> Self",
+        "pub fn parse(markdown: &str) -> Result<Self>",
+        "pub fn to_markdown(&self) -> String",
+        "pub fn l0_abstract(&self) -> String",
         "pub fn extract_l0_abstract(markdown: &str) -> String",
         "pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core"
+      "parent": "crates_ci-core",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_storage",
@@ -434,7 +522,7 @@
         }
       ],
       "key_symbols": [
-        "pub const CURRENT_L0_SCHEMA_VERSION: u32 = 3",
+        "pub const CURRENT_L0_SCHEMA_VERSION: u32 = 4",
         "pub fn normalize_path(path: impl AsRef<Path>) -> String",
         "pub fn normalize_path_str(raw: &str) -> String",
         "pub fn normalize_line_endings(text: &str) -> String",
@@ -442,11 +530,32 @@
         "pub fn compute_project_id(project_path: &Path, remote_url: Option<&str>) -> String",
         "pub fn hash_project_id(project_id: &str) -> String",
         "pub enum ProjectType",
+        "pub fn display_name(&self) -> &'static str",
         "pub struct SubsystemFile",
-        "pub struct SubsystemInfo"
+        "pub enum SummarySource",
+        "pub struct SubsystemInfo",
+        "pub const SUBSYSTEM_ID_PATTERN: &str = \"^[a-z0-9][a-z0-9_-]{0,63}$\"",
+        "pub fn validate_subsystem_id(id: &str) -> Result<()>",
+        "pub fn subsystem_card_path(knowledge_dir: &Path, id: &str) -> Result<PathBuf>",
+        "pub fn safe_join(base: &Path, rel: &str) -> Option<PathBuf>",
+        "pub fn now_rfc3339() -> String",
+        "pub struct ProjectCommands",
+        "pub struct GeneratorStamp",
+        "pub fn current() -> Self",
+        "pub struct L0Index",
+        "pub fn from_json_str(json: &str) -> Result<Self>",
+        "pub fn load_from_file(path: &Path) -> Result<Self>",
+        "pub fn to_json_pretty(&self) -> Result<String>",
+        "pub fn save_to_file(&self, path: &Path) -> Result<()>",
+        "pub fn subsystem_tokens(index: &L0Index, ids: &[&str]) -> usize",
+        "pub struct DriftReport",
+        "pub struct CopyKbOptions",
+        "pub struct CopyKbReport",
+        "pub fn copy_knowledge(src: &Path, dst: &Path, opts: &CopyKbOptions) -> Result<CopyKbReport>"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core"
+      "parent": "crates_ci-core",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-core_telemetry",
@@ -459,28 +568,55 @@
         "telemetry"
       ],
       "key_files": [
-        "crates/ci-core/src/telemetry.rs"
+        "crates/ci-core/src/telemetry.rs",
+        "crates/ci-core/src/telemetry/harness.rs"
       ],
       "files": [
         {
           "path": "crates/ci-core/src/telemetry.rs",
           "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/telemetry/harness.rs",
+          "is_entrypoint": false
         }
       ],
       "key_symbols": [
-        "pub const TELEMETRY_SCHEMA_VERSION: u32 = 1",
+        "pub const TELEMETRY_SCHEMA_VERSION: u32 = 2",
         "pub struct OperationalSignal",
+        "pub enum Channel",
+        "pub struct CallContext",
+        "pub enum ErrorClass",
+        "pub fn as_str(&self) -> &'static str",
+        "pub enum CallOutcome",
+        "pub fn classify_error(err: &anyhow :: Error) -> ErrorClass",
+        "pub struct Recorder",
+        "pub fn new(sink: Option<Arc<dyn TelemetrySink>>, project_id: Option<String>) -> Self",
+        "pub fn disabled() -> Self",
+        "pub fn record_call(&self, ctx: &CallContext, tool: &str, started: Instant, outcome: CallOutcome, )",
+        "pub fn is_active(&self) -> bool",
+        "pub fn record_efficiency(&self, sig: EfficiencySignal)",
+        "pub fn record(&self, signal: TelemetrySignal)",
+        "pub struct TelemetryScope",
+        "pub fn efficiency(&self, tool: &str, source_tokens: usize, response: &str, truncated: bool, cursor_hops: usize, stale: bool, empty_search: bool, )",
         "pub struct EfficiencySignal",
         "pub struct LlmSignal",
         "pub struct SessionPatternSignal",
         "pub struct FeedbackSignal",
         "pub enum TelemetrySignal",
         "pub struct TelemetryEvent",
+        "pub fn new(raw_or_hashed_project_id: &str, signal: TelemetrySignal) -> Self",
+        "pub fn with_timestamp(raw_or_hashed_project_id: &str, timestamp: impl Into<String>, signal: TelemetrySignal, ) -> Self",
+        "pub fn year_month(&self) -> String",
         "pub trait TelemetrySink",
+        "fn is_enabled(&self) -> bool",
+        "fn record(&self, event: &TelemetryEvent) -> Result<()>",
         "pub fn record_feedback(cfg: &crate :: config :: Config, storage: &crate :: config :: StoragePaths, project_id: &str, signal: FeedbackSignal, ) -> Result<bool>"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "parent": "crates_ci-core"
+      "parent": "crates_ci-core",
+      "summary_source": "manual",
+      "needs_review": true
     },
     {
       "id": "crates_ci-llm",
@@ -522,12 +658,26 @@
         "pub struct AgentWorkPackage",
         "pub struct ValidatedAgentOutput",
         "pub struct LlmRequest",
+        "pub fn new(role: RoleName, prompt: impl Into<String>) -> Self",
+        "pub fn with_system_prompt(mut self, system_prompt: impl Into<String>) -> Self",
+        "pub fn with_json_schema(mut self, json_schema: serde_json :: Value) -> Self",
+        "pub fn with_max_input_tokens(mut self, max_input_tokens: usize) -> Self",
+        "pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Self",
+        "pub fn with_facts(mut self, facts: serde_json :: Value) -> Self",
         "pub struct LlmResponse",
         "pub struct ProviderCapabilities",
         "pub trait LlmProvider",
-        "pub struct LlmExecutionError"
+        "fn complete(&self, req: &LlmRequest) -> Result<LlmResponse>",
+        "fn capabilities(&self) -> ProviderCapabilities",
+        "fn kind(&self) -> ModelKind",
+        "fn alias(&self) -> &str",
+        "pub struct LlmExecutionError",
+        "pub fn inspect_execution_error(err: &anyhow :: Error) -> Option<&LlmExecutionError>",
+        "pub fn estimate_tokens(text: &str) -> usize",
+        "pub fn estimate_request_tokens(req: &LlmRequest) -> usize"
       ],
-      "test_command": "rtk cargo test -p ci-llm"
+      "test_command": "rtk cargo test -p ci-llm",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-llm_decorators",
@@ -550,13 +700,28 @@
       ],
       "key_symbols": [
         "pub struct RetryDecorator",
+        "pub fn new<P: LlmProvider + 'static>(inner: P, max_retries: u32) -> Self",
+        "pub fn with_backoff_ms(mut self, backoff_ms: u64) -> Self",
+        "pub fn max_retries(&self) -> u32",
         "pub struct TimeoutDecorator",
+        "pub fn new<P: LlmProvider + 'static>(inner: P, default_timeout_ms: Option<u64>) -> Self",
+        "pub fn with_timeout_ms<P: LlmProvider + 'static>(inner: P, timeout_ms: u64) -> Self",
+        "pub fn default_timeout_ms(&self) -> Option<u64>",
         "pub struct TokenBudgetDecorator",
+        "pub fn new<P: LlmProvider + 'static>(inner: P, max_input_tokens: Option<usize>) -> Self",
+        "pub fn with_limit<P: LlmProvider + 'static>(inner: P, max_input_tokens: usize) -> Self",
+        "pub fn max_input_tokens(&self) -> Option<usize>",
         "pub struct LlmTelemetryRecord",
-        "pub struct TelemetryDecorator"
+        "pub struct TelemetryDecorator",
+        "pub fn new<P: LlmProvider + 'static>(inner: P, sink: Arc<dyn TelemetrySink>) -> Self",
+        "pub fn with_project_id(mut self, project_id: impl Into<String>) -> Self",
+        "pub fn with_fallback_used(mut self, fallback_used: bool) -> Self",
+        "pub fn records(&self) -> Vec<LlmTelemetryRecord>",
+        "pub fn last_record(&self) -> Option<LlmTelemetryRecord>"
       ],
       "test_command": "rtk cargo test -p ci-llm",
-      "parent": "crates_ci-llm"
+      "parent": "crates_ci-llm",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-llm_enrich",
@@ -579,11 +744,12 @@
       ],
       "key_symbols": [
         "pub enum EnrichOutcome",
-        "pub fn enrich_subsystems(router: &RoleRouter, prompts: &PromptTemplateRegistry, role: RoleName, analysis: &ProjectAnalysis, subsystems: &mut [SubsystemInfo], model_override: Option<&str>, ) -> EnrichOutcome",
+        "pub fn enrich_subsystems(router: &RoleRouter, prompts: &PromptTemplateRegistry, role: RoleName, analysis: &ProjectAnalysis, subsystems: &[SubsystemInfo], model_override: Option<&str>, ) -> EnrichOutcome",
         "pub fn cli_outcome_message(outcome: &EnrichOutcome) -> Option<String>"
       ],
       "test_command": "rtk cargo test -p ci-llm",
-      "parent": "crates_ci-llm"
+      "parent": "crates_ci-llm",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-llm_prompts",
@@ -607,12 +773,30 @@
         "pub enum PromptTemplateSource",
         "pub struct PromptTemplate",
         "pub struct PromptVars",
+        "pub fn with_facts(facts: impl Into<String>) -> Self",
+        "pub fn project(mut self, project: impl Into<String>) -> Self",
+        "pub fn query(mut self, query: impl Into<String>) -> Self",
+        "pub fn json_schema(mut self, json_schema: impl Into<String>) -> Self",
+        "pub fn structured_facts(mut self, facts: Value) -> Self",
         "pub struct RenderedPrompt",
         "pub struct PromptTemplateRegistry",
+        "pub fn new(language: impl Into<String>) -> Self",
+        "pub fn from_config(config: &Config, config_dir: Option<&Path>, repo_root: Option<&Path>, ) -> Result<Self>",
+        "pub fn load(language: impl Into<String>, config_dir: Option<&Path>, repo_root: Option<&Path>, ) -> Result<Self>",
+        "pub fn language(&self) -> &str",
+        "pub fn set_language(&mut self, language: impl Into<String>)",
+        "pub fn get(&self, role: RoleName) -> &PromptTemplate",
+        "pub fn set(&mut self, role: RoleName, template: PromptTemplate)",
+        "pub fn load_global_overrides(&mut self, config_dir: &Path) -> Result<()>",
+        "pub fn load_repo_overrides(&mut self, repo_root: &Path) -> Result<()>",
+        "pub fn render(&self, role: RoleName, vars: &PromptVars) -> RenderedPrompt",
+        "pub fn render_facts(&self, role: RoleName, facts: &str) -> RenderedPrompt",
+        "pub fn to_llm_request(&self, role: RoleName, vars: &PromptVars) -> LlmRequest",
         "pub fn language_instruction(language: &str) -> String"
       ],
       "test_command": "rtk cargo test -p ci-llm",
-      "parent": "crates_ci-llm"
+      "parent": "crates_ci-llm",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-llm_providers",
@@ -641,13 +825,34 @@
         "pub fn parse_subsystem_summaries(raw: &str) -> Result<Vec<SubsystemAiSummary>>",
         "pub fn is_ollama_online(endpoint: &str, timeout_ms: Option<u64>) -> bool",
         "pub struct OllamaProvider",
+        "pub fn new(alias: impl Into<String>, endpoint: impl Into<String>, model: impl Into<String>, ) -> Self",
+        "pub fn from_config(alias: impl Into<String>, cfg: &ModelConfig) -> Self",
+        "pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Self",
+        "pub fn with_max_input_tokens(mut self, max_input_tokens: usize) -> Self",
+        "pub fn endpoint(&self) -> Option<&str>",
+        "pub fn model(&self) -> Option<&str>",
+        "pub fn is_online(&self) -> bool",
+        "pub fn fetch_tags(&self) -> Result<Vec<String>>",
         "pub struct CommandProvider",
+        "pub fn new(alias: impl Into<String>, command: Vec<String>) -> Result<Self>",
+        "pub fn from_config(alias: impl Into<String>, cfg: &ModelConfig) -> Result<Self>",
+        "pub fn with_model(mut self, model: impl Into<String>) -> Self",
+        "pub fn command(&self) -> &[String]",
         "pub struct AgentProvider",
+        "pub fn new(alias: impl Into<String>) -> Self",
+        "pub fn build_work_package(&self, req: &LlmRequest) -> AgentWorkPackage",
         "pub fn validate_agent_submission(package: &AgentWorkPackage, submission: &Value, ) -> Result<ValidatedAgentOutput>",
-        "pub struct ExtensionPointError"
+        "pub struct ExtensionPointError",
+        "pub struct OpenAiCompatProvider",
+        "pub struct AnthropicProvider",
+        "pub struct GeminiProvider",
+        "pub struct SamplingProvider",
+        "pub struct ProviderFactory",
+        "pub fn create_raw(alias: &str, cfg: &ModelConfig) -> Result<Arc<dyn LlmProvider>>"
       ],
       "test_command": "rtk cargo test -p ci-llm",
-      "parent": "crates_ci-llm"
+      "parent": "crates_ci-llm",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-llm_router",
@@ -670,10 +875,25 @@
       ],
       "key_symbols": [
         "pub enum RoleExecutionOutcome",
-        "pub struct RoleRouter"
+        "pub fn is_deterministic(&self) -> bool",
+        "pub fn is_completed(&self) -> bool",
+        "pub fn fallback_used(&self) -> bool",
+        "pub fn into_response(self) -> Option<LlmResponse>",
+        "pub fn as_response(&self) -> Option<&LlmResponse>",
+        "pub struct RoleRouter",
+        "pub fn new(config: Config, telemetry: Option<Arc<dyn TelemetrySink>>) -> Result<Self>",
+        "pub fn with_registry(config: Config, registry: ProviderRegistry, telemetry: Option<Arc<dyn TelemetrySink>>, ) -> Self",
+        "pub fn with_project_id(mut self, project_id: impl Into<String>) -> Self",
+        "pub fn register_provider<P: LlmProvider + 'static>(&mut self, alias: impl Into<String>, provider: P, )",
+        "pub fn config(&self) -> &Config",
+        "pub fn registry(&self) -> &ProviderRegistry",
+        "pub fn resolve_chain(&self, role: RoleName, model_override: Option<&str>) -> Vec<String>",
+        "pub fn execute(&self, req: &LlmRequest, model_override: Option<&str>, ) -> Result<RoleExecutionOutcome>",
+        "pub fn complete_role(&self, req: &LlmRequest, model_override: Option<&str>, ) -> Result<Option<LlmResponse>>"
       ],
       "test_command": "rtk cargo test -p ci-llm",
-      "parent": "crates_ci-llm"
+      "parent": "crates_ci-llm",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-llm_schema",
@@ -701,7 +921,8 @@
         "pub fn default_role_json_schema(role: RoleName) -> Value"
       ],
       "test_command": "rtk cargo test -p ci-llm",
-      "parent": "crates_ci-llm"
+      "parent": "crates_ci-llm",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-mcp",
@@ -719,8 +940,7 @@
       ],
       "key_files": [
         "crates/ci-mcp/Cargo.toml",
-        "crates/ci-mcp/src/lib.rs",
-        "crates/ci-mcp/src/tools.rs"
+        "crates/ci-mcp/src/lib.rs"
       ],
       "files": [
         {
@@ -730,25 +950,15 @@
         {
           "path": "crates/ci-mcp/src/lib.rs",
           "is_entrypoint": true
-        },
-        {
-          "path": "crates/ci-mcp/src/tools.rs",
-          "is_entrypoint": false
         }
       ],
       "key_symbols": [
         "pub const VERSION: &str = env !(\"CARGO_PKG_VERSION\")",
-        "pub fn crate_info() -> String",
-        "pub struct McpCheckParams",
-        "pub struct McpCheckResult",
-        "pub struct McpGetSubsystemsParams",
-        "pub struct McpGetSubsystemParams",
-        "pub struct McpPackParams",
-        "pub struct McpSubmitParams",
-        "pub struct SubmitResult",
-        "pub struct McpFeedbackParams"
+        "pub fn crate_info() -> String"
       ],
-      "test_command": "rtk cargo test -p ci-mcp"
+      "test_command": "rtk cargo test -p ci-mcp",
+      "summary_source": "manual",
+      "needs_review": true
     },
     {
       "id": "crates_ci-mcp_handlers",
@@ -772,12 +982,34 @@
       "key_symbols": [
         "pub const PACK_ALL_MAX_PAGES: usize = 5",
         "pub struct ResolvedProject",
+        "pub fn load(root: PathBuf) -> Result<Self>",
+        "pub fn load_with(root: PathBuf, cli: &CliOverrides, extra_config: Option<&Path>, ) -> Result<Self>",
+        "pub fn recorder(&self, sink: Option<Arc<dyn TelemetrySink>>) -> Recorder",
+        "pub fn knowledge_dir_for(&self, mode: StorageMode) -> PathBuf",
+        "pub fn load_l0_index(&self) -> Result<L0Index>",
+        "pub fn card_file(&self, subsystem: &SubsystemInfo) -> Option<PathBuf>",
+        "pub fn check_subsystem_staleness(&self, subsystem: &SubsystemInfo) -> (bool, Option<String>)",
         "pub const DEFAULT_SEARCH_TOP_K: usize = 10",
         "pub struct HandlerReply",
-        "pub struct ContextHandler"
+        "pub struct SubmitReply",
+        "pub struct ContextHandler",
+        "pub fn check_drift(project: &ResolvedProject, cursor: Option<&str>) -> Result<String>",
+        "pub fn get_subsystems(project: &ResolvedProject, cursor: Option<&str>, tel: &TelemetryScope, ) -> Result<String>",
+        "pub fn get_subsystem(project: &ResolvedProject, subsystem_id: &str, cursor: Option<&str>, tel: &TelemetryScope, ) -> Result<String>",
+        "pub fn pack(project: &ResolvedProject, subsystem_id: &str, compress: bool, style: &str, cursor: Option<&str>, tel: &TelemetryScope, ) -> Result<String>",
+        "pub fn submit(project: &ResolvedProject, package_id: &str, work_package: Option<&AgentWorkPackage>, submission: &serde_json :: Value, ) -> Result<SubmitReply>",
+        "pub fn feedback(project: &ResolvedProject, tool: &str, verdict: &str, note: Option<&str>, telemetry_sink: Option<&dyn TelemetrySink>, ) -> Result<String>",
+        "pub fn scan(project: &ResolvedProject, cursor: Option<&str>) -> Result<String>",
+        "pub fn workspace(root: &Path, max_tokens: usize, cursor: Option<&str>) -> Result<String>",
+        "pub fn init(project: &ResolvedProject, params: &McpInitParams, router: &RoleRouter, ) -> Result<HandlerReply>",
+        "pub fn update(project: &ResolvedProject, params: &McpUpdateParams, router: &RoleRouter, ) -> Result<HandlerReply>",
+        "pub fn task(project: &ResolvedProject, paths: Option<&[String]>, base_ref: Option<&str>, target: Option<&str>, cursor: Option<&str>, tel: &TelemetryScope, ) -> Result<String>",
+        "pub fn search(project: &ResolvedProject, query: &str, cursor: Option<&str>, router: &RoleRouter, tel: &TelemetryScope, ) -> Result<String>",
+        "pub fn search_top_k(project: &ResolvedProject, query: &str, cursor: Option<&str>, router: &RoleRouter, top_k: usize, tel: &TelemetryScope, ) -> Result<String>"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
-      "parent": "crates_ci-mcp"
+      "parent": "crates_ci-mcp",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-mcp_pagination",
@@ -799,7 +1031,6 @@
         }
       ],
       "key_symbols": [
-        "pub fn count_tokens(text: &str) -> usize",
         "pub struct CursorData",
         "pub fn base64_url_encode(data: &[u8]) -> String",
         "pub fn base64_url_decode(input: &str) -> Option<Vec<u8>>",
@@ -810,7 +1041,8 @@
         "pub fn paginate_content(full_text: &str, cursor: Option<&str>, max_tokens: usize, stale: bool, ) -> PaginatedOutput"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
-      "parent": "crates_ci-mcp"
+      "parent": "crates_ci-mcp",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-mcp_pipeline",
@@ -841,10 +1073,13 @@
         "pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport>",
         "pub fn validate_model_override(config: &Config, model_override: Option<&str>) -> Result<()>",
         "pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<()>",
-        "pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>"
+        "pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>",
+        "pub fn subsystems_needing_enrichment(existing: &L0Index, fresh: &[SubsystemInfo]) -> Vec<String>",
+        "pub fn detect(project: &ResolvedProject, deep: bool) -> Result<ProjectAnalysis>"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
-      "parent": "crates_ci-mcp"
+      "parent": "crates_ci-mcp",
+      "summary_source": "manual"
     },
     {
       "id": "crates_ci-mcp_server",
@@ -868,12 +1103,76 @@
       ],
       "key_symbols": [
         "pub struct ContextInitServer",
+        "pub fn new(default_root: Option<PathBuf>) -> Self",
+        "pub fn stale_binary_footer(&self) -> Option<&'static str>",
+        "pub fn with_telemetry_sink(mut self, sink: Arc<dyn TelemetrySink>) -> Self",
+        "pub async fn add_root(&self, root: PathBuf)",
+        "pub async fn set_roots(&self, roots: Vec<PathBuf>)",
+        "pub async fn get_roots(&self) -> Vec<PathBuf>",
+        "pub async fn register_work_package(&self, pkg: AgentWorkPackage)",
+        "pub async fn resolve_project_root(&self, arg_path: Option<&str>, arg_project: Option<&str>, ) -> PathBuf",
+        "pub fn call_context(&self) -> CallContext",
+        "pub(crate) async fn instrumented<F, Fut>(&self, tool: &'static str, recorder: Recorder, f: F, ) -> Result<String, rmcp :: ErrorData> where F: FnOnce() -> Fut, Fut: Future<Output = anyhow :: Result<String>>,",
+        "pub async fn resolve_context(&self, arg_path: Option<&str>, arg_project: Option<&str>, ) -> ResolvedProject",
         "pub fn find_project_root_upward(start: &Path) -> Option<PathBuf>",
+        "pub async fn check_drift(&self, params: Parameters<McpCheckParams>, ) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn get_subsystems(&self, params: Parameters<McpGetSubsystemsParams>, ) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn get_subsystem(&self, params: Parameters<McpGetSubsystemParams>, ) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn pack(&self, params: Parameters<McpPackParams>) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn submit(&self, params: Parameters<McpSubmitParams>, ) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn feedback(&self, params: Parameters<McpFeedbackParams>, ) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn init(&self, params: Parameters<McpInitParams>) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn update(&self, params: Parameters<McpUpdateParams>, ) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn workspace(&self, params: Parameters<McpWorkspaceParams>, ) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn scan(&self, params: Parameters<McpScanParams>) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn task(&self, params: Parameters<McpTaskParams>) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn search(&self, params: Parameters<McpSearchParams>, ) -> Result<String, rmcp :: ErrorData>",
+        "pub async fn refresh_roots(&self, peer: &Peer<RoleServer>)",
         "pub fn roots_to_paths(roots: &[Root]) -> Vec<PathBuf>",
         "pub async fn run_mcp_server(default_root: Option<&Path>) -> Result<()>"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
-      "parent": "crates_ci-mcp"
+      "parent": "crates_ci-mcp",
+      "summary_source": "manual"
+    },
+    {
+      "id": "crates_ci-mcp_tools",
+      "name": "Ci Mcp Tools",
+      "summary": "Модуль-файл `crates/ci-mcp/src/tools.rs`",
+      "l1_path": "subsystems/crates_ci-mcp_tools.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-mcp_tools"
+      ],
+      "key_files": [
+        "crates/ci-mcp/src/tools.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-mcp/src/tools.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct McpCheckParams",
+        "pub struct McpCheckResult",
+        "pub struct McpGetSubsystemsParams",
+        "pub struct McpGetSubsystemParams",
+        "pub struct McpPackParams",
+        "pub struct McpSubmitParams",
+        "pub struct SubmitResult",
+        "pub struct McpFeedbackParams",
+        "pub struct FeedbackResult",
+        "pub struct McpInitParams",
+        "pub struct McpUpdateParams",
+        "pub struct McpScanParams",
+        "pub struct McpWorkspaceParams",
+        "pub struct McpTaskParams",
+        "pub struct McpSearchParams"
+      ],
+      "test_command": "rtk cargo test -p ci-mcp",
+      "parent": "crates_ci-mcp",
+      "summary_source": "heuristic"
     },
     {
       "id": "references",
@@ -892,7 +1191,8 @@
           "path": "references/openviking_spec.md",
           "is_entrypoint": false
         }
-      ]
+      ],
+      "summary_source": "manual"
     },
     {
       "id": "reports",
@@ -905,6 +1205,7 @@
       ],
       "key_files": [
         "reports/BENCHMARK_REPORT.md",
+        "reports/adoption_probe_2026-10.md",
         "reports/benchmark_latest.json"
       ],
       "files": [
@@ -913,10 +1214,16 @@
           "is_entrypoint": false
         },
         {
+          "path": "reports/adoption_probe_2026-10.md",
+          "is_entrypoint": false
+        },
+        {
           "path": "reports/benchmark_latest.json",
           "is_entrypoint": false
         }
-      ]
+      ],
+      "summary_source": "manual",
+      "needs_review": true
     },
     {
       "id": "reports_subagents",
@@ -966,7 +1273,8 @@
           "is_entrypoint": false
         }
       ],
-      "parent": "reports"
+      "parent": "reports",
+      "summary_source": "manual"
     },
     {
       "id": "reports_subagents_ci-core_verification",
@@ -986,7 +1294,8 @@
           "is_entrypoint": false
         }
       ],
-      "parent": "reports_subagents"
+      "parent": "reports_subagents",
+      "summary_source": "manual"
     },
     {
       "id": "reports_subagents_ci-llm_verification",
@@ -1006,7 +1315,8 @@
           "is_entrypoint": false
         }
       ],
-      "parent": "reports_subagents"
+      "parent": "reports_subagents",
+      "summary_source": "manual"
     },
     {
       "id": "reports_subagents_ci-mcp_verification",
@@ -1026,7 +1336,8 @@
           "is_entrypoint": false
         }
       ],
-      "parent": "reports_subagents"
+      "parent": "reports_subagents",
+      "summary_source": "manual"
     },
     {
       "id": "reports_subagents_context-init_verification",
@@ -1046,7 +1357,8 @@
           "is_entrypoint": false
         }
       ],
-      "parent": "reports_subagents"
+      "parent": "reports_subagents",
+      "summary_source": "manual"
     },
     {
       "id": "reports_subagents_step1_workspace_verification",
@@ -1067,7 +1379,78 @@
           "is_entrypoint": false
         }
       ],
-      "parent": "reports_subagents"
+      "parent": "reports_subagents",
+      "summary_source": "manual"
+    },
+    {
+      "id": "scripts",
+      "name": "Scripts",
+      "summary": "Модуль и компоненты директории `scripts` (8 файлов)",
+      "l1_path": "subsystems/scripts.md",
+      "tags": [
+        "Rust (Cargo)",
+        "scripts"
+      ],
+      "key_files": [
+        "scripts/audit-sessions.py",
+        "scripts/probe-adoption.sh",
+        "scripts/probes/01-telemetry-wiring.md",
+        "scripts/probes/02-card-rendering.md",
+        "scripts/probes/03-agent-handoff-flow.md",
+        "scripts/probes/04-default-tokens.md",
+        "scripts/probes/05-search-boost.md",
+        "scripts/tests/test_audit_sessions.py"
+      ],
+      "files": [
+        {
+          "path": "scripts/audit-sessions.py",
+          "is_entrypoint": false
+        },
+        {
+          "path": "scripts/probe-adoption.sh",
+          "is_entrypoint": false
+        },
+        {
+          "path": "scripts/probes/01-telemetry-wiring.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "scripts/probes/02-card-rendering.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "scripts/probes/03-agent-handoff-flow.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "scripts/probes/04-default-tokens.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "scripts/probes/05-search-boost.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "scripts/tests/test_audit_sessions.py",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "def new_counters() -> Dict[str, int]",
+        "def read_subagent_type(jsonl_path: Path) -> str",
+        "def iter_tool_uses(line: str) -> Iterable[Tuple[str, dict]]",
+        "def audit_transcript_file(jsonl_path: Path, counts: Dict[str, int]) -> None",
+        "def audit_claude_dir( claude_dir: Path, project_substr: Optional[str] ) -> Dict[str, Dict[str, Dict[str, int]]]",
+        "def resolve_antigravity_dirs(arg: Optional[str]) -> List[Path]",
+        "def audit_antigravity(dirs: Iterable[Path]) -> Tuple[int, Counter]",
+        "def format_json_output( claude_results: Dict[str, Dict[str, Dict[str, int]]], ag_dbs: int, ag_tools: Counter, ) -> str",
+        "def format_table_output( claude_results: Dict[str, Dict[str, Dict[str, int]]], ag_dbs: int, ag_tools: Counter, ) -> str",
+        "def fmt_row(cells: List[str]) -> str",
+        "def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace",
+        "def main(argv: Optional[List[str]] = None) -> int",
+        "def fmt_row(...): parts = [] for i, cell in enumerate(cells): if i in (2, 4, 5): # numeric columns right-aligned parts.append(cell.rjust(widths[i])) else: parts.append(cell.ljust(widths[i])) return \" \".join(parts) print(\"\") print(fmt_row(headers)) print(\" \".join(\"-\" * w for w ..."
+      ],
+      "summary_source": "heuristic"
     },
     {
       "id": "src_cli",
@@ -1158,7 +1541,10 @@
       ],
       "key_symbols": [
         "pub struct GlobalArgs",
+        "pub fn overrides(&self, rtk: Option<RtkMode>) -> Result<CliOverrides>",
+        "pub fn load_project(&self, path: &Path, rtk: Option<RtkMode>) -> Result<ResolvedProject>",
         "pub fn router_for(project: &ResolvedProject) -> Result<RoleRouter>",
+        "pub fn telemetry_scope(project: &ResolvedProject) -> TelemetryScope",
         "pub fn run() -> Result<ExitCode>",
         "pub struct CheckArgs",
         "pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode>",
@@ -1166,8 +1552,26 @@
         "pub enum ConfigCommand",
         "pub fn run(global: &GlobalArgs, args: &ConfigArgs) -> Result<ExitCode>",
         "pub struct FeedbackArgs",
-        "pub fn run(global: &GlobalArgs, args: &FeedbackArgs) -> Result<ExitCode>"
-      ]
+        "pub fn run(global: &GlobalArgs, args: &FeedbackArgs) -> Result<ExitCode>",
+        "pub struct RtkArgs",
+        "pub struct InitArgs",
+        "pub struct UpdateArgs",
+        "pub fn run_init(global: &GlobalArgs, args: &InitArgs) -> Result<ExitCode>",
+        "pub fn run_update(global: &GlobalArgs, args: &UpdateArgs) -> Result<ExitCode>",
+        "pub struct McpArgs",
+        "pub fn run(args: &McpArgs) -> Result<ExitCode>",
+        "pub struct MigrateArgs",
+        "pub fn run(global: &GlobalArgs, args: &MigrateArgs) -> Result<ExitCode>",
+        "pub fn banner(subtitle: &str)",
+        "pub fn analysis_summary(analysis: &ProjectAnalysis)",
+        "pub fn notice(msg: &str)",
+        "pub struct PackArgs",
+        "pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode>",
+        "pub struct ScanArgs",
+        "pub fn run(global: &GlobalArgs, args: &ScanArgs) -> Result<ExitCode>",
+        "pub struct SearchArgs"
+      ],
+      "summary_source": "manual"
     },
     {
       "id": "src_cli_setup",
@@ -1217,14 +1621,35 @@
         "pub enum SetupTarget",
         "pub struct SetupPlan",
         "pub fn plan_setup(h: Harness, dirs: &HomeDirs, exe: &Path) -> Result<SetupPlan>",
+        "pub fn plan_setup_with_rtk(h: Harness, dirs: &HomeDirs, exe: &Path, rtk: bool, ) -> Result<SetupPlan>",
         "pub fn run(args: &SetupArgs) -> Result<ExitCode>",
         "pub struct HomeDirs",
+        "pub fn from_env() -> Result<Self>",
         "pub enum Harness",
+        "pub fn name(self) -> &'static str",
         "pub enum ConfigFormat",
         "pub enum RuleTarget",
-        "pub struct HarnessSpec"
+        "pub struct HarnessSpec",
+        "pub fn spec(h: Harness, dirs: &HomeDirs) -> HarnessSpec",
+        "pub fn is_installed(h: Harness, dirs: &HomeDirs) -> bool",
+        "pub fn server_entry(h: Harness, exe: &Path) -> Value",
+        "pub const SERVER_NAME: &str = \"context-init\"",
+        "pub fn merge_json(existing: Option<&str>, entry: Value) -> Result<String>",
+        "pub fn merge_toml(existing: Option<&str>, exe: &Path) -> Result<String>",
+        "pub const DIFF_MAX_LINES: usize = 200",
+        "pub const DIFF_MAX_LINE_CHARS: usize = 200",
+        "pub struct PlannedWrite",
+        "pub fn new(path: PathBuf, new: String) -> Result<Self>",
+        "pub fn is_noop(&self) -> bool",
+        "pub fn unified_diff(&self) -> String",
+        "pub fn apply(&self, stamp: &str) -> Result<Option<PathBuf>>",
+        "pub fn atomic_write_str(path: &Path, content: &str) -> Result<()>",
+        "pub const RULE_TEMPLATE: &str = include_str !(\"rule_template.md\")",
+        "pub const BEGIN_MARKER: &str = \"<!-- context-init:begin -->\"",
+        "pub const END_MARKER: &str = \"<!-- context-init:end -->\""
       ],
-      "parent": "src_cli"
+      "parent": "src_cli",
+      "summary_source": "manual"
     },
     {
       "id": "tests",
@@ -1237,25 +1662,6 @@
         "tests"
       ],
       "key_files": [
-        "tests/cli.rs"
-      ],
-      "files": [
-        {
-          "path": "tests/cli.rs",
-          "is_entrypoint": false
-        }
-      ]
-    },
-    {
-      "id": "tests_regression_benchmark",
-      "name": "Регрессионный бенчмарк",
-      "summary": "Бенчмарк экономии токенов и качества базы знаний; результаты пишутся в reports/.",
-      "l1_path": "subsystems/tests_regression_benchmark.md",
-      "tags": [
-        "benchmark",
-        "tests"
-      ],
-      "key_files": [
         "tests/regression_benchmark.rs"
       ],
       "files": [
@@ -1264,7 +1670,30 @@
           "is_entrypoint": false
         }
       ],
-      "parent": "tests"
+      "summary_source": "manual",
+      "needs_review": true
+    },
+    {
+      "id": "tests_cli",
+      "name": "Tests Cli",
+      "summary": "Тесты для `tests`",
+      "l1_path": "subsystems/tests_cli.md",
+      "tags": [
+        "Rust (Cargo)",
+        "tests",
+        "tests_cli"
+      ],
+      "key_files": [
+        "tests/cli.rs"
+      ],
+      "files": [
+        {
+          "path": "tests/cli.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "parent": "tests",
+      "summary_source": "heuristic"
     }
   ],
   "core_rules": [
@@ -1272,5 +1701,9 @@
     "Код должен проходить `rtk cargo clippy --all-targets` и `rtk cargo fmt --check` без ошибок.",
     "Использование `unsafe` запрещено без исчерпывающего комментария безопасности `// SAFETY:`.",
     "Публичные структуры и функции должны сопровождаться docstring (`///`)."
-  ]
+  ],
+  "generator": {
+    "version": "0.3.0",
+    "build": "fff7dd1-dirty"
+  }
 }

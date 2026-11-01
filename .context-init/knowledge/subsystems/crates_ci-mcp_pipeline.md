@@ -2,11 +2,11 @@
 directory: crates/ci-mcp/src/pipeline.rs
 source:
   kind: git
-  blob_sha: 830493844001bbb8dc674c0399ad8a321a7c1699
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  blob_sha: 975d0854e99b8019f6b75df84470edc480938354
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Mcp Pipeline (L1)
+# Подсистема: Конвейер init/update (L1)
 
-Модуль-файл `crates/ci-mcp/src/pipeline.rs`
+run_init / run_update: анализ, обогащение ролями, генерация базы и AGENTS.md; FullDriftReport объединяет файловый и git-дрейф.
 
 > **Идентификатор:** `crates_ci-mcp_pipeline`
-> **Теги:** Rust (Cargo), crates_ci-mcp_pipeline
+> **Теги:** drift, init, pipeline, update
 
 ## 📁 Точки входа и структура файлов
 
@@ -39,6 +39,8 @@ pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport>
 pub fn validate_model_override(config: &Config, model_override: Option<&str>) -> Result<()>
 pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<()>
 pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>
+pub fn subsystems_needing_enrichment(existing: &L0Index, fresh: &[SubsystemInfo]) -> Vec<String>
+pub fn detect(project: &ResolvedProject, deep: bool) -> Result<ProjectAnalysis>
 ```
 
 ## 🧪 Запуск и тестирование

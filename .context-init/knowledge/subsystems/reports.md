@@ -2,11 +2,11 @@
 directory: reports
 source:
   kind: git
-  blob_sha: aa35cde18357260adcf9de2f284748d8e369751a
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  blob_sha: a2f8a1e2454b9e5454bbdf23314c9c81f9cb4b0b
+  commit_sha: 04e787fc09f8a1918eaa133e0f27e78243d42c89
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 2
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Reports (L1)
+# Подсистема: Отчёты бенчмарков (L1)
 
-Модуль и компоненты директории `reports` (2 файлов)
+BENCHMARK_REPORT.md и benchmark_latest.json — результаты регрессионного бенчмарка (токены, точность).
 
 > **Идентификатор:** `reports`
-> **Теги:** Rust (Cargo), reports
+> **Теги:** benchmark, reports
 
 ## 📁 Точки входа и структура файлов
 
@@ -31,5 +31,5 @@ freshness:
 
 ## 🧪 Запуск и тестирование
 ```bash
-rtk cargo test
+cargo test
 ```

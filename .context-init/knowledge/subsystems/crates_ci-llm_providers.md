@@ -2,11 +2,11 @@
 directory: crates/ci-llm/src/providers.rs
 source:
   kind: git
-  blob_sha: c6b88401c4a5d569f7eed2a59344270d1ac76f7f
-  commit_sha: 4f153c6ee310b681808626eb7348ac3ca484e21d
+  blob_sha: 30b43bb6b2a11e2d8883675d048666e87a570413
+  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Ci Llm Providers (L1)
+# Подсистема: LLM-провайдеры (L1)
 
-Модуль-файл `crates/ci-llm/src/providers.rs`
+Провайдеры ollama, command и agent (handoff через context_submit); заглушки openai_compat/anthropic/gemini; парсинг SubsystemAiSummary, healthcheck Ollama, таймаут 60 с по умолчанию.
 
 > **Идентификатор:** `crates_ci-llm_providers`
-> **Теги:** Rust (Cargo), crates_ci-llm_providers
+> **Теги:** agent, command, llm, ollama
 
 ## 📁 Точки входа и структура файлов
 
