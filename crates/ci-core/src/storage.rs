@@ -1,4 +1,5 @@
-//! Central storage primitives, `project-id` calculation, `L0Index` v2 schema, and in-repo migration (D1, D2, D23, D28).
+//! Central storage primitives, `project-id` calculation, the `L0Index` schema (v4, with v3
+//! migrated on load), and in-repo migration (D1, D2, D23, D28).
 
 pub use crate::config::StoragePaths;
 pub use crate::openviking::{
@@ -410,8 +411,9 @@ impl GeneratorStamp {
     }
 }
 
-/// Root L0 index structure stored in `L0_index.json` (D23). Only
-/// `CURRENT_L0_SCHEMA_VERSION` is readable; older bases must be rebuilt with `init --force`.
+/// Root L0 index structure stored in `L0_index.json` (D23). `CURRENT_L0_SCHEMA_VERSION` and
+/// v3 (migrated in memory by [`L0Index::from_json_str`]) are readable; older bases must be
+/// rebuilt with `init --force`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct L0Index {
     #[serde(default = "default_json_schema_uri", rename = "$schema")]

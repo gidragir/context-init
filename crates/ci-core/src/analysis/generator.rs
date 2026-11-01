@@ -4,7 +4,7 @@ use crate::config::StorageMode;
 use crate::git::{GitBackend, SystemGitBackend};
 use crate::openviking::{CardFreshness, CardFrontmatter, CardGeneratedBy, CardSource, OkfCard};
 use crate::storage::{
-    now_rfc3339, safe_join, DriftReport, GeneratorStamp, L0Index, SubsystemInfo,
+    now_rfc3339, safe_join, DriftReport, GeneratorStamp, L0Index, SubsystemInfo, SummarySource,
     CURRENT_L0_SCHEMA_VERSION,
 };
 use anyhow::{Context, Result};
@@ -132,9 +132,97 @@ pub fn render_subsystem_card_okf(
     OkfCard::new(frontmatter, render_subsystem_card(sub, analysis)).to_markdown()
 }
 
+/// Card for `sub` with `generated_by` reflecting where its summary came from: `agent`/`llm`
+/// for those sources, `role` otherwise; the model is `summary_model` or `none`.
 fn render_card_for(sub: &SubsystemInfo, analysis: &ProjectAnalysis, role: &str) -> String {
     let shas = git_source_shas(&analysis.root_dir, &subsystem_directory(sub));
-    render_subsystem_card_okf(sub, analysis, shas, role, "none")
+    let role = match sub.summary_source {
+        SummarySource::Agent => "agent",
+        SummarySource::Llm => "llm",
+        SummarySource::Heuristic | SummarySource::Manual => role,
+    };
+    let model = sub.summary_model.as_deref().unwrap_or("none");
+    render_subsystem_card_okf(sub, analysis, shas, role, model)
+}
+
+/// Content of the card to write for `sub`: the card on disk when it only differs in
+/// provenance noise and Git agrees it is current, else a fresh render.
+fn card_content(
+    card: &Path,
+    sub: &SubsystemInfo,
+    analysis: &ProjectAnalysis,
+    role: &str,
+) -> String {
+    let fresh = render_card_for(sub, analysis, role);
+    match fs::read_to_string(card) {
+        // An equal card is kept only while Git agrees it is current: sources committed
+        // since `commit_sha` need a restamp even when the blob matches.
+        Ok(disk) if same_card(&disk, &fresh) && !is_git_stale(&disk, &analysis.root_dir) => disk,
+        _ => fresh,
+    }
+}
+
+/// Whether the card at `card` is untouched generator output for `sub` (a missing card counts
+/// as untouched).
+fn card_is_pristine(card: &Path, sub: &SubsystemInfo, analysis: &ProjectAnalysis) -> bool {
+    fs::read_to_string(card).map_or(true, |disk| {
+        is_pristine_card(&disk, &render_subsystem_card(sub, analysis))
+    })
+}
+
+/// Sorted file paths of a subsystem, for detecting a changed file set.
+fn file_paths(sub: &SubsystemInfo) -> Vec<&str> {
+    let mut paths: Vec<&str> = sub.files.iter().map(|f| f.path.as_str()).collect();
+    paths.sort_unstable();
+    paths
+}
+
+/// Writes every `(path, content)` whose bytes differ, all-or-nothing per file: every
+/// content goes to a temporary file in its target's directory first, and only when all
+/// of them are written are they renamed over their targets, in order. A failure while
+/// writing the temporaries leaves every target untouched; temporaries are always removed.
+/// Put the file that commits the change (the index) last.
+fn commit_files(files: &[(std::path::PathBuf, String)]) -> Result<()> {
+    let pending: Vec<_> = files
+        .iter()
+        .filter(|(p, c)| fs::read(p).ok().as_deref() != Some(c.as_bytes()))
+        .collect();
+    let mut staged: Vec<(std::path::PathBuf, &Path)> = Vec::with_capacity(pending.len());
+    let cleanup = |staged: &[(std::path::PathBuf, &Path)]| {
+        for (tmp, _) in staged {
+            let _ = fs::remove_file(tmp);
+        }
+    };
+    for (n, (target, content)) in pending.iter().enumerate() {
+        let written = (|| -> Result<std::path::PathBuf> {
+            let parent = target
+                .parent()
+                .with_context(|| format!("Нет родительского каталога у {:?}", target))?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Не удалось создать {:?}", parent))?;
+            let name = target
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let tmp = parent.join(format!(".{name}.{}.{n}.tmp", std::process::id()));
+            fs::write(&tmp, content).with_context(|| format!("Не удалось записать {:?}", tmp))?;
+            Ok(tmp)
+        })();
+        match written {
+            Ok(tmp) => staged.push((tmp, target.as_path())),
+            Err(e) => {
+                cleanup(&staged);
+                return Err(e);
+            }
+        }
+    }
+    for (i, (tmp, target)) in staged.iter().enumerate() {
+        if let Err(e) = fs::rename(tmp, target) {
+            cleanup(&staged[i..]);
+            return Err(e).with_context(|| format!("Не удалось заменить {:?}", target));
+        }
+    }
+    Ok(())
 }
 
 /// Whether `disk` is the same card as `fresh` apart from provenance noise: body, directory and
@@ -393,6 +481,10 @@ pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftRe
 /// change nothing is written (`updated_at` included). Only a real difference bumps
 /// `updated_at` and rewrites the files whose bytes changed. Cards that are not
 /// generator output (hand- or agent-edited) are left alone.
+///
+/// Summaries follow their provenance: only a `Heuristic` summary is refreshed from the
+/// detector (one that lost its generated prefix is reclassified `Manual` and kept); any
+/// other summary is kept and flagged `needs_review` when the subsystem's file set changed.
 pub fn update(
     analysis: &ProjectAnalysis,
     new_subsystems: &[SubsystemInfo],
@@ -439,14 +531,27 @@ pub fn update(
                         || new_sub.id == "src_main"))
         }) {
             if let Some(card) = safe_join(&base_dir, &existing.l1_path) {
-                let pristine = fs::read_to_string(&card).map_or(true, |disk| {
-                    is_pristine_card(&disk, &render_subsystem_card(existing, &old_analysis))
-                });
-                if pristine {
+                if card_is_pristine(&card, existing, &old_analysis) {
                     pristine_ids.push(existing.id.clone());
                 }
             }
-            // Обновляем технические поля, сохраняя ручное резюме если оно есть
+            if existing.summary_source == SummarySource::Heuristic {
+                let generated = GENERATED_SUMMARY_PREFIXES
+                    .iter()
+                    .any(|p| existing.summary.starts_with(p));
+                if generated {
+                    existing.summary = new_sub.summary.clone();
+                } else {
+                    // Edited by hand without touching provenance: never overwrite it.
+                    existing.summary_source = SummarySource::Manual;
+                }
+            }
+            if existing.summary_source != SummarySource::Heuristic
+                && file_paths(existing) != file_paths(new_sub)
+            {
+                existing.needs_review = true;
+            }
+            // Technical fields always follow the detector.
             existing.files = new_sub.files.clone();
             existing.entrypoints = new_sub.entrypoints.clone();
             existing.key_files = new_sub.key_files.clone();
@@ -454,12 +559,6 @@ pub fn update(
             existing.test_command = new_sub.test_command.clone();
             existing.tokens = new_sub.tokens;
             existing.parent = new_sub.parent.clone();
-            if GENERATED_SUMMARY_PREFIXES
-                .iter()
-                .any(|p| existing.summary.starts_with(p))
-            {
-                existing.summary = new_sub.summary.clone();
-            }
             updated_count += 1;
         } else {
             new_ids.push(new_sub.id.clone());
@@ -492,17 +591,7 @@ pub fn update(
         };
         let owned = new_ids.contains(&sub.id) || pristine_ids.contains(&sub.id);
         if owned {
-            let fresh = render_card_for(sub, analysis, "update");
-            let content = match fs::read_to_string(&card) {
-                // An equal card is kept only while Git agrees it is current: sources committed
-                // since `commit_sha` need a restamp even when the blob matches.
-                Ok(disk)
-                    if same_card(&disk, &fresh) && !is_git_stale(&disk, &analysis.root_dir) =>
-                {
-                    disk
-                }
-                _ => fresh,
-            };
+            let content = card_content(&card, sub, analysis, "update");
             rendered.push((card, content));
         }
     }
@@ -520,6 +609,7 @@ pub fn update(
 
     if changed {
         index.updated_at = chrono_like_date();
+        index.generator = Some(GeneratorStamp::current());
         for (path, content) in &rendered {
             write_if_changed(path, content)?;
         }
@@ -540,6 +630,116 @@ pub fn update(
     }
 
     Ok((added_count, updated_count))
+}
+
+/// New summary for one subsystem, merged by [`apply_summaries`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SummaryUpdate {
+    pub id: String,
+    pub name: Option<String>,
+    pub summary: String,
+    pub tags: Option<Vec<String>>,
+}
+
+/// Merges `updates` into the knowledge base in `knowledge_dir` with provenance
+/// `source`/`model` (clearing `needs_review`) and re-renders what depends on them: the
+/// cards that were untouched generator output, `L0_index.md`, `L0_index.json` and, with
+/// `agents_md`, the navigation section of `AGENTS.md`. Returns the number of subsystems
+/// updated.
+///
+/// Whether a card is untouched is judged against the render of the index *before* the
+/// merge: judged after it, every card would look hand-edited and freeze forever.
+///
+/// Rejects the whole call, writing nothing, when any id is not in the index. Files are
+/// written through [`commit_files`] (temporary files, then `rename`; index last).
+pub fn apply_summaries(
+    analysis: &ProjectAnalysis,
+    knowledge_dir: &Path,
+    updates: &[SummaryUpdate],
+    source: SummarySource,
+    model: Option<&str>,
+    agents_md: Option<StorageMode>,
+) -> Result<usize> {
+    let l0_path = knowledge_dir.join("L0_index.json");
+    let mut index = L0Index::load_from_file(&l0_path)?;
+    let unknown: Vec<&str> = updates
+        .iter()
+        .filter(|u| !index.subsystems.iter().any(|s| s.id == u.id))
+        .map(|u| u.id.as_str())
+        .collect();
+    if !unknown.is_empty() {
+        anyhow::bail!(
+            "Подсистемы отсутствуют в индексе: {}; сводки не применены",
+            unknown.join(", ")
+        );
+    }
+    // Cards were rendered with the commands recorded in the index, not today's analysis.
+    let card_analysis = ProjectAnalysis {
+        commands: index.commands.clone(),
+        ..analysis.clone()
+    };
+
+    let before = index.clone();
+    let mut applied: Vec<String> = Vec::new();
+    let mut pristine: Vec<String> = Vec::new();
+    for upd in updates {
+        let sub = index
+            .subsystems
+            .iter_mut()
+            .find(|s| s.id == upd.id)
+            .expect("ids validated above");
+        // Judged once, before the first merge into this subsystem.
+        if !applied.contains(&sub.id) {
+            applied.push(sub.id.clone());
+            if safe_join(knowledge_dir, &sub.l1_path)
+                .is_some_and(|card| card_is_pristine(&card, sub, &card_analysis))
+            {
+                pristine.push(sub.id.clone());
+            }
+        }
+        if let Some(name) = &upd.name {
+            sub.name = name.clone();
+        }
+        sub.summary = upd.summary.clone();
+        if let Some(tags) = &upd.tags {
+            sub.tags = tags.clone();
+        }
+        sub.summary_source = source;
+        sub.summary_model = model.map(str::to_string);
+        sub.needs_review = false;
+    }
+    normalize_index(&mut index);
+    if index != before {
+        index.updated_at = chrono_like_date();
+    }
+    index.generator = Some(GeneratorStamp::current());
+
+    let mut files: Vec<(std::path::PathBuf, String)> = Vec::new();
+    for sub in &index.subsystems {
+        if !pristine.contains(&sub.id) {
+            continue;
+        }
+        if let Some(card) = safe_join(knowledge_dir, &sub.l1_path) {
+            // Always a fresh render: `generated_by` must follow the new provenance even when
+            // the summary text itself is unchanged.
+            files.push((card, render_card_for(sub, &card_analysis, "update")));
+        }
+    }
+    files.push((
+        knowledge_dir.join("L0_index.md"),
+        render_l0_markdown(&index, &index.updated_at),
+    ));
+    if let Some(mode) = agents_md {
+        files.push((
+            analysis.root_dir.join("AGENTS.md"),
+            render_root_agents_md(&analysis.root_dir, &analysis.name, &index.subsystems, mode),
+        ));
+    }
+    // The index commits the change: written last, so a failed rename before it leaves the
+    // old index, against which a retry re-applies the same updates.
+    files.push((l0_path, render_l0_json(&index)?));
+    commit_files(&files)?;
+    Ok(applied.len())
 }
 
 fn render_l0_markdown(index: &L0Index, date: &str) -> String {
@@ -724,6 +924,18 @@ fn update_or_create_root_agents_md(
     subsystems: &[SubsystemInfo],
     mode: StorageMode,
 ) -> Result<()> {
+    let content = render_root_agents_md(root, project_name, subsystems, mode);
+    write_if_changed(&root.join("AGENTS.md"), &content)?;
+    Ok(())
+}
+
+/// `AGENTS.md` at `root` with its navigation section replaced (or appended, or a new file).
+fn render_root_agents_md(
+    root: &Path,
+    project_name: &str,
+    subsystems: &[SubsystemInfo],
+    mode: StorageMode,
+) -> String {
     let agents_path = root.join("AGENTS.md");
     let section_header = "## 🗺 Архитектурная карта и навигация (OpenViking L0-L2)";
 
@@ -754,7 +966,7 @@ fn update_or_create_root_agents_md(
         map_content.push_str(&format!("- `{}` ({}) — {}\n", s.id, s.name, s.summary));
     }
 
-    let content = if agents_path.exists() {
+    if agents_path.exists() {
         let existing = fs::read_to_string(&agents_path).unwrap_or_default();
         if let Some(idx) = existing.find("## 🗺 Архитектурная карта и навигация")
         {
@@ -772,10 +984,7 @@ fn update_or_create_root_agents_md(
         );
         initial.push_str(&map_content);
         initial
-    };
-    write_if_changed(&agents_path, &content)?;
-
-    Ok(())
+    }
 }
 
 /// Turns a module path into a subsystem id matching `SUBSYSTEM_ID_PATTERN`.
@@ -1430,6 +1639,177 @@ mod tests {
             let report = check_card_staleness(&SystemGitBackend::new(), &root, &card).unwrap();
             assert!(!report.stale, "{} stale after update: {report:?}", sub.id);
         }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn agent_update(id: &str) -> SummaryUpdate {
+        SummaryUpdate {
+            id: id.to_string(),
+            name: None,
+            summary: "Новая сводка".to_string(),
+            tags: None,
+        }
+    }
+
+    fn load_sub(kd: &Path, id: &str) -> SubsystemInfo {
+        L0Index::load_from_file(&kd.join("L0_index.json"))
+            .unwrap()
+            .subsystems
+            .into_iter()
+            .find(|s| s.id == id)
+            .unwrap()
+    }
+
+    /// `generate` + one agent summary applied to the first subsystem; returns its id.
+    fn applied_base(root: &Path) -> String {
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(root);
+        generate(&analysis, &subs, &kd, &agents_opts()).unwrap();
+        let id = subs[0].id.clone();
+        let n = apply_summaries(
+            &analysis,
+            &kd,
+            &[agent_update(&id)],
+            crate::storage::SummarySource::Agent,
+            Some("agent"),
+            Some(StorageMode::Repo),
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        id
+    }
+
+    #[test]
+    fn apply_summaries_rerenders_l1_l0_and_agents() {
+        let root = quiet_root("apply");
+        let kd = root.join(".context-init/knowledge");
+        let id = applied_base(&root);
+        let card_text = fs::read_to_string(kd.join(format!("subsystems/{id}.md"))).unwrap();
+        assert!(card_text.contains("Новая сводка"), "{card_text}");
+        let card = OkfCard::parse(&card_text).unwrap();
+        assert_eq!(card.frontmatter.generated_by.role, "agent");
+        assert_eq!(card.frontmatter.generated_by.model, "agent");
+        let l0_md = fs::read_to_string(kd.join("L0_index.md")).unwrap();
+        assert!(l0_md.contains("Новая сводка"), "{l0_md}");
+        let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(agents.contains("Новая сводка"), "{agents}");
+        let sub = load_sub(&kd, &id);
+        assert_eq!(sub.summary_source, crate::storage::SummarySource::Agent);
+        assert_eq!(sub.summary_model.as_deref(), Some("agent"));
+        assert!(!sub.needs_review);
+        let leftovers: Vec<_> = fs::read_dir(kd.join("subsystems"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left: {leftovers:?}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_after_apply_keeps_agent_summary() {
+        let root = quiet_root("apply_update");
+        let kd = root.join(".context-init/knowledge");
+        let id = applied_base(&root);
+        let card_path = kd.join(format!("subsystems/{id}.md"));
+        let card_before = fs::read_to_string(&card_path).unwrap();
+        let (analysis, subs) = deterministic(&root);
+        update(&analysis, &subs, &kd, Some(StorageMode::Repo)).unwrap();
+        let sub = load_sub(&kd, &id);
+        assert_eq!(sub.summary, "Новая сводка");
+        assert_eq!(sub.summary_source, crate::storage::SummarySource::Agent);
+        assert!(!sub.needs_review);
+        assert_eq!(fs::read_to_string(&card_path).unwrap(), card_before);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_marks_needs_review_on_file_change() {
+        let root = quiet_root("apply_review");
+        let kd = root.join(".context-init/knowledge");
+        let id = applied_base(&root);
+        let first_file = load_sub(&kd, &id).files[0].path.clone();
+        let dir = root.join(Path::new(&first_file).parent().unwrap());
+        fs::write(dir.join("extra.rs"), "pub fn extra() {}\n").unwrap();
+        let (analysis, subs) = deterministic(&root);
+        let fresh = subs.iter().find(|s| s.id == id).unwrap();
+        assert!(fresh.files.iter().any(|f| f.path.ends_with("extra.rs")));
+        update(&analysis, &subs, &kd, None).unwrap();
+        let sub = load_sub(&kd, &id);
+        assert!(sub.needs_review);
+        assert_eq!(sub.summary, "Новая сводка");
+        assert_eq!(sub.summary_source, crate::storage::SummarySource::Agent);
+        let card = fs::read_to_string(kd.join(&sub.l1_path)).unwrap();
+        assert!(
+            card.contains("Новая сводка") && card.contains("extra.rs"),
+            "{card}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn manual_summary_survives_update() {
+        let root = quiet_root("manual_v3");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+        let id = subs[0].id.clone();
+        // Hand-edit the summary in both index and card, then downgrade the index to v3.
+        let card_path = kd.join(format!("subsystems/{id}.md"));
+        let card = fs::read_to_string(&card_path)
+            .unwrap()
+            .replace(&subs[0].summary, "Ручное описание");
+        fs::write(&card_path, &card).unwrap();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(kd.join("L0_index.json")).unwrap()).unwrap();
+        value["schema_version"] = 3.into();
+        value.as_object_mut().unwrap().remove("generator");
+        for sub in value["subsystems"].as_array_mut().unwrap() {
+            let sub = sub.as_object_mut().unwrap();
+            sub.remove("summary_source");
+            if sub["id"] == id.as_str() {
+                sub.insert("summary".into(), "Ручное описание".into());
+            }
+        }
+        fs::write(
+            kd.join("L0_index.json"),
+            serde_json::to_string_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        update(&analysis, &subs, &kd, None).unwrap();
+        let index = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        assert_eq!(index.schema_version, CURRENT_L0_SCHEMA_VERSION);
+        assert_eq!(index.generator, Some(GeneratorStamp::current()));
+        let sub = index.subsystems.iter().find(|s| s.id == id).unwrap();
+        assert_eq!(sub.summary, "Ручное описание");
+        assert_eq!(sub.summary_source, crate::storage::SummarySource::Manual);
+        assert_eq!(fs::read_to_string(&card_path).unwrap(), card);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn apply_summaries_unknown_id_changes_nothing() {
+        let root = quiet_root("apply_unknown");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &agents_opts()).unwrap();
+        let agents = root.join("AGENTS.md");
+        let before = snapshot(&kd, &[&agents]);
+        let err = apply_summaries(
+            &analysis,
+            &kd,
+            &[agent_update(&subs[0].id), agent_update("nope")],
+            crate::storage::SummarySource::Agent,
+            Some("agent"),
+            Some(StorageMode::Repo),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("nope"), "{err:#}");
+        assert!(
+            before == snapshot(&kd, &[&agents]),
+            "a rejected call wrote files"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

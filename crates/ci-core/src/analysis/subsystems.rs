@@ -81,9 +81,11 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
     subsystems
 }
 
-/// Prefixes of the deterministic summaries below; `update` refreshes summaries that
-/// start with one of them and keeps everything else (hand-written or LLM-enriched).
-pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 3] = [
+/// Prefixes of the deterministic summaries in this module (the flat-project fallback
+/// included). A v3 summary starting with one of them migrates as `Heuristic`; a `Heuristic`
+/// summary that no longer starts with one was edited by hand and is kept by `update`.
+pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 4] = [
+    "Основная логика и компоненты проекта",
     "Подсистема `",
     "Модуль и компоненты директории `",
     "Модуль-файл `",
