@@ -790,3 +790,112 @@ fn detector_honors_gitignore_scope_and_symlinks() {
     assert!(!ids.iter().any(|i| i.contains("store")), "{ids:?}");
     let _ = fs::remove_dir_all(&base);
 }
+
+fn write_tree(files: &[(&str, &str)]) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("det_tests_{}_{nanos}", std::process::id()));
+    for (rel, text) in files {
+        let p = root.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+    }
+    root
+}
+
+#[test]
+fn is_test_path_matches_known_shapes() {
+    for p in [
+        "tests/cli.rs",
+        "crates/a/tests/it.rs",
+        "src/a/tests.rs",
+        "tests.rs",
+        "src/x_test.rs",
+        "src/x_tests.rs",
+        "pkg/x_test.py",
+        "pkg/test_x.py",
+    ] {
+        assert!(is_test_path(p), "{p}");
+    }
+    for p in [
+        "src/a.rs",
+        "src/contest.rs",
+        "src/latest.py",
+        "src/testing/mod.rs",
+    ] {
+        assert!(!is_test_path(p), "{p}");
+    }
+}
+
+#[test]
+fn test_files_contribute_no_symbols() {
+    let root = write_tree(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\n",
+        ),
+        ("src/a/mod.rs", "pub fn real() {}\n"),
+        ("src/a/tests.rs", "pub struct Engine;\n"),
+    ]);
+    let analysis = analyze_project(&root, false, false).unwrap();
+    let all: Vec<String> = analysis
+        .detected_modules
+        .iter()
+        .flat_map(|m| m.symbols.clone())
+        .collect();
+    assert!(!all.iter().any(|s| s.contains("Engine")), "{all:?}");
+    assert!(all.iter().any(|s| s.contains("real")), "{all:?}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn cfg_test_module_symbols_skipped() {
+    let src = "pub fn real() {}\n#[cfg(test)]\nmod t {\n    pub struct Fake;\n}\n";
+    let syms = extract_rust_symbols(src, false);
+    assert_eq!(syms.len(), 1, "{syms:?}");
+    assert!(syms[0].contains("real"));
+}
+
+#[test]
+fn test_only_subsystem_tagged() {
+    let root = write_tree(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\n",
+        ),
+        ("src/api/mod.rs", "pub fn api() {}\n"),
+        ("src/only/tests.rs", "pub struct Engine;\n"),
+        ("src/big/mod.rs", "pub fn big() {}\n"),
+        (
+            "src/big/tests.rs",
+            "pub struct Fixture;\npub fn helper_one() {}\npub fn helper_two() {}\n",
+        ),
+    ]);
+    let opts = AnalyzeOptions {
+        split_threshold_tokens: 8,
+        ..AnalyzeOptions::default()
+    };
+    let analysis = analyze_project_with(&root, &opts).unwrap();
+    let subs = crate::analysis::subsystems::build_deterministic(&analysis);
+    let ids: Vec<&str> = subs.iter().map(|s| s.id.as_str()).collect();
+    // No parent: project-level wording.
+    let only = subs
+        .iter()
+        .find(|s| s.id.contains("only"))
+        .unwrap_or_else(|| panic!("{ids:?}"));
+    assert!(only.tags.iter().any(|t| t == "tests"), "{only:?}");
+    assert_eq!(only.summary, "Тесты проекта");
+    assert!(only.key_symbols.is_empty(), "{only:?}");
+    // Split-off tests child: names its parent.
+    let child = subs
+        .iter()
+        .find(|s| s.parent.is_some() && s.files.iter().all(|f| is_test_path(&f.path)))
+        .unwrap_or_else(|| panic!("{ids:?}"));
+    assert!(child.tags.iter().any(|t| t == "tests"), "{child:?}");
+    assert!(child.summary.starts_with("Тесты для "), "{}", child.summary);
+    let api = subs.iter().find(|s| s.id.contains("api")).unwrap();
+    assert!(!api.tags.iter().any(|t| t == "tests"));
+    let _ = fs::remove_dir_all(&root);
+}

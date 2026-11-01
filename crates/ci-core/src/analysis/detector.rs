@@ -1327,6 +1327,20 @@ fn count_lines(path: &Path) -> usize {
         .unwrap_or(0)
 }
 
+/// Whether a project-relative path is test code: a `tests/` directory segment, a `tests.rs`
+/// file, or a `_test.rs` / `_tests.rs` / `_test.py` / `test_*.py` file name.
+pub fn is_test_path(rel: &str) -> bool {
+    let normalized = rel.replace('\\', "/");
+    let mut segments: Vec<&str> = normalized.split('/').collect();
+    let name = segments.pop().unwrap_or("");
+    segments.contains(&"tests")
+        || name == "tests.rs"
+        || name.ends_with("_test.rs")
+        || name.ends_with("_tests.rs")
+        || name.ends_with("_test.py")
+        || (name.starts_with("test_") && name.ends_with(".py"))
+}
+
 fn extract_symbols_from_files(
     subsystem_dir: &Path,
     files: &[SubsystemFile],
@@ -1340,7 +1354,11 @@ fn extract_symbols_from_files(
     };
     let max_symbols = if deep { 30 } else { 10 };
 
-    for f in files.iter().take(max_files) {
+    for f in files
+        .iter()
+        .filter(|f| !is_test_path(&f.path))
+        .take(max_files)
+    {
         let full_path = subsystem_dir.join(
             Path::new(&f.path)
                 .file_name()
@@ -1587,6 +1605,9 @@ pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String> {
                     }
                 }
             }
+            // Inline modules (`#[cfg(test)] mod tests { .. }` included) are never descended
+            // into, so test fixtures stay out of the symbols.
+            syn::Item::Mod(_) => {}
             _ => {}
         }
 

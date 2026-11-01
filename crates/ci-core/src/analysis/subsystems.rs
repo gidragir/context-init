@@ -55,12 +55,30 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
 
             let key_files = m.files.iter().map(|f| f.path.clone()).collect();
 
+            let test_only =
+                !m.files.is_empty() && m.files.iter().all(|f| detector::is_test_path(&f.path));
+            let summary = if test_only {
+                match &m.parent {
+                    Some(parent) => format!("Тесты для `{parent}`"),
+                    None => "Тесты проекта".to_string(),
+                }
+            } else {
+                summary
+            };
+            let mut tags = vec![
+                clean_id.clone(),
+                analysis.project_type.display_name().to_string(),
+            ];
+            if test_only {
+                tags.push("tests".to_string());
+            }
+
             subsystems.push(SubsystemInfo {
                 id: clean_id.clone(),
                 name: capitalized,
                 summary,
                 l1_path: format!("subsystems/{}.md", clean_id),
-                tags: vec![clean_id, analysis.project_type.display_name().to_string()],
+                tags,
                 entrypoints: m.entrypoints.clone(),
                 key_files,
                 files: m.files.clone(),
@@ -84,8 +102,10 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
 /// Prefixes of the deterministic summaries in this module (the flat-project fallback
 /// included). A v3 summary starting with one of them migrates as `Heuristic`; a `Heuristic`
 /// summary that no longer starts with one was edited by hand and is kept by `update`.
-pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 4] = [
+pub(crate) const GENERATED_SUMMARY_PREFIXES: [&str; 6] = [
     "Основная логика и компоненты проекта",
+    "Тесты для `",
+    "Тесты проекта",
     "Подсистема `",
     "Модуль и компоненты директории `",
     "Модуль-файл `",
