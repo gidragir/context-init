@@ -82,8 +82,14 @@ fn read_card_text(knowledge_dir: &Path, rel: &str) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// Tag marking a test-only subsystem (see the detector); its hits are demoted.
+const TESTS_TAG: &str = "tests";
+/// Score multiplier for subsystems tagged [`TESTS_TAG`].
+const TESTS_SCORE_FACTOR: f32 = 0.5;
+
 struct Entry {
     name: String,
+    tags: Vec<String>,
     summary: String,
     symbols: Vec<String>,
 }
@@ -150,6 +156,7 @@ impl Bm25Retriever {
                 sub.id.clone(),
                 Entry {
                     name: sub.name.clone(),
+                    tags: sub.tags.clone(),
                     summary: sub.summary.clone(),
                     symbols: sub.key_symbols.clone(),
                 },
@@ -184,7 +191,7 @@ impl Retriever for Bm25Retriever {
         }
         let (parsed, _ignored) = parser.parse_query_lenient(&terms.join(" "));
         let searcher = self.reader.searcher();
-        let top = searcher.search(&parsed, &TopDocs::with_limit(top_k))?;
+        let top = searcher.search(&parsed, &TopDocs::with_limit(top_k * 2))?;
         let wanted: HashSet<&String> = terms.iter().collect();
         let mut hits = Vec::new();
         for (score, addr) in top {
@@ -201,6 +208,11 @@ impl Retriever for Bm25Retriever {
                 .filter(|sym| stems(sym).iter().any(|t| wanted.contains(t)))
                 .cloned()
                 .collect();
+            let score = if entry.tags.iter().any(|t| t == TESTS_TAG) {
+                score * TESTS_SCORE_FACTOR
+            } else {
+                score
+            };
             hits.push(SearchHit {
                 subsystem_id: sub_id.to_string(),
                 name: entry.name.clone(),
@@ -209,6 +221,9 @@ impl Retriever for Bm25Retriever {
                 matched_symbols,
             });
         }
+        // Stable sort keeps the BM25 order among equal scores.
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+        hits.truncate(top_k);
         Ok(hits)
     }
 }
@@ -318,5 +333,30 @@ mod tests {
         assert!(retriever.search("   ", 3).unwrap().is_empty());
         // An absurd top_k must neither panic nor over-allocate.
         assert_eq!(retriever.search("storage", usize::MAX).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tests_subsystem_ranks_below_its_parent() {
+        // The tests subsystem repeats the query term, so by raw BM25 it outranks its parent.
+        let mut tests = sub(
+            "detector_tests",
+            "Детектор",
+            "детектор детектор проекта",
+            &["Детектор"],
+        );
+        tests.tags = vec!["tests".to_string()];
+        let idx = L0Index {
+            subsystems: vec![
+                sub("detector", "Детектор", "детектор проекта", &["Детектор"]),
+                tests,
+            ],
+            ..L0Index::default()
+        };
+        let hits = Bm25Retriever::build(&idx, Path::new("."))
+            .unwrap()
+            .search("детектор", 2)
+            .unwrap();
+        let ids: Vec<&str> = hits.iter().map(|h| h.subsystem_id.as_str()).collect();
+        assert_eq!(ids, ["detector", "detector_tests"], "{hits:?}");
     }
 }
