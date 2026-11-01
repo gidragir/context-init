@@ -691,10 +691,7 @@ const SEARCH_GOLD: [(&str, &str); 10] = [
         "crates_ci-core_analysis_generator",
     ),
     ("модуль конфигурации config", "crates_ci-core_config"),
-    (
-        "reports subagents verification",
-        "reports",
-    ),
+    ("reports subagents verification", "reports"),
 ];
 
 fn measure_v06(repo_kb: &Path) -> V06Metrics {
@@ -878,7 +875,10 @@ fn measure_v04(sandbox: &Path) -> V04Metrics {
     let (py_before, py_after) = (count_tokens(&py_module), count_tokens(&py_compressed));
     let py_saved = (py_before - py_after) as f64 * 100.0 / py_before as f64;
     println!("   Python compression: {py_before} -> {py_after} tokens ({py_saved:.1}% saved)");
-    assert!(py_saved >= 65.0, "Python compression regressed: {py_saved:.1}%");
+    assert!(
+        py_saved >= 65.0,
+        "Python compression regressed: {py_saved:.1}%"
+    );
 
     // Large synthetic repository: 40 directories x 10 files, committed to Git.
     let repo = sandbox.join("large-repo");
