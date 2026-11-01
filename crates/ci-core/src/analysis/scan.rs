@@ -7,7 +7,46 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
+
+pub const KNOWN_BINARY_EXTENSIONS: &[&str] = &[
+    "exe", "dll", "so", "dylib", "msi", "cab", "zip", "tar", "gz", "7z", "rar", "png", "jpg",
+    "jpeg", "gif", "webp", "ico", "icns", "pdf", "woff", "woff2", "ttf", "otf", "eot", "mp3",
+    "mp4", "wav", "ogg", "wasm", "pyc", "class", "jar", "db", "sqlite", "sqlite3", "cf", "epf",
+    "erf", "bin", "pack", "idx",
+];
+
+/// Returns `true` if a file is binary by extension, contains NUL bytes, or has non-UTF-8 content.
+pub fn is_likely_binary(path: &Path) -> bool {
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        let ext_lower = ext.to_ascii_lowercase();
+        if KNOWN_BINARY_EXTENSIONS.contains(&ext_lower.as_str()) {
+            return true;
+        }
+    }
+
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 8192];
+    let Ok(n) = file.read(&mut buf) else {
+        return false;
+    };
+    if n == 0 {
+        return false;
+    }
+    let slice = &buf[..n];
+    if slice.contains(&0x00) {
+        return true;
+    }
+    if let Err(err) = std::str::from_utf8(slice) {
+        if err.error_len().is_some() {
+            return true;
+        }
+    }
+    false
+}
 
 /// Size of one top-level directory or one file extension.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,8 +110,11 @@ pub fn scan_project(root: &Path, scope: &ScopeConfig) -> Result<ScanReport> {
     for rel in filter.files() {
         let path = root.join(rel);
         let size = fs::metadata(&path).map_or(0, |m| m.len() as usize);
+        let is_bin = is_likely_binary(&path);
         // Oversized files are estimated, never read into memory.
-        let (lines, tokens) = if size > TOKENIZE_MAX_BYTES {
+        let (lines, tokens) = if is_bin {
+            (0, 0)
+        } else if size > TOKENIZE_MAX_BYTES {
             (0, size / 4)
         } else {
             match fs::read_to_string(&path) {
@@ -238,5 +280,31 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn scan_project_assigns_zero_tokens_to_large_binaries_and_preserves_cyrillic_utf8() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("installer")).unwrap();
+        // 600 KB binary file (> TOKENIZE_MAX_BYTES = 512 KB) with NUL bytes
+        let mut bin = vec![0u8; 600 * 1024];
+        bin[0..4].copy_from_slice(b"MZ\x90\x00");
+        std::fs::write(root.join("installer/setup.exe"), &bin).unwrap();
+
+        // Cyrillic UTF-8 file crossing 8192-byte boundary on a 2-byte sequence
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let cyrillic = "Процедура Тест()\n".repeat(600); // > 8192 bytes
+        std::fs::write(root.join("src/Module.bsl"), &cyrillic).unwrap();
+
+        let report = scan_project(root, &ScopeConfig::default()).unwrap();
+        let inst = report
+            .directories
+            .iter()
+            .find(|d| d.name == "installer")
+            .unwrap();
+        assert_eq!(inst.tokens, 0);
+        let src = report.directories.iter().find(|d| d.name == "src").unwrap();
+        assert!(src.tokens > 500);
     }
 }

@@ -40,6 +40,7 @@ tantivy = { version = "0.22", default-features = false, features = ["mmap"] }
 rust-stemmers = "1.2"
 toml_edit = "0.22"
 ureq = { version = "2.10", features = ["json"] }
+tempfile = "3.17"
 
 [package]
 name = "context-init"

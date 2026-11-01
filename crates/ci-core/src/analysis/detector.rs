@@ -40,6 +40,20 @@ pub(crate) const IGNORED_DIRS: &[&str] = &[
     ".svelte-kit",
     ".astro",
     ".parcel-cache",
+    ".agent",
+    ".claude",
+    ".cursor",
+    ".windsurf",
+    ".github",
+    ".changeset",
+    ".deploy",
+    ".impeccable",
+    ".ipynb_checkpoints",
+    ".Trash-1000",
+    ".cargo-cache",
+    ".pnpm-store",
+    ".sccache",
+    ".uv-cache",
 ];
 
 const CODE_EXTENSIONS: &[&str] = &[

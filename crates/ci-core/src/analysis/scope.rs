@@ -10,6 +10,50 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+pub const IGNORED_LOCK_AND_ARTIFACT_FILES: &[&str] = &[
+    "Cargo.lock",
+    "pnpm-lock.yaml",
+    "package-lock.json",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+    "uv.lock",
+    "poetry.lock",
+    "Pipfile.lock",
+    "composer.lock",
+    "Gemfile.lock",
+    "flake.lock",
+    "skills-lock.json",
+    "lazy-lock.json",
+];
+
+pub const IGNORED_FILE_SUFFIXES: &[&str] = &[
+    ".tsbuildinfo",
+    ".min.js",
+    ".min.css",
+    ".bundle.js",
+    ".js.map",
+    ".css.map",
+    ".d.ts.map",
+];
+
+pub fn is_ignored_filename(name: &str) -> bool {
+    IGNORED_LOCK_AND_ARTIFACT_FILES.contains(&name)
+        || IGNORED_FILE_SUFFIXES.iter().any(|suf| name.ends_with(suf))
+}
+
+fn explicitly_included(rel: &str, include: &GlobSet) -> bool {
+    !include.is_empty() && include.is_match(rel)
+}
+
+fn is_stow_or_dotfiles(rel: &str) -> bool {
+    rel.starts_with("infra/stow/")
+        || rel.starts_with("home/")
+        || rel.starts_with("linked/")
+        || rel.starts_with("dot_config/")
+}
 
 fn glob_set(patterns: &[String]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
@@ -49,18 +93,47 @@ impl ScopeFilter {
             .filter(|e| !e.is_empty())
             .collect();
 
+        let inc = Arc::new(include.clone());
+        let root_buf = root.to_path_buf();
         let walker = WalkBuilder::new(root)
             .hidden(false)
             .git_global(false)
             .require_git(false)
             .follow_links(false)
-            .filter_entry(|entry| {
+            .filter_entry(move |entry| {
                 let name = entry.file_name().to_string_lossy();
                 if name == ".git" {
                     return false;
                 }
+                let depth = entry.depth();
+                if depth == 0 {
+                    return true;
+                }
+                let Ok(rel_path) = entry.path().strip_prefix(&root_buf) else {
+                    return true;
+                };
+                let rel = rel_path.to_string_lossy().replace('\\', "/");
                 let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
-                !(is_dir && IGNORED_DIRS.contains(&name.as_ref()))
+                if is_dir {
+                    if is_stow_or_dotfiles(&rel) {
+                        return !entry.path().join(".git").exists()
+                            || explicitly_included(&rel, &inc);
+                    }
+                    if (name.starts_with('.') || IGNORED_DIRS.contains(&name.as_ref()))
+                        && !explicitly_included(&rel, &inc)
+                    {
+                        return false;
+                    }
+                    if entry.path().join(".git").exists() && !explicitly_included(&rel, &inc) {
+                        return false;
+                    }
+                    true
+                } else {
+                    if is_ignored_filename(&name) && !explicitly_included(&rel, &inc) {
+                        return false;
+                    }
+                    true
+                }
             })
             .build();
 
@@ -135,5 +208,36 @@ impl ScopeFilter {
             Some(r) => r.is_empty() || self.dirs.contains(&r),
             None => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scope_excludes_lockfiles_dot_dirs_and_nested_git_clones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
+        std::fs::write(root.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n").unwrap();
+        std::fs::write(root.join("Cargo.lock"), "version = 3\n").unwrap();
+        std::fs::write(root.join("uv.lock"), "version = 1\n").unwrap();
+        std::fs::write(root.join("tsconfig.tsbuildinfo"), "{}").unwrap();
+
+        // Unlisted dot-directories (.agent, .changeset, .github)
+        std::fs::create_dir_all(root.join(".agent/skills/foo")).unwrap();
+        std::fs::write(root.join(".agent/skills/foo/SKILL.md"), "# skill").unwrap();
+        std::fs::create_dir_all(root.join(".changeset")).unwrap();
+        std::fs::write(root.join(".changeset/config.json"), "{}").unwrap();
+
+        // Nested foreign git clone (docs/OpenViking/.git)
+        std::fs::create_dir_all(root.join("docs/OpenViking/.git")).unwrap();
+        std::fs::write(root.join("docs/OpenViking/main.py"), "print(1)\n").unwrap();
+
+        let scope = ScopeFilter::build(root, &ScopeConfig::default()).unwrap();
+        let files = scope.files();
+        assert_eq!(files, &["src/lib.rs".to_string()]);
     }
 }
