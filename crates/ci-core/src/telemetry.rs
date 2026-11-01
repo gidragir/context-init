@@ -8,10 +8,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-/// Current telemetry JSONL schema version (D28).
-pub const TELEMETRY_SCHEMA_VERSION: u32 = 1;
+mod harness;
+pub use harness::{harness_from_client_name, harness_from_env, HarnessId, ANTIGRAVITY_ENV_MARKERS};
+
+/// Current telemetry JSONL schema version (D28). Version 1 events remain readable.
+pub const TELEMETRY_SCHEMA_VERSION: u32 = 2;
 
 /// Operational telemetry signal: tool invocation, channel, harness, latency, outcome, error class, version, OS (D29).
 /// Contains no file paths, source code, or metadata object names.
@@ -35,6 +39,147 @@ pub struct OperationalSignal {
     pub version: String,
     /// Host operating system identifier (e.g. `"linux"`, `"macos"`, `"windows"`).
     pub os: String,
+    /// Whether the call was made by a nested invocation (e.g. a CLI command run inside an MCP call). Absent in v1 events.
+    #[serde(default)]
+    pub nested: bool,
+}
+
+/// Execution channel of a recorded call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Channel {
+    Mcp,
+    Cli,
+}
+
+impl Channel {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Channel::Mcp => "mcp",
+            Channel::Cli => "cli",
+        }
+    }
+}
+
+/// Per-call context attached to operational telemetry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallContext {
+    pub harness: HarnessId,
+    pub channel: Channel,
+    pub nested: bool,
+}
+
+/// High-level error class; carries no message or path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorClass {
+    NotFound,
+    InvalidParams,
+    Io,
+    Drift,
+    Internal,
+}
+
+impl ErrorClass {
+    /// Stable string form, identical to the serde representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ErrorClass::NotFound => "not_found",
+            ErrorClass::InvalidParams => "invalid_params",
+            ErrorClass::Io => "io",
+            ErrorClass::Drift => "drift",
+            ErrorClass::Internal => "internal",
+        }
+    }
+}
+
+/// Result of a recorded call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallOutcome {
+    Ok,
+    Err(ErrorClass),
+}
+
+/// Classifies an error into an [`ErrorClass`] without retaining its message.
+pub fn classify_error(err: &anyhow::Error) -> ErrorClass {
+    if err
+        .chain()
+        .any(|c| c.downcast_ref::<std::io::Error>().is_some())
+    {
+        return ErrorClass::Io;
+    }
+    let msg = format!("{err:#}").to_lowercase();
+    if msg.contains("not found") || msg.contains("unknown subsystem") {
+        ErrorClass::NotFound
+    } else if msg.contains("invalid") || msg.contains("must") {
+        ErrorClass::InvalidParams
+    } else if msg.contains("drift") {
+        ErrorClass::Drift
+    } else {
+        ErrorClass::Internal
+    }
+}
+
+/// Fire-and-forget telemetry recorder: sink errors are swallowed so telemetry never breaks a call.
+#[derive(Clone)]
+pub struct Recorder {
+    sink: Option<Arc<dyn TelemetrySink>>,
+    project_id: Option<String>,
+}
+
+impl Recorder {
+    /// Creates a recorder over `sink`; without a sink or project id nothing is written.
+    pub fn new(sink: Option<Arc<dyn TelemetrySink>>, project_id: Option<String>) -> Self {
+        Self { sink, project_id }
+    }
+
+    /// Recorder that never writes.
+    pub fn disabled() -> Self {
+        Self {
+            sink: None,
+            project_id: None,
+        }
+    }
+
+    /// Records an operational signal for a finished call.
+    pub fn record_call(
+        &self,
+        ctx: &CallContext,
+        tool: &str,
+        started: Instant,
+        outcome: CallOutcome,
+    ) {
+        let (success, error_class) = match outcome {
+            CallOutcome::Ok => (true, None),
+            CallOutcome::Err(c) => (false, Some(c.as_str().to_string())),
+        };
+        self.record(TelemetrySignal::Operational(OperationalSignal {
+            tool: tool.to_string(),
+            channel: ctx.channel.as_str().to_string(),
+            harness: Some(ctx.harness.as_str().to_string()),
+            latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            success,
+            error_class,
+            version: crate::VERSION.to_string(),
+            os: std::env::consts::OS.to_string(),
+            nested: ctx.nested,
+        }));
+    }
+
+    /// Records a context-efficiency signal.
+    pub fn record_efficiency(&self, sig: EfficiencySignal) {
+        self.record(TelemetrySignal::Efficiency(sig));
+    }
+
+    /// Records any signal; no-op when disabled, and sink errors are ignored.
+    pub fn record(&self, signal: TelemetrySignal) {
+        let (Some(sink), Some(project_id)) = (&self.sink, &self.project_id) else {
+            return;
+        };
+        if !sink.is_enabled() {
+            return;
+        }
+        let _ = sink.record(&TelemetryEvent::new(project_id, signal));
+    }
 }
 
 /// Context efficiency telemetry signal: response vs source tokens, truncations, cursor hops, staleness, empty search (D29).
@@ -671,5 +816,144 @@ mod record_feedback_tests {
             "project id must be hashed: {line}"
         );
         let _ = fs::remove_dir_all(&data);
+    }
+}
+
+#[cfg(test)]
+mod recorder_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    fn unique_dir(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ci_{tag}_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    struct FailingSink;
+    impl TelemetrySink for FailingSink {
+        fn is_enabled(&self) -> bool {
+            true
+        }
+        fn record(&self, _event: &TelemetryEvent) -> Result<()> {
+            anyhow::bail!("disk full")
+        }
+    }
+
+    #[test]
+    fn harness_from_client_name_normalizes() {
+        assert_eq!(
+            harness_from_client_name(Some("claude-code")),
+            HarnessId::ClaudeCode
+        );
+        assert_eq!(
+            harness_from_client_name(Some("Antigravity")),
+            HarnessId::Antigravity
+        );
+        assert_eq!(harness_from_client_name(Some("weird")), HarnessId::Other);
+        assert_eq!(harness_from_client_name(None), HarnessId::Other);
+    }
+
+    #[test]
+    fn harness_from_env_detects_claude() {
+        assert_eq!(
+            harness_from_env(|k| k == "CLAUDECODE"),
+            HarnessId::ClaudeCode
+        );
+        assert_eq!(harness_from_env(|_| false), HarnessId::Terminal);
+    }
+
+    #[test]
+    fn recorder_writes_operational_v2() {
+        let dir = unique_dir("rec_v2");
+        let sink = Arc::new(JsonlTelemetrySink::with_exact_dir(&dir, true));
+        let rec = Recorder::new(Some(sink.clone()), Some("raw-project".to_string()));
+        let ctx = CallContext {
+            harness: HarnessId::ClaudeCode,
+            channel: Channel::Mcp,
+            nested: true,
+        };
+        rec.record_call(
+            &ctx,
+            "context_pack",
+            Instant::now(),
+            CallOutcome::Err(ErrorClass::Io),
+        );
+        let events = sink.read_all_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].schema_version, 2);
+        let TelemetrySignal::Operational(op) = &events[0].signal else {
+            panic!("expected operational signal");
+        };
+        assert_eq!(op.harness.as_deref(), Some("claude-code"));
+        assert_eq!(op.channel, "mcp");
+        assert!(op.nested);
+        assert!(!op.success);
+        assert_eq!(op.error_class.as_deref(), Some("io"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recorder_swallows_sink_errors() {
+        let rec = Recorder::new(Some(Arc::new(FailingSink)), Some("p".to_string()));
+        let ctx = CallContext {
+            harness: HarnessId::Other,
+            channel: Channel::Cli,
+            nested: false,
+        };
+        rec.record_call(&ctx, "init", Instant::now(), CallOutcome::Ok);
+        rec.record_efficiency(EfficiencySignal::default());
+        Recorder::disabled().record_call(&ctx, "init", Instant::now(), CallOutcome::Ok);
+    }
+
+    #[test]
+    fn reads_v1_events_without_nested() {
+        let dir = unique_dir("rec_v1");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("2026-01.jsonl");
+        let hash = "a".repeat(64);
+        let line = format!(
+            r#"{{"schema_version":1,"timestamp":"2026-01-02","project_id_hash":"{hash}","signal":{{"signal_type":"operational","tool":"init","channel":"cli","latency_ms":5,"success":true,"version":"0.1.0","os":"linux"}}}}"#
+        );
+        fs::write(&path, format!("{line}\n")).unwrap();
+        let events = read_jsonl_file(&path).unwrap();
+        assert_eq!(events[0].schema_version, 1);
+        let TelemetrySignal::Operational(op) = &events[0].signal else {
+            panic!("expected operational signal");
+        };
+        assert!(!op.nested);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn classify_error_maps_io_and_not_found() {
+        let io = anyhow::Error::new(std::io::Error::other("boom")).context("reading");
+        assert_eq!(classify_error(&io), ErrorClass::Io);
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("Unknown subsystem: x")),
+            ErrorClass::NotFound
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("card not found")),
+            ErrorClass::NotFound
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("name must not be empty")),
+            ErrorClass::InvalidParams
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("architectural drift")),
+            ErrorClass::Drift
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("weird")),
+            ErrorClass::Internal
+        );
     }
 }

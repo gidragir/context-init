@@ -30,9 +30,11 @@ pub use storage::{
     SubsystemFile, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
 };
 pub use telemetry::{
-    read_jsonl_file, record_feedback, render_telemetry_report, EfficiencySignal, FeedbackSignal,
-    JsonlTelemetrySink, LlmSignal, OperationalSignal, SessionPatternSignal, TelemetryEvent,
-    TelemetrySignal, TelemetrySink, TELEMETRY_SCHEMA_VERSION,
+    classify_error, harness_from_client_name, harness_from_env, read_jsonl_file, record_feedback,
+    render_telemetry_report, CallContext, CallOutcome, Channel, EfficiencySignal, ErrorClass,
+    FeedbackSignal, HarnessId, JsonlTelemetrySink, LlmSignal, OperationalSignal, Recorder,
+    SessionPatternSignal, TelemetryEvent, TelemetrySignal, TelemetrySink, ANTIGRAVITY_ENV_MARKERS,
+    TELEMETRY_SCHEMA_VERSION,
 };
 
 /// Current crate version synchronized with the workspace package metadata.
@@ -622,6 +624,7 @@ init = ["cli_helper", "local"]
                 error_class: None,
                 version: VERSION.to_string(),
                 os: "linux".to_string(),
+                nested: false,
             }),
         );
 
@@ -811,6 +814,7 @@ init = ["m_ollama", "m_cmd", "m_agent", "m_oai", "m_anth", "m_gem", "m_samp", "n
                     error_class: Some("DriftDetected".to_string()),
                     version: VERSION.to_string(),
                     os: "linux".to_string(),
+                    nested: false,
                 }),
             ),
             TelemetryEvent::with_timestamp(
