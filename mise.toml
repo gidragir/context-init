@@ -39,3 +39,7 @@ run = "cargo test --test regression_benchmark -- --nocapture"
 [tasks.audit-sessions]
 description = "Audit transcripts for context-init adoption"
 run = "python3 -I scripts/audit-sessions.py"
+
+[tasks.probe-adoption]
+description = "Adoption probe benchmark for Claude Code and Antigravity"
+run = "bash scripts/probe-adoption.sh"
