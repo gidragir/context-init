@@ -589,6 +589,16 @@ impl ContextInitServer {
 
 #[tool_handler(router = Self::tool_router())]
 impl ServerHandler for ContextInitServer {
+    fn get_info(&self) -> rmcp::model::ServerConfig {
+        let mut info = rmcp::model::ServerConfig::new(
+            rmcp::model::ServerCapabilities::builder()
+                .enable_tools()
+                .build(),
+        );
+        info.server_info.version = format!("{}+{}", ci_core::VERSION, ci_core::BUILD);
+        info
+    }
+
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
         let info = context.peer.peer_info();
         let harness = harness_from_client_name(info.as_ref().map(|i| i.client_info.name.as_str()));

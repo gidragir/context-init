@@ -25,6 +25,9 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
             test_command: analysis.commands.test.clone(),
             tokens: 0,
             parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
         });
     } else {
         for m in &analysis.detected_modules {
@@ -65,6 +68,9 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
                 test_command: m.test_cmd.clone(),
                 tokens: 0,
                 parent: m.parent.clone(),
+                summary_source: crate::storage::SummarySource::Heuristic,
+                summary_model: None,
+                needs_review: false,
             });
         }
     }

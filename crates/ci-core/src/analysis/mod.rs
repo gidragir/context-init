@@ -77,6 +77,9 @@ mod tests {
             test_command: None,
             tokens: 0,
             parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
         }
     }
 
@@ -102,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn l0_v3_omits_volatile_fields() {
+    fn l0_omits_volatile_fields() {
         let root = temp_dir("v3_root");
         let kd = temp_dir("v3_kd").join("knowledge");
         let mut sub = core_subsystem();
@@ -124,7 +127,7 @@ mod tests {
             assert!(!json.contains(forbidden), "{forbidden} in {json}");
         }
         let index = crate::storage::L0Index::from_json_str(&json).unwrap();
-        assert_eq!(index.schema_version, 3);
+        assert_eq!(index.schema_version, 4);
         let mut texts = vec![fs::read_to_string(kd.join("L0_index.md")).unwrap()];
         texts.push(fs::read_to_string(kd.join("subsystems/core.md")).unwrap());
         for text in texts {

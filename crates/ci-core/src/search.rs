@@ -232,6 +232,9 @@ mod tests {
             test_command: None,
             tokens: 1,
             parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
         }
     }
 

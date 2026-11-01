@@ -211,6 +211,9 @@ mod tests {
                 test_command: None,
                 tokens: 0,
                 parent: None,
+                summary_source: ci_core::SummarySource::Heuristic,
+                summary_model: None,
+                needs_review: false,
             })
             .collect()
     }

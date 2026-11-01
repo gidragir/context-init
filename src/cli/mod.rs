@@ -30,10 +30,16 @@ use ci_core::telemetry::{
 use ci_llm::RoleRouter;
 use ci_mcp::ResolvedProject;
 
+/// `--version` text: crate version plus the VCS build stamp of `ci-core`.
+fn cli_version() -> &'static str {
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(|| format!("{} ({})", ci_core::VERSION, ci_core::BUILD))
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "context-init",
-    version,
+    version = cli_version(),
     about = "Builds a token-efficient L0-L2 knowledge base of a project for AI agents (CLI + MCP)"
 )]
 struct Cli {

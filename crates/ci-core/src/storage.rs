@@ -6,6 +6,7 @@ pub use crate::openviking::{
     CardGeneratedBy, CardSource, OkfCard, L0_ABSTRACT_MAX_CHARS,
 };
 
+use crate::analysis::subsystems::GENERATED_SUMMARY_PREFIXES;
 use anyhow::{bail, Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -14,8 +15,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Current `L0_index.json` schema version (v3: no `root_path`, line or token counters).
-pub const CURRENT_L0_SCHEMA_VERSION: u32 = 3;
+/// Current `L0_index.json` schema version (v4: summary provenance and generator stamp;
+/// v3 bases are still readable and migrated on load).
+pub const CURRENT_L0_SCHEMA_VERSION: u32 = 4;
+
+/// Oldest schema version that `L0Index::from_json_str` migrates instead of rejecting.
+const MIN_MIGRATABLE_L0_SCHEMA_VERSION: u32 = 3;
 
 /// Normalizes a path to use forward slashes (`/`) across all operating systems,
 /// stripping Windows verbatim prefixes (`\\?\`) and redundant `./` or trailing slashes.
@@ -244,8 +249,23 @@ pub struct SubsystemFile {
     pub lines: usize,
 }
 
+/// Origin of a subsystem summary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SummarySource {
+    /// Deterministic text produced by the generator.
+    #[default]
+    Heuristic,
+    /// Written by a configured LLM provider.
+    Llm,
+    /// Submitted by an agent harness through `context_submit`.
+    Agent,
+    /// Edited by hand; never overwritten by `update`.
+    Manual,
+}
+
 /// Subsystem metadata stored in `L0_index.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SubsystemInfo {
     pub id: String,
     pub name: String,
@@ -271,6 +291,15 @@ pub struct SubsystemInfo {
     /// Id of the subsystem this one was split off from (oversized crates).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// Where `summary` came from.
+    #[serde(default)]
+    pub summary_source: SummarySource,
+    /// Model alias or harness that wrote `summary` (absent for heuristic/manual).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_model: Option<String>,
+    /// Set when the summary may no longer match the sources and needs a fresh review.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_review: bool,
 }
 
 /// Allowed subsystem id shape. Ids become file names (`subsystems/<id>.md`), so they
@@ -364,6 +393,23 @@ fn default_json_schema_uri() -> String {
     "https://json-schema.org/draft/2020-12/schema".to_string()
 }
 
+/// Build that wrote the index (crate version plus VCS build stamp).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GeneratorStamp {
+    pub version: String,
+    pub build: String,
+}
+
+impl GeneratorStamp {
+    /// Stamp of the running binary.
+    pub fn current() -> Self {
+        Self {
+            version: crate::VERSION.to_string(),
+            build: crate::BUILD.to_string(),
+        }
+    }
+}
+
 /// Root L0 index structure stored in `L0_index.json` (D23). Only
 /// `CURRENT_L0_SCHEMA_VERSION` is readable; older bases must be rebuilt with `init --force`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -391,6 +437,9 @@ pub struct L0Index {
     pub core_rules: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stow_packages: Vec<String>,
+    /// Build that last wrote this index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generator: Option<GeneratorStamp>,
 }
 
 impl Default for L0Index {
@@ -408,13 +457,15 @@ impl Default for L0Index {
             subsystems: Vec::new(),
             core_rules: Vec::new(),
             stow_packages: Vec::new(),
+            generator: None,
         }
     }
 }
 
 impl L0Index {
-    /// Parses `L0Index` from a JSON string; any `schema_version` other than the current one
-    /// (a missing field counts as `1`) is an error.
+    /// Parses `L0Index` from a JSON string. The current version and v3 (migrated in memory:
+    /// summaries starting with a generated prefix become `Heuristic`, the rest `Manual`) are
+    /// accepted; any other `schema_version` (a missing field counts as `1`) is an error.
     pub fn from_json_str(json: &str) -> Result<Self> {
         let normalized = normalize_line_endings(json);
         let value: serde_json::Value =
@@ -423,12 +474,29 @@ impl L0Index {
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(1);
-        if found != u64::from(CURRENT_L0_SCHEMA_VERSION) {
+        let readable =
+            u64::from(MIN_MIGRATABLE_L0_SCHEMA_VERSION)..=u64::from(CURRENT_L0_SCHEMA_VERSION);
+        if !readable.contains(&found) {
             bail!(
                 "knowledge base uses an outdated format (schema v{found}); rebuild it with `context-init init --force`"
             );
         }
-        serde_json::from_value(value).context("Failed to deserialize L0_index.json")
+        let mut index: Self =
+            serde_json::from_value(value).context("Failed to deserialize L0_index.json")?;
+        if found < u64::from(CURRENT_L0_SCHEMA_VERSION) {
+            for sub in &mut index.subsystems {
+                let generated = GENERATED_SUMMARY_PREFIXES
+                    .iter()
+                    .any(|p| sub.summary.starts_with(p));
+                sub.summary_source = if generated {
+                    SummarySource::Heuristic
+                } else {
+                    SummarySource::Manual
+                };
+            }
+            index.schema_version = CURRENT_L0_SCHEMA_VERSION;
+        }
+        Ok(index)
     }
 
     /// Loads `L0Index` from a file on disk.
@@ -609,6 +677,74 @@ mod schema_tests {
         let missing =
             L0Index::from_json_str(r#"{"project": "p", "updated_at": "2026-01-01"}"#).unwrap_err();
         assert!(format!("{missing:#}").contains("schema v1"));
+    }
+
+    #[test]
+    fn v2_index_still_rejected() {
+        let err = L0Index::from_json_str(
+            r#"{"schema_version": 2, "project": "p", "updated_at": "2026-01-01"}"#,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("schema v2"));
+    }
+
+    #[test]
+    fn v3_index_migrates_with_manual_detection() {
+        let json = r#"{
+            "schema_version": 3, "project": "p", "updated_at": "2026-01-01",
+            "subsystems": [
+                {"id": "a", "name": "A", "summary": "Модуль-файл `x.rs`", "l1_path": "subsystems/a.md"},
+                {"id": "b", "name": "B", "summary": "Ручное описание", "l1_path": "subsystems/b.md"}
+            ]
+        }"#;
+        let index = L0Index::from_json_str(json).unwrap();
+        assert_eq!(index.schema_version, 4);
+        assert_eq!(index.subsystems[0].summary_source, SummarySource::Heuristic);
+        assert_eq!(index.subsystems[1].summary_source, SummarySource::Manual);
+        assert!(index.generator.is_none());
+    }
+
+    #[test]
+    fn v3_migration_of_repo_snapshot() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.context-init/knowledge/L0_index.json");
+        let raw = fs::read_to_string(path).unwrap();
+        let index = L0Index::from_json_str(&raw).unwrap();
+        assert_eq!(index.schema_version, CURRENT_L0_SCHEMA_VERSION);
+        assert!(!index.subsystems.is_empty());
+    }
+
+    #[test]
+    fn v4_roundtrip_keeps_provenance() {
+        let dir = std::env::temp_dir().join(format!("ci_v4_rt_{}", std::process::id()));
+        let path = dir.join("L0_index.json");
+        let mut index = L0Index {
+            project: "p".to_string(),
+            generator: Some(GeneratorStamp {
+                version: "1".to_string(),
+                build: "abc".to_string(),
+            }),
+            ..L0Index::default()
+        };
+        index.subsystems.push(SubsystemInfo {
+            id: "a".to_string(),
+            name: "A".to_string(),
+            summary: "s".to_string(),
+            l1_path: "subsystems/a.md".to_string(),
+            summary_source: SummarySource::Agent,
+            summary_model: Some("agent".to_string()),
+            needs_review: true,
+            ..SubsystemInfo::default()
+        });
+        index.save_to_file(&path).unwrap();
+        let loaded = L0Index::load_from_file(&path).unwrap();
+        assert_eq!(loaded, index);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn build_stamp_is_set() {
+        assert!(!crate::BUILD.is_empty());
     }
 }
 

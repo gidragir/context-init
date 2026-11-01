@@ -27,8 +27,8 @@ pub use openviking::{
 };
 pub use storage::{
     compute_project_id, hash_project_id, normalize_git_remote, normalize_line_endings,
-    normalize_path, normalize_path_str, DriftReport, L0Index, ProjectCommands, ProjectType,
-    SubsystemFile, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
+    normalize_path, normalize_path_str, DriftReport, GeneratorStamp, L0Index, ProjectCommands,
+    ProjectType, SubsystemFile, SubsystemInfo, SummarySource, CURRENT_L0_SCHEMA_VERSION,
 };
 pub use telemetry::{
     classify_error, harness_from_client_name, harness_from_env, read_jsonl_file, record_feedback,
@@ -40,6 +40,9 @@ pub use telemetry::{
 
 /// Current crate version synchronized with the workspace package metadata.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// VCS build stamp (`<short sha>[-dirty]` or `unknown`), set by `build.rs`.
+pub const BUILD: &str = env!("CONTEXT_INIT_BUILD");
 
 /// Returns the crate identifier and version string.
 pub fn crate_info() -> &'static str {

@@ -566,6 +566,9 @@ mod tests {
             test_command: None,
             tokens: 10,
             parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
         };
 
         let files = vec!["lib.rs".to_string()];
@@ -617,6 +620,9 @@ mod tests {
             test_command: None,
             tokens: 10,
             parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
         };
 
         let files = vec!["lib.rs".to_string()];
@@ -671,6 +677,9 @@ mod tests {
             test_command: None,
             tokens: 15,
             parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
         };
 
         let files = vec!["main.py".to_string()];
@@ -742,6 +751,9 @@ mod pack_subsystem_tests {
                 test_command: None,
                 tokens: 0,
                 parent: None,
+                summary_source: crate::storage::SummarySource::Heuristic,
+                summary_model: None,
+                needs_review: false,
             }],
             ..L0Index::default()
         };
@@ -784,6 +796,9 @@ mod pack_subsystem_tests {
                 test_command: None,
                 tokens: 0,
                 parent: None,
+                summary_source: crate::storage::SummarySource::Heuristic,
+                summary_model: None,
+                needs_review: false,
             }
         };
         let index = L0Index {

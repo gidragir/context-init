@@ -4,7 +4,8 @@ use crate::config::StorageMode;
 use crate::git::{GitBackend, SystemGitBackend};
 use crate::openviking::{CardFreshness, CardFrontmatter, CardGeneratedBy, CardSource, OkfCard};
 use crate::storage::{
-    now_rfc3339, safe_join, DriftReport, L0Index, SubsystemInfo, CURRENT_L0_SCHEMA_VERSION,
+    now_rfc3339, safe_join, DriftReport, GeneratorStamp, L0Index, SubsystemInfo,
+    CURRENT_L0_SCHEMA_VERSION,
 };
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -248,6 +249,7 @@ pub fn generate(
         subsystems: subsystems.to_vec(),
         core_rules: analysis.rules.clone(),
         stow_packages: Vec::new(),
+        generator: Some(GeneratorStamp::current()),
     };
     normalize_index(&mut l0_index);
 
@@ -856,6 +858,9 @@ mod tests {
             test_command: None,
             tokens: 100,
             parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
         };
 
         // 1. Test generate_knowledge_base
@@ -912,6 +917,9 @@ mod tests {
             test_command: None,
             tokens: 1,
             parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
         }
     }
 
@@ -1002,6 +1010,9 @@ mod tests {
             test_command: None,
             tokens: 100,
             parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
         };
 
         update_or_create_root_agents_md(&temp_dir, "test-proj", &[sub], StorageMode::Central)
