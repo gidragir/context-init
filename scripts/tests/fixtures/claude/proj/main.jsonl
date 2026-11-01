@@ -1,0 +1,3 @@
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__context-init__context_search","input":{"query":"foo"}},{"type":"tool_use","name":"Read","input":{"file_path":"/tmp/x"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__context-init__context_search","input":{"query":"bar"}}]}}
+malformed json line to ensure tolerance
