@@ -1,77 +1,77 @@
 {
-  "timestamp": "2026-10-29",
+  "timestamp": "2026-11-01",
   "drift_metrics": {
     "iterations": 10,
-    "avg_ms": 25.582107999999998,
-    "min_ms": 9.806944,
-    "max_ms": 136.150591,
-    "up_to_date_count": 36,
+    "avg_ms": 15.0976407,
+    "min_ms": 9.577613000000001,
+    "max_ms": 21.577839,
+    "up_to_date_count": 35,
     "has_drift": false
   },
   "compression_metrics": {
     "file_path": "crates/ci-core/src/analysis/detector.rs",
-    "uncompressed_bytes": 70592,
-    "uncompressed_tokens": 15559,
-    "compressed_bytes": 9381,
-    "compressed_tokens": 2663,
-    "tokens_saved_percent": 82.88450414551065,
-    "compression_duration_ms": 9.708827
+    "uncompressed_bytes": 84003,
+    "uncompressed_tokens": 18704,
+    "compressed_bytes": 11193,
+    "compressed_tokens": 3275,
+    "tokens_saved_percent": 82.49037639007699,
+    "compression_duration_ms": 5.809293
   },
   "mcp_latencies": [
     {
       "tool": "context_init",
-      "latency_ms": 41.651907,
+      "latency_ms": 2.7243649999999997,
       "status": "OK"
     },
     {
       "tool": "context_check",
-      "latency_ms": 2.94203,
+      "latency_ms": 3.939832,
       "status": "OK (0 drift)"
     },
     {
       "tool": "context_get_subsystems",
-      "latency_ms": 2.405757,
+      "latency_ms": 3.2953409999999996,
       "status": "OK (1 subsystems)"
     },
     {
       "tool": "context_pack",
-      "latency_ms": 2.243857,
+      "latency_ms": 3.696529,
       "status": "OK (AST compressed)"
     },
     {
       "tool": "context_update",
-      "latency_ms": 2.333652,
+      "latency_ms": 3.004174,
       "status": "OK (reconciled)"
     }
   ],
   "cross_project": {
     "context_init_drift": false,
-    "ai_dotfiles_subsystems": 2,
+    "ai_dotfiles_subsystems": 3,
     "ai_dotfiles_drift": false,
-    "ai_dotfiles_pack_status": "OK (files=2, tokens~159)"
+    "ai_dotfiles_pack_status": "OK (files=2, tokens~158)"
   },
   "v03": {
-    "mcp_cold_start_ms": 1.774154,
-    "router_fallback_avg_ms": 0.0077234,
+    "mcp_cold_start_ms": 3.854324,
+    "router_fallback_avg_ms": 0.0184975,
     "budget_compliance_percent": 100.0,
     "budget_calls": 8
   },
   "v04": {
     "bsl_tokens_saved_percent": 99.2621359223301,
     "scan_files": 400,
-    "scan_ms": 29.15529,
-    "stale_check_avg_ms": 9.947761
+    "scan_ms": 20.330392,
+    "stale_check_avg_ms": 7.699864100000001
   },
   "v05": {
     "raw_diff_tokens": 6670,
-    "digest_tokens": 554,
-    "digest_vs_diff_percent": 8.305847076461768,
+    "digest_tokens": 550,
+    "digest_vs_diff_percent": 8.245877061469265,
     "workspace_repos": 5,
-    "workspace_ms": 39.773923
+    "workspace_ms": 4.609923
   },
   "v06": {
     "queries": 10,
-    "search_avg_ms": 0.2684851,
+    "search_avg_ms": 0.33227360000000006,
     "recall_at_5": 1.0
   },
   "overall_status": "PASSED (NO REGRESSIONS)"

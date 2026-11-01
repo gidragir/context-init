@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/config.rs
 source:
   kind: git
-  blob_sha: 25424609f81ba0c23917dd4ffdbf8438432e0f88
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  blob_sha: 0b26fdd4a332dd56535180703c50092c607f466e
+  commit_sha: 9660354a570d6203128acd3df79cd62f23660f76
 generated_by:
   component: context-init
   role: update
@@ -36,30 +36,10 @@ pub const DEFAULT_SPLIT_THRESHOLD_TOKENS: usize = 15_000
 pub const MIN_RESPONSE_TOKENS: usize = 64
 pub const ROLE_NONE: &str = "none"
 pub struct StoragePaths
-pub fn resolve(repo_root: Option<&Path>) -> Self
-pub fn resolve_with_env<F>(repo_root: Option<&Path>, home_dir: Option<&Path>, get_env: F, ) -> Self where F: Fn(&str) -> Option<String>,
-pub fn project_storage_dir(&self, project_id: &str) -> PathBuf
-pub fn project_knowledge_dir(&self, project_id: &str) -> PathBuf
-pub fn effective_global_config_path(&self) -> &Path
-pub fn format_paths(&self, project_id: Option<&str>) -> String
 pub enum RtkMode
-pub fn as_str(&self) -> &'static str
-pub fn is_active(&self) -> bool
-pub fn is_active_with_path(&self, path_var: Option<&OsStr>) -> bool
 pub enum StorageMode
-pub fn as_str(self) -> &'static str
 pub fn is_binary_available(bin_name: &str) -> bool
 pub fn is_binary_available_in_path(bin_name: &str, path_var: Option<&OsStr>) -> bool
-pub fn is_binary_available_in_dirs<I, P>(bin_name: &str, dirs: I) -> bool where I: IntoIterator<Item = P>, P: AsRef<Path>,
-pub fn is_rtk_available() -> bool
-pub fn resolve_rtk_active(mode: RtkMode) -> bool
-pub fn resolve_rtk_active_with_path(mode: RtkMode, path_var: Option<&OsStr>) -> bool
-pub struct IntegrationsConfig
-pub fn resolve_rtk_active(&self) -> bool
-pub fn resolve_rtk_active_with_path(&self, path_var: Option<&OsStr>) -> bool
-pub enum ModelKind
-pub struct ModelConfig
-pub enum RoleKind
 ```
 
 ## 🧪 Запуск и тестирование

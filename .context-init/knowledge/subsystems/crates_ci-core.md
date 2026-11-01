@@ -2,8 +2,8 @@
 directory: crates/ci-core
 source:
   kind: git
-  blob_sha: 94a7ac2f66cbbf2a7f9aecdaa6816651d5e297a5
-  commit_sha: cd776cdaf43d357c59b46fea99176db18588f7b5
+  blob_sha: 6d9e8de0b44d023be0d9590cb9f4574bcbd1ccf2
+  commit_sha: 9660354a570d6203128acd3df79cd62f23660f76
 generated_by:
   component: context-init
   role: update
@@ -39,9 +39,7 @@ pub const BUILD: &str = env !("CONTEXT_INIT_BUILD")
 pub fn crate_info() -> &'static str
 pub struct SearchHit
 pub trait Retriever
-fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>>
 pub struct Bm25Retriever
-pub fn build(index: &L0Index, knowledge_dir: &Path) -> Result<Self>
 pub fn count_tokens(text: &str) -> usize
 ```
 

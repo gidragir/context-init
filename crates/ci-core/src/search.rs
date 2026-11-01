@@ -204,7 +204,8 @@ impl Retriever for Bm25Retriever {
         }
         let (parsed, _ignored) = parser.parse_query_lenient(&terms.join(" "));
         let searcher = self.reader.searcher();
-        let top = searcher.search(&parsed, &TopDocs::with_limit(top_k * 2))?;
+        let limit = (top_k * 10).max(50).min(self.entries.len().max(1));
+        let top = searcher.search(&parsed, &TopDocs::with_limit(limit))?;
         let wanted: HashSet<&String> = terms.iter().collect();
         let is_test_query = wanted
             .iter()

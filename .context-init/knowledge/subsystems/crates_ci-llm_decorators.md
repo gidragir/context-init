@@ -3,7 +3,7 @@ directory: crates/ci-llm/src/decorators.rs
 source:
   kind: git
   blob_sha: a12861766d4f9eeb4625627ce0b8ff62f7baa303
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  commit_sha: 2ea8f3affd3c7e26633575afd792de4875d13585
 generated_by:
   component: context-init
   role: update
@@ -31,24 +31,10 @@ RetryDecorator с backoff и TimeoutDecorator — обёртки над LlmProvi
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub struct RetryDecorator
-pub fn new<P: LlmProvider + 'static>(inner: P, max_retries: u32) -> Self
-pub fn with_backoff_ms(mut self, backoff_ms: u64) -> Self
-pub fn max_retries(&self) -> u32
 pub struct TimeoutDecorator
-pub fn new<P: LlmProvider + 'static>(inner: P, default_timeout_ms: Option<u64>) -> Self
-pub fn with_timeout_ms<P: LlmProvider + 'static>(inner: P, timeout_ms: u64) -> Self
-pub fn default_timeout_ms(&self) -> Option<u64>
 pub struct TokenBudgetDecorator
-pub fn new<P: LlmProvider + 'static>(inner: P, max_input_tokens: Option<usize>) -> Self
-pub fn with_limit<P: LlmProvider + 'static>(inner: P, max_input_tokens: usize) -> Self
-pub fn max_input_tokens(&self) -> Option<usize>
 pub struct LlmTelemetryRecord
 pub struct TelemetryDecorator
-pub fn new<P: LlmProvider + 'static>(inner: P, sink: Arc<dyn TelemetrySink>) -> Self
-pub fn with_project_id(mut self, project_id: impl Into<String>) -> Self
-pub fn with_fallback_used(mut self, fallback_used: bool) -> Self
-pub fn records(&self) -> Vec<LlmTelemetryRecord>
-pub fn last_record(&self) -> Option<LlmTelemetryRecord>
 ```
 
 ## 🧪 Запуск и тестирование

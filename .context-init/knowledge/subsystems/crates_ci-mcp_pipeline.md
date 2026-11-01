@@ -2,8 +2,8 @@
 directory: crates/ci-mcp/src/pipeline.rs
 source:
   kind: git
-  blob_sha: 975d0854e99b8019f6b75df84470edc480938354
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  blob_sha: 9d5f2db3ba5c2e627655eab5ea7b0e9fd5ed7ce0
+  commit_sha: 9660354a570d6203128acd3df79cd62f23660f76
 generated_by:
   component: context-init
   role: update
@@ -40,7 +40,6 @@ pub fn validate_model_override(config: &Config, model_override: Option<&str>) ->
 pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<()>
 pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>
 pub fn subsystems_needing_enrichment(existing: &L0Index, fresh: &[SubsystemInfo]) -> Vec<String>
-pub fn detect(project: &ResolvedProject, deep: bool) -> Result<ProjectAnalysis>
 ```
 
 ## 🧪 Запуск и тестирование

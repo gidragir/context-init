@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/analysis/pack.rs
 source:
   kind: git
-  blob_sha: 12d94be2d111034f0181d038423aa03a280be0b5
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  blob_sha: 887615585a7d09a2cbc087cab2df8e9938a4e779
+  commit_sha: 9660354a570d6203128acd3df79cd62f23660f76
 generated_by:
   component: context-init
   role: update
@@ -31,7 +31,6 @@ pack_subsystem / pack_files: сборка файлов подсистемы в X
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub enum PackStyle
-pub fn parse(style: &str) -> Self
 pub struct PackedSubsystems
 pub fn pack_subsystem(root: &Path, knowledge_dir: &Path, index: &L0Index, subsystem_id: &str, compress: bool, style: PackStyle, ) -> Result<PackedSubsystems>
 pub fn pack_files(root: &Path, subs: &[&SubsystemInfo], files: &[String], compress: bool, style: PackStyle, ) -> String

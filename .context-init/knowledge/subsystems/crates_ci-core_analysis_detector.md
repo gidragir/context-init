@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/analysis/detector.rs
 source:
   kind: git
-  blob_sha: cf3c8a1d022ff391675305a4f19e0d76dc6c284f
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  blob_sha: a0a985836fef1704c8d780d568fcc27af1004ef4
+  commit_sha: 9660354a570d6203128acd3df79cd62f23660f76
 generated_by:
   component: context-init
   role: update
@@ -30,17 +30,16 @@ analyze_project / analyze_project_with: определение типа прое
 
 ## 🔑 Ключевой контракт и экспорты
 ```text
-pub(crate) const IGNORED_DIRS: &[&str] = &[".git", ".agents", ".context-init", ".gemini", "node_modules", "target", "dist", "build", ".idea", ".vscode", ".cargo", "vendor", "__pycache__", ".venv", "venv", ".next", ".nuxt", ".turbo", ".cache", "coverage", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".vault", "out", ".svelte-kit", ".astro", ".parcel-cache", ]
+pub(crate) const IGNORED_DIRS: &[&str] = &[".git", ".agents", ".context-init", ".gemini", "node_modules", "target", "dist", "build", ".idea", ".vscode", ".cargo", "vendor", "__pycache__", ".venv", "venv", ".next", ".nuxt", ".turbo", ".cache", "coverage", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".vault", "out", ".svelte-kit", ".astro", ".parcel-cache", ".agent", ".claude", ".cursor", ".windsurf", ".github", ".changeset", ".deploy", ".impeccable", ".ipynb_checkpoints", ".Trash-1000", ".cargo-cache", ".pnpm-store", ".sccache", ".uv-cache", ]
+pub const SOURCE_CODE_EXTENSIONS: &[&str] = &["rs", "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "astro", "vue", "svelte", "go", "bsl", "os", "mdo", "java", "kt", "kts", "cs", "c", "cpp", "h", "hpp", "sh", "bash", "zsh", "fish", "ps1", "psm1", "lua", "nu", "sql", "prisma", "graphql", "proto", "css", "scss", ]
+pub const CONFIG_AND_DOC_EXTENSIONS: &[&str] = &["toml", "yaml", "yml", "json", "xml", "md", "mdc", "kdl", "just", ]
+pub const CODE_EXTENSIONS: &[&str] = &["rs", "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "astro", "vue", "svelte", "go", "bsl", "os", "mdo", "java", "kt", "kts", "cs", "c", "cpp", "h", "hpp", "sh", "bash", "zsh", "fish", "ps1", "psm1", "lua", "nu", "sql", "prisma", "graphql", "proto", "css", "scss", "toml", "yaml", "yml", "json", "xml", "md", "mdc", "kdl", "just", ]
+pub fn estimate_tokens_fast(text: &str) -> usize
 pub struct AnalyzeOptions
 pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<ProjectAnalysis>
 pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<ProjectAnalysis>
 pub fn prefix_with_rtk(cmd: &str) -> String
 pub fn is_ignored_path(path: &Path, root: &Path) -> bool
-pub fn is_test_path(rel: &str) -> bool
-pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String>
-pub fn extract_multiline_symbols(content: &str, ext: &str, deep: bool) -> Vec<String>
-pub fn clean_symbol_line(line: &str) -> String
-pub fn sanitize_symbol(raw: &str) -> Option<String>
 ```
 
 ## 🧪 Запуск и тестирование

@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/git.rs
 source:
   kind: git
-  blob_sha: f6ddc39cd6d468d8a2cbf410eed2df16baac9286
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  blob_sha: 29580eea882d7de74d703cc9f25d12a187e2d814
+  commit_sha: 9660354a570d6203128acd3df79cd62f23660f76
 generated_by:
   component: context-init
   role: update
@@ -31,27 +31,15 @@ freshness:
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub struct GitStatusEntry
-pub fn status_code(&self) -> String
+pub struct RepoGitSnapshot
 pub struct StalenessReport
 pub trait GitBackend
-fn head_commit(&self, repo_root: &Path) -> Result<String>
-fn remote_url(&self, repo_root: &Path) -> Result<Option<String>>
-fn blob_sha(&self, repo_root: &Path, relative_path: &Path) -> Result<Option<String>>
-fn status_porcelain_z(&self, repo_root: &Path) -> Result<Vec<GitStatusEntry>>
-fn diff_name_only(&self, repo_root: &Path, from_commit: &str, to_commit: &str, ) -> Result<Vec<String>>
-fn diff_stat(&self, repo_root: &Path, from_commit: &str, to_commit: &str, paths: &[String], ) -> Result<String>
-fn current_branch(&self, _repo_root: &Path) -> Result<String>
-fn merge_base(&self, _repo_root: &Path, _a: &str, _b: &str) -> Result<String>
-fn log_oneline(&self, _repo_root: &Path, _from_commit: &str, _to_commit: &str, _limit: usize, ) -> Result<Vec<String>>
-fn file_at(&self, _repo_root: &Path, _rev: &str, _path: &str) -> Result<Option<String>>
-fn diff_file(&self, _repo_root: &Path, _from_commit: &str, _to_commit: &str, _path: &str, ) -> Result<String>
+pub fn resolve_git_dir(repo_root: &Path) -> Option<PathBuf>
+pub fn resolve_common_git_dir(git_dir: &Path) -> PathBuf
+pub fn read_head_commit_in_process(repo_root: &Path) -> Option<String>
+pub fn read_remote_url_in_process(repo_root: &Path) -> Option<String>
 pub struct SystemGitBackend
-pub fn new() -> Self
-pub fn with_binary(git_binary: impl Into<String>) -> Self
 pub fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitStatusEntry>
-pub fn parse_nul_paths(bytes: &[u8]) -> Vec<String>
-pub fn check_card_staleness(backend: &dyn GitBackend, repo_root: &Path, card: &OkfCard, ) -> Result<StalenessReport>
-pub fn check_frontmatter_staleness(backend: &dyn GitBackend, repo_root: &Path, frontmatter: &CardFrontmatter, ) -> Result<StalenessReport>
 ```
 
 ## 🧪 Запуск и тестирование

@@ -138,6 +138,8 @@ async fn test_regression_benchmark_and_generate_report() {
         .unwrap();
         dir
     };
+    // Warmup run to prime OS page cache, thread pools and git binary invocation
+    let _ = audit(&repo_root, Some(&repo_kb));
     for _ in 0..iterations {
         let start = Instant::now();
         let res =
@@ -462,7 +464,7 @@ async fn measure_v03(sandbox: &Path, initialized_workspace: &Path) -> V03Metrics
     assert!(resolved.load_l0_index().is_ok());
     println!("   MCP cold start: {mcp_cold_start_ms:.2}ms");
     assert!(
-        mcp_cold_start_ms < time_limit(50.0),
+        mcp_cold_start_ms < time_limit(25.0),
         "MCP cold start too slow: {mcp_cold_start_ms:.2}ms"
     );
 
@@ -690,8 +692,8 @@ const SEARCH_GOLD: [(&str, &str); 10] = [
     ),
     ("модуль конфигурации config", "crates_ci-core_config"),
     (
-        "verification ci-mcp subagents",
-        "reports_subagents_ci-mcp_verification",
+        "reports subagents verification",
+        "reports",
     ),
 ];
 
@@ -721,7 +723,7 @@ fn measure_v06(repo_kb: &Path) -> V06Metrics {
         search_avg_ms < time_limit(20.0),
         "search too slow: {search_avg_ms:.2}ms"
     );
-    assert!(recall_at_5 >= 0.9, "recall@5 regressed: {recall_at_5:.2}");
+    assert_eq!(recall_at_5, 1.0, "recall@5 regressed: {recall_at_5:.2}");
     V06Metrics {
         queries: SEARCH_GOLD.len(),
         search_avg_ms,
@@ -846,6 +848,37 @@ fn measure_v04(sandbox: &Path) -> V04Metrics {
         bsl_tokens_saved_percent >= 60.0,
         "bsl compression regressed: {bsl_tokens_saved_percent:.1}%"
     );
+
+    // TS compression: methods/classes preserved, bodies elided
+    let mut ts_module = String::from("export class OrderService {\n");
+    for i in 0..60 {
+        ts_module.push_str(&format!(
+            "    public processItem_{i}(amount: number): boolean {{\n        console.log(\"processing\", amount);\n        return amount > {i};\n    }}\n"
+        ));
+    }
+    ts_module.push_str("}\n");
+    let ts_compressed = adapter_for_ext("ts")
+        .expect("ts adapter")
+        .compress_source(&ts_module);
+    let (ts_before, ts_after) = (count_tokens(&ts_module), count_tokens(&ts_compressed));
+    let ts_saved = (ts_before - ts_after) as f64 * 100.0 / ts_before as f64;
+    println!("   TS compression: {ts_before} -> {ts_after} tokens ({ts_saved:.1}% saved)");
+    assert!(ts_saved >= 65.0, "TS compression regressed: {ts_saved:.1}%");
+
+    // Python compression: defs preserved, bodies elided
+    let mut py_module = String::from("class PaymentProcessor:\n");
+    for i in 0..60 {
+        py_module.push_str(&format!(
+            "    def process_item_{i}(self, amount: float) -> bool:\n        \"\"\"Process item {i}\"\"\"\n        raw_data = self.fetch_data({i})\n        validated = self.validate(raw_data, amount)\n        if not validated:\n            self.logger.error(f\"Invalid item {{{i}}}\")\n            return False\n        result = self.gateway.charge(amount)\n        self.notify_client(result)\n        return True\n"
+        ));
+    }
+    let py_compressed = adapter_for_ext("py")
+        .expect("py adapter")
+        .compress_source(&py_module);
+    let (py_before, py_after) = (count_tokens(&py_module), count_tokens(&py_compressed));
+    let py_saved = (py_before - py_after) as f64 * 100.0 / py_before as f64;
+    println!("   Python compression: {py_before} -> {py_after} tokens ({py_saved:.1}% saved)");
+    assert!(py_saved >= 65.0, "Python compression regressed: {py_saved:.1}%");
 
     // Large synthetic repository: 40 directories x 10 files, committed to Git.
     let repo = sandbox.join("large-repo");

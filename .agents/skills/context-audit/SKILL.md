@@ -25,11 +25,13 @@ description: >-
 
 ### Шаг 1. Запуск регрессионного бенчмарк-комплекса
 
-Выполнить запуск тестов в режиме `--release` с фиксацией вывода:
+Выполнить запуск тестов в режиме `--release` с фиксацией вывода и записью отчетов:
 
 ```bash
-rtk cargo test --release --test regression_benchmark -- --nocapture
+CONTEXT_INIT_WRITE_BENCHMARK=1 rtk cargo test --release --test regression_benchmark -- --nocapture
 ```
+
+> **Важно:** Без переменной окружения `CONTEXT_INIT_WRITE_BENCHMARK=1` бенчмарк выполняется только в памяти и не обновляет файлы отчетов `reports/BENCHMARK_REPORT.md` и `reports/benchmark_latest.json`.
 
 Тестовый набор автоматически выполняет:
 - **Замер латентности Drift Audit:** 10 последовательных итераций проверки дрейфа на репозитории.
@@ -80,8 +82,10 @@ install -m 755 target/release/context-init ~/.local/bin/context-init
 
 ```bash
 # Проверка
-rtk context-init check --compact .
+rtk context-init check --compact --exit-code .
 
-# Синхронизация при появлении новых файлов/тестов
+# Синхронизация при появлении новых файлов/тестов или отчетов бенчмарка
 rtk context-init update . --compact
 ```
+
+> **Примечание по отчетам бенчмарка:** Обновление артефактов в каталоге `reports/` приводит к тому, что git-трекер помечает карточку `reports` как `git_stale`. После генерации отчетов перед сдачей задачи необходимо обновить базу знаний (`update`) и включить отчеты в коммит.

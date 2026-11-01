@@ -3,7 +3,7 @@ directory: crates/ci-mcp/src/tools.rs
 source:
   kind: git
   blob_sha: b53d2b979b2ead0a6d8775302ad2384ff38cd74a
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  commit_sha: 2ea8f3affd3c7e26633575afd792de4875d13585
 generated_by:
   component: context-init
   role: update
@@ -40,11 +40,6 @@ pub struct SubmitResult
 pub struct McpFeedbackParams
 pub struct FeedbackResult
 pub struct McpInitParams
-pub struct McpUpdateParams
-pub struct McpScanParams
-pub struct McpWorkspaceParams
-pub struct McpTaskParams
-pub struct McpSearchParams
 ```
 
 ## 🧪 Запуск и тестирование

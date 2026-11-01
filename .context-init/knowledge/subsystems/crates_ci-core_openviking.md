@@ -3,7 +3,7 @@ directory: crates/ci-core/src/openviking.rs
 source:
   kind: git
   blob_sha: d0748321868e0379c157555376f25c17ac24b0f7
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  commit_sha: 2ea8f3affd3c7e26633575afd792de4875d13585
 generated_by:
   component: context-init
   role: update
@@ -35,13 +35,7 @@ pub struct CardSource
 pub struct CardGeneratedBy
 pub struct CardFreshness
 pub struct CardFrontmatter
-pub fn to_yaml(&self) -> String
-pub fn parse_yaml(yaml_text: &str) -> Result<Self>
 pub struct OkfCard
-pub fn new(mut frontmatter: CardFrontmatter, body: impl Into<String>) -> Self
-pub fn parse(markdown: &str) -> Result<Self>
-pub fn to_markdown(&self) -> String
-pub fn l0_abstract(&self) -> String
 pub fn extract_l0_abstract(markdown: &str) -> String
 pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String
 ```
