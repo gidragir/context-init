@@ -540,6 +540,13 @@ pub fn render_telemetry_report(events: &[TelemetryEvent], include_notes: bool) -
     let mut op_by_tool: BTreeMap<String, usize> = BTreeMap::new();
     let mut op_errors: BTreeMap<String, usize> = BTreeMap::new();
 
+    let mut op_groups: OpGroups = BTreeMap::new();
+    let mut op_nested = 0usize;
+    // Efficiency signals carry no harness, so savings aggregate under `unknown`.
+    let mut savings_by_harness: BTreeMap<String, usize> = BTreeMap::new();
+    let mut search_total = 0usize;
+    let mut search_empty = 0usize;
+
     let mut eff_count = 0usize;
     let mut eff_response_tokens = 0usize;
     let mut eff_source_tokens = 0usize;
@@ -577,6 +584,21 @@ pub fn render_telemetry_report(events: &[TelemetryEvent], include_notes: bool) -
                 if op.latency_ms > op_max_latency_ms {
                     op_max_latency_ms = op.latency_ms;
                 }
+                let group = op_groups
+                    .entry((
+                        op.harness.clone().unwrap_or_else(|| "unknown".to_string()),
+                        op.channel.clone(),
+                        op.tool.clone(),
+                    ))
+                    .or_default();
+                group.0 += 1;
+                if !op.success {
+                    group.1 += 1;
+                }
+                group.2.push(op.latency_ms);
+                if op.nested {
+                    op_nested += 1;
+                }
                 *op_by_tool.entry(op.tool.clone()).or_insert(0) += 1;
                 if let Some(ref err_cls) = op.error_class {
                     *op_errors.entry(err_cls.clone()).or_insert(0) += 1;
@@ -584,6 +606,15 @@ pub fn render_telemetry_report(events: &[TelemetryEvent], include_notes: bool) -
             }
             TelemetrySignal::Efficiency(eff) => {
                 eff_count += 1;
+                let saved = eff.source_tokens.saturating_sub(eff.response_tokens);
+                let entry = savings_by_harness.entry("unknown".to_string()).or_insert(0);
+                *entry = entry.saturating_add(saved);
+                if matches!(eff.tool.as_str(), "context_search" | "search") {
+                    search_total += 1;
+                    if eff.empty_search {
+                        search_empty += 1;
+                    }
+                }
                 eff_response_tokens = eff_response_tokens.saturating_add(eff.response_tokens);
                 eff_source_tokens = eff_source_tokens.saturating_add(eff.source_tokens);
                 if eff.truncated {
@@ -736,7 +767,56 @@ pub fn render_telemetry_report(events: &[TelemetryEvent], include_notes: bool) -
         ));
     }
 
+    md.push_str("\n## По харнессам и каналам\n\n");
+    md.push_str("| харнесс | канал | инструмент | вызовы | ошибки, % | p50, мс |\n");
+    md.push_str("|---|---|---|---|---|---|\n");
+    for ((harness, channel, tool), (calls, errors, latencies)) in &mut op_groups {
+        latencies.sort_unstable();
+        // Lower median: for an even count take the lower of the two middle values.
+        let p50 = latencies[(latencies.len() - 1) / 2];
+        md.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} |\n",
+            harness,
+            channel,
+            tool,
+            calls,
+            percent(*errors, *calls),
+            p50
+        ));
+    }
+
+    md.push_str("\n## Вложенные вызовы\n\n");
+    md.push_str(&format!(
+        "- Вложенных: {} из {} ({}%)\n",
+        op_nested,
+        op_count,
+        percent(op_nested, op_count)
+    ));
+
+    md.push_str("\n## Экономия токенов\n\n");
+    let total_saved: usize = savings_by_harness.values().sum();
+    md.push_str(&format!("- Сэкономлено токенов: {}\n", total_saved));
+    for (harness, saved) in &savings_by_harness {
+        md.push_str(&format!("  - `{}`: {}\n", harness, saved));
+    }
+
+    md.push_str("\n## Пустой поиск\n\n");
+    md.push_str(&format!(
+        "- Пустых: {} из {} ({}%)\n",
+        search_empty,
+        search_total,
+        percent(search_empty, search_total)
+    ));
+
     md
+}
+
+/// `(harness, channel, tool)` -> `(calls, errors, latencies)`.
+type OpGroups = BTreeMap<(String, String, String), (usize, usize, Vec<u64>)>;
+
+/// Integer percentage `part / total`, rounded to nearest; `0` when `total == 0`.
+fn percent(part: usize, total: usize) -> usize {
+    (part * 100 + total / 2).checked_div(total).unwrap_or(0)
 }
 
 fn resolve_telemetry_dir(base: &Path) -> PathBuf {
@@ -1009,5 +1089,71 @@ mod recorder_tests {
             classify_error(&anyhow::anyhow!("weird")),
             ErrorClass::Internal
         );
+    }
+}
+
+#[cfg(test)]
+mod report_usage_tests {
+    use super::*;
+
+    fn op(harness: &str, channel: &str, tool: &str, ok: bool, nested: bool) -> TelemetryEvent {
+        TelemetryEvent::with_timestamp(
+            "p",
+            "2026-01-02",
+            TelemetrySignal::Operational(OperationalSignal {
+                tool: tool.to_string(),
+                channel: channel.to_string(),
+                harness: Some(harness.to_string()),
+                latency_ms: 10,
+                success: ok,
+                error_class: (!ok).then(|| "io".to_string()),
+                version: "0.1.0".to_string(),
+                os: "linux".to_string(),
+                nested,
+            }),
+        )
+    }
+
+    fn eff(tool: &str, source: usize, response: usize, empty: bool) -> TelemetryEvent {
+        TelemetryEvent::with_timestamp(
+            "p",
+            "2026-01-02",
+            TelemetrySignal::Efficiency(EfficiencySignal {
+                tool: tool.to_string(),
+                response_tokens: response,
+                source_tokens: source,
+                empty_search: empty,
+                ..Default::default()
+            }),
+        )
+    }
+
+    #[test]
+    fn report_groups_by_harness_and_channel() {
+        let events = vec![
+            op("claude-code", "mcp", "context_pack", true, false),
+            op("claude-code", "mcp", "context_pack", true, true),
+            op("antigravity", "cli", "pack", false, false),
+            eff("context_pack", 5000, 1000, false),
+            eff("context_pack", 2000, 3000, false),
+            eff("context_search", 0, 0, true),
+            eff("context_search", 5, 5, false),
+        ];
+        let report = render_telemetry_report(&events, false);
+        assert!(report.contains("## По харнессам и каналам"), "{report}");
+        assert!(
+            report.contains("claude-code | mcp | context_pack | 2 | 0"),
+            "{report}"
+        );
+        assert!(
+            report.contains("antigravity | cli | pack | 1 | 100"),
+            "{report}"
+        );
+        assert!(report.contains("## Вложенные вызовы"), "{report}");
+        assert!(report.contains("Вложенных: 1 из 3 (33%)"), "{report}");
+        assert!(report.contains("## Экономия токенов"), "{report}");
+        assert!(report.contains("Сэкономлено токенов: 4000"), "{report}");
+        assert!(report.contains("## Пустой поиск"), "{report}");
+        assert!(report.contains("Пустых: 1 из 2 (50%)"), "{report}");
     }
 }
