@@ -274,28 +274,7 @@ fn parse_gradle(root: &Path) -> Option<(ProjectType, Option<String>, Vec<String>
         return None;
     }
 
-    let mut name = None;
-    for p in [&settings_kts, &settings] {
-        if let Ok(content) = fs::read_to_string(p) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("rootProject.name") {
-                    if let Some((_, right)) = trimmed.split_once('=') {
-                        let n = right
-                            .trim()
-                            .trim_matches(|c| c == '"' || c == '\'' || c == ';' || c == ' ');
-                        if !n.is_empty() {
-                            name = Some(n.to_string());
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        if name.is_some() {
-            break;
-        }
-    }
+    let (name, members) = gradle::parse_gradle_workspace(root);
 
     let is_kotlin = settings_kts.exists() || build_kts.exists() || {
         let b = fs::read_to_string(&build).unwrap_or_default();
@@ -308,7 +287,7 @@ fn parse_gradle(root: &Path) -> Option<(ProjectType, Option<String>, Vec<String>
         ProjectType::Java
     };
 
-    Some((ptype, name, Vec::new()))
+    Some((ptype, name, members))
 }
 
 fn parse_maven(root: &Path) -> Option<(ProjectType, Option<String>, Vec<String>)> {
@@ -1053,6 +1032,9 @@ fn discover_subsystems(
                     && name != "services"
                     && name != "modules"
                     && !dirs_to_inspect.contains(&path)
+                    && !dirs_to_inspect
+                        .iter()
+                        .any(|d| d.starts_with(&path) && d != &path)
                 {
                     // Проверяем, есть ли там хотя бы один полезный файл с кодом/конфигом
                     if contains_relevant_files(&path) {
@@ -1449,7 +1431,7 @@ impl SplitContext<'_> {
                         && Path::new(&f.path)
                             .extension()
                             .and_then(|ext| ext.to_str())
-                            .map_or(false, |ext| SOURCE_CODE_EXTENSIONS.contains(&ext))
+                            .is_some_and(|ext| SOURCE_CODE_EXTENSIONS.contains(&ext))
                 })
         });
 
@@ -1460,7 +1442,7 @@ impl SplitContext<'_> {
                         Path::new(&f.path)
                             .extension()
                             .and_then(|ext| ext.to_str())
-                            .map_or(false, |ext| SOURCE_CODE_EXTENSIONS.contains(&ext))
+                            .is_some_and(|ext| SOURCE_CODE_EXTENSIONS.contains(&ext))
                     });
                     if is_source {
                         promoted[i] = true;
@@ -2428,6 +2410,9 @@ fn generate_default_rules(pt: &ProjectType, with_rtk: bool) -> Vec<String> {
 
 pub(crate) mod mise;
 pub use mise::{parse_mise_tasks, MiseTasks};
+
+pub(crate) mod gradle;
+pub use gradle::parse_gradle_workspace;
 
 #[cfg(test)]
 mod tests;

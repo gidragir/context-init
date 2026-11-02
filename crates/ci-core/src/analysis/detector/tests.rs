@@ -1201,3 +1201,129 @@ run = "./gradlew extraTask"
     );
     assert!(!cmds_no_rtk.custom.contains_key("runner"));
 }
+
+#[test]
+fn test_parse_gradle_workspace_groovy_and_nested() {
+    let dir = tempfile::tempdir().unwrap();
+    let kts = r#"
+rootProject.name = "demo"
+include(":core", ":drive")
+include(":features:auth")
+includeBuild("build-logic")
+"#;
+    std::fs::write(dir.path().join("settings.gradle.kts"), kts).unwrap();
+    std::fs::create_dir_all(dir.path().join("core")).unwrap();
+    std::fs::create_dir_all(dir.path().join("drive")).unwrap();
+    std::fs::create_dir_all(dir.path().join("features/auth")).unwrap();
+    std::fs::create_dir_all(dir.path().join("build-logic")).unwrap();
+
+    let (name, members) = super::gradle::parse_gradle_workspace(dir.path());
+    assert_eq!(name.as_deref(), Some("demo"));
+    assert!(members.contains(&"core".to_string()));
+    assert!(members.contains(&"drive".to_string()));
+    assert!(members.contains(&"features/auth".to_string()));
+    assert!(members.contains(&"build-logic".to_string()));
+}
+
+#[test]
+fn test_parse_gradle_workspace_groovy_dsl() {
+    let dir = tempfile::tempdir().unwrap();
+    let groovy = r#"
+// This is a comment
+/* Multi-line
+   comment */
+rootProject.name = 'groovy-app'
+
+include ':app', ':common'
+include ':modules:auth'
+includeBuild 'build-logic'
+
+// include ':commented-out'
+"#;
+    std::fs::write(dir.path().join("settings.gradle"), groovy).unwrap();
+    std::fs::create_dir_all(dir.path().join("app")).unwrap();
+    std::fs::create_dir_all(dir.path().join("common")).unwrap();
+    std::fs::create_dir_all(dir.path().join("modules/auth")).unwrap();
+    std::fs::create_dir_all(dir.path().join("build-logic")).unwrap();
+    // Non-existent directory should not be in members
+    // e.g. if we had include ':missing' without creating dir
+
+    let (name, members) = super::gradle::parse_gradle_workspace(dir.path());
+    assert_eq!(name.as_deref(), Some("groovy-app"));
+    assert_eq!(members.len(), 4);
+    assert!(members.contains(&"app".to_string()));
+    assert!(members.contains(&"common".to_string()));
+    assert!(members.contains(&"modules/auth".to_string()));
+    assert!(members.contains(&"build-logic".to_string()));
+    assert!(!members.contains(&"commented-out".to_string()));
+}
+
+#[test]
+fn test_parse_gradle_workspace_security_escaping() {
+    let dir = tempfile::tempdir().unwrap();
+    let kts = r#"
+rootProject.name = "safe-app"
+include(":safe-mod")
+include(":../escaped")
+includeBuild("../outside")
+"#;
+    std::fs::write(dir.path().join("settings.gradle.kts"), kts).unwrap();
+    std::fs::create_dir_all(dir.path().join("safe-mod")).unwrap();
+
+    let (name, members) = super::gradle::parse_gradle_workspace(dir.path());
+    assert_eq!(name.as_deref(), Some("safe-app"));
+    assert_eq!(members, vec!["safe-mod".to_string()]);
+}
+
+#[test]
+fn test_gradle_subsystems_parent_overlap_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let kts = r#"
+rootProject.name = "parent-guard-test"
+include(":features:auth", ":features:billing")
+"#;
+    std::fs::write(dir.path().join("settings.gradle.kts"), kts).unwrap();
+    std::fs::create_dir_all(dir.path().join("features/auth")).unwrap();
+    std::fs::create_dir_all(dir.path().join("features/billing")).unwrap();
+    std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+    std::fs::create_dir_all(dir.path().join("scripts")).unwrap();
+
+    // Put a code file in each to make them relevant
+    std::fs::write(dir.path().join("features/auth/Auth.kt"), "class Auth").unwrap();
+    std::fs::write(
+        dir.path().join("features/billing/Billing.kt"),
+        "class Billing",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("docs/README.md"), "# Documentation").unwrap();
+    std::fs::write(
+        dir.path().join("scripts/deploy.sh"),
+        "#!/bin/bash\necho deploy",
+    )
+    .unwrap();
+
+    let (ptype, name, ws_members) = super::parse_gradle(dir.path()).unwrap();
+    assert_eq!(ptype, ProjectType::Kotlin);
+    assert_eq!(name.as_deref(), Some("parent-guard-test"));
+    assert!(ws_members.contains(&"features/auth".to_string()));
+    assert!(ws_members.contains(&"features/billing".to_string()));
+
+    let modules = super::discover_subsystems(dir.path(), &ws_members, &ptype, false, false, 15000);
+
+    let module_dirs: Vec<String> = modules.iter().map(|m| m.dir_path.clone()).collect();
+
+    // The subproject modules must be present
+    assert!(module_dirs.contains(&"features/auth".to_string()));
+    assert!(module_dirs.contains(&"features/billing".to_string()));
+
+    // Standalone infrastructure directories must be present
+    assert!(module_dirs.contains(&"docs".to_string()));
+    assert!(module_dirs.contains(&"scripts".to_string()));
+
+    // Parent directory 'features' MUST NOT be duplicated as a separate subsystem
+    assert!(
+        !module_dirs.contains(&"features".to_string()),
+        "Parent directory 'features' should not be present in modules: {:?}",
+        module_dirs
+    );
+}
