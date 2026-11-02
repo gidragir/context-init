@@ -1328,7 +1328,20 @@ fn module_entries(
             if files.is_empty() {
                 continue;
             }
-            let stem = if is_dir {
+            let in_test_dir = dir
+                .file_name()
+                .map(|n| n == "tests" || n == "test")
+                .unwrap_or(false);
+
+            let is_all_tests = !in_test_dir
+                && !files.is_empty()
+                && files
+                    .iter()
+                    .all(|f| tests_classifier::is_test_path(&f.path));
+
+            let stem = if is_all_tests {
+                tests_classifier::test_group_stem(&files[0].path)
+            } else if is_dir {
                 name.clone()
             } else {
                 path.file_stem()
@@ -1342,7 +1355,7 @@ fn module_entries(
                 .unwrap_or("")
                 .to_lowercase();
             let is_source = SOURCE_CODE_EXTENSIONS.contains(&ext.as_str());
-            let pinned = !is_dir && (is_file_entrypoint(&name) || !is_source);
+            let pinned = !is_all_tests && !is_dir && (is_file_entrypoint(&name) || !is_source);
             let entry = by_stem.entry(stem.clone()).or_insert_with(|| ModuleEntry {
                 stem,
                 dir: None,
@@ -1353,8 +1366,10 @@ fn module_entries(
                 pinned: false,
             });
             if is_dir {
-                entry.dir = Some(path.clone());
-            } else {
+                if entry.dir.is_none() {
+                    entry.dir = Some(path.clone());
+                }
+            } else if entry.file.is_none() {
                 entry.file = Some(path.clone());
             }
             entry.files.extend(files);
@@ -1416,6 +1431,19 @@ impl SplitContext<'_> {
             if kept_tokens <= self.threshold {
                 break;
             }
+            // Invariant: never promote a single test file into an L1 subsystem
+            let entry = &entries[i];
+            let is_single_test_file = id != "tests"
+                && entry.dir.is_none()
+                && entry.stem != "tests"
+                && !entry.stem.starts_with("tests_")
+                && entry
+                    .files
+                    .iter()
+                    .any(|f| tests_classifier::is_test_path(&f.path));
+            if is_single_test_file {
+                continue;
+            }
             promoted[i] = true;
             kept_tokens -= entries[i].tokens;
         }
@@ -1438,6 +1466,13 @@ impl SplitContext<'_> {
         if has_promoted_file && !has_pinned_code_entrypoint {
             for (i, entry) in entries.iter().enumerate() {
                 if !promoted[i] && !entry.pinned && entry.dir.is_none() && entry.tokens >= 300 {
+                    let is_test = entry
+                        .files
+                        .iter()
+                        .any(|f| tests_classifier::is_test_path(&f.path));
+                    if is_test {
+                        continue;
+                    }
                     let is_source = entry.files.iter().any(|f| {
                         Path::new(&f.path)
                             .extension()
@@ -1467,6 +1502,28 @@ impl SplitContext<'_> {
         for child in children {
             let child_id = sanitize_id(&format!("{id}_{}", child.stem));
             let child_name = format!("{name} {}", child.stem);
+            let is_test_group = child.stem == "tests"
+                || child.stem.starts_with("tests_")
+                || child
+                    .files
+                    .iter()
+                    .all(|f| tests_classifier::is_test_path(&f.path));
+            if is_test_group {
+                let target_path = child
+                    .dir
+                    .as_deref()
+                    .or(child.file.as_deref())
+                    .unwrap_or(dir);
+                out.push(self.module(
+                    target_path,
+                    dir,
+                    &child_id,
+                    &child_name,
+                    Some(id),
+                    child.files,
+                ));
+                continue;
+            }
             match (&child.dir, child.tokens > self.threshold) {
                 (Some(child_dir), true) => {
                     let mut child_entries =
@@ -1640,19 +1697,7 @@ fn count_lines(path: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// Whether a project-relative path is test code: a `tests/` directory segment, a `tests.rs`
-/// file, or a `_test.rs` / `_tests.rs` / `_test.py` / `test_*.py` file name.
-pub fn is_test_path(rel: &str) -> bool {
-    let normalized = rel.replace('\\', "/");
-    let mut segments: Vec<&str> = normalized.split('/').collect();
-    let name = segments.pop().unwrap_or("");
-    segments.contains(&"tests")
-        || name == "tests.rs"
-        || name.ends_with("_test.rs")
-        || name.ends_with("_tests.rs")
-        || name.ends_with("_test.py")
-        || (name.starts_with("test_") && name.ends_with(".py"))
-}
+pub use tests_classifier::is_test_path;
 
 fn extract_symbols_from_files(
     subsystem_dir: &Path,
@@ -2413,6 +2458,8 @@ pub use mise::{parse_mise_tasks, MiseTasks};
 
 pub(crate) mod gradle;
 pub use gradle::parse_gradle_workspace;
+
+pub(crate) mod tests_classifier;
 
 #[cfg(test)]
 mod tests;

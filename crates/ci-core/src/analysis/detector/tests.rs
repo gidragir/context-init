@@ -819,6 +819,18 @@ fn is_test_path_matches_known_shapes() {
         "src\\a\\tests.rs",
         "tests\\it.rs",
         "attest_test.rs",
+        "core/src/commonTest/kotlin/MainTest.kt",
+        "core/src/jvmTest/kotlin/MainTests.kt",
+        "core/src/jsTest/kotlin/MainSpec.kt",
+        "app/src/test/java/ExampleTest.java",
+        "app/src/test/java/ExampleTestCase.java",
+        "src/components/Button.test.tsx",
+        "src/components/Button.test.ts",
+        "src/components/Button.spec.js",
+        "pkg/server_test.go",
+        "tests/e2e/login.spec.ts",
+        "__tests__/utils.js",
+        "specs/feature.js",
     ] {
         assert!(is_test_path(p), "{p}");
     }
@@ -1325,5 +1337,49 @@ include(":features:auth", ":features:billing")
         !module_dirs.contains(&"features".to_string()),
         "Parent directory 'features' should not be present in modules: {:?}",
         module_dirs
+    );
+}
+
+#[test]
+fn test_prevent_test_file_atomization_flat_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    // Создаем модуль с кодом и 25 тестами
+    let src_dir = dir.path().join("core/src/commonMain/kotlin");
+    let test_dir = dir.path().join("core/src/commonTest/kotlin");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::write(src_dir.join("Main.kt"), "class Main").unwrap();
+    for i in 0..25 {
+        let content = format!(
+            "class Test{} {{\n    fun test() {{ assert(true) }}\n}}\n",
+            i
+        );
+        // Заполняем строками > 300 токенов (всего > 15 000 токенов для вызова сплиттера)
+        let padded = format!("{}\n{}", content, "// comment\n".repeat(300));
+        std::fs::write(test_dir.join(format!("MyTest{}.kt", i)), padded).unwrap();
+    }
+    let analysis = super::analyze_project(dir.path(), false, false).unwrap();
+    let modules = &analysis.detected_modules;
+    // Тесты не должны распасться на 25 независимых подсистем
+    let single_file_test_modules: Vec<_> = modules
+        .iter()
+        .filter(|m| m.files.len() == 1 && super::tests_classifier::is_test_path(&m.files[0].path))
+        .collect();
+    assert_eq!(
+        single_file_test_modules.len(),
+        0,
+        "No single test file may become an L1 subsystem"
+    );
+    let test_modules: Vec<_> = modules.iter().filter(|m| m.id.contains("tests")).collect();
+    assert_eq!(
+        test_modules.len(),
+        1,
+        "Expected exactly 1 aggregated test module, got {:?}",
+        modules.iter().map(|m| &m.id).collect::<Vec<_>>()
+    );
+    assert_eq!(test_modules[0].id, "core_tests_common");
+    assert!(
+        test_modules[0].files.len() <= 15,
+        "Representative files must be capped at 15"
     );
 }
