@@ -1042,3 +1042,23 @@ fn test_truncate_to_boundary_trailing_punctuation() {
     assert!(!res.contains(":,"));
     assert!(res.ends_with("..."));
 }
+
+#[test]
+fn test_is_file_entrypoint_gradle_maven() {
+    assert!(super::is_file_entrypoint("build.gradle.kts"));
+    assert!(super::is_file_entrypoint("build.gradle"));
+    assert!(super::is_file_entrypoint("pom.xml"));
+    assert!(super::is_file_entrypoint("CMakeLists.txt"));
+}
+
+#[test]
+fn test_detect_root_entrypoints_gradle_maven() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("build.gradle.kts"), "").unwrap();
+    std::fs::write(dir.path().join("settings.gradle.kts"), "").unwrap();
+    std::fs::write(dir.path().join("pom.xml"), "").unwrap();
+    let entrypoints = super::detect_root_entrypoints(dir.path());
+    assert!(entrypoints.contains(&"build.gradle.kts".to_string()));
+    assert!(entrypoints.contains(&"settings.gradle.kts".to_string()));
+    assert!(entrypoints.contains(&"pom.xml".to_string()));
+}

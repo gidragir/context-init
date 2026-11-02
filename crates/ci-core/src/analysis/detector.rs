@@ -783,6 +783,16 @@ fn detect_root_entrypoints(root: &Path) -> Vec<String> {
         "compose.yaml",
         "docker-compose.yml",
         "mise.toml",
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "build.gradle",
+        "settings.gradle",
+        "pom.xml",
+        "CMakeLists.txt",
+        "Makefile",
+        "pnpm-workspace.yaml",
+        "Justfile",
+        "justfile",
     ];
 
     let mut entrypoints = Vec::new();
@@ -1625,6 +1635,10 @@ fn is_file_entrypoint(name: &str) -> bool {
             | "main.go"
             | "Cargo.toml"
             | "package.json"
+            | "build.gradle.kts"
+            | "build.gradle"
+            | "pom.xml"
+            | "CMakeLists.txt"
     )
 }
 
