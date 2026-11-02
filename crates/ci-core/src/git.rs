@@ -777,7 +777,7 @@ pub fn check_subsystem_staleness_with_snapshot(
     let diff_stat = if stale {
         let scope_paths: Vec<String> = paths
             .iter()
-            .map(|p| normalize_path(p))
+            .map(normalize_path)
             .filter(|p| !p.is_empty() && p != ".")
             .collect();
 

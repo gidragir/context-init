@@ -41,26 +41,24 @@ impl LanguageAdapter for BraceLangAdapter {
                 continue;
             }
 
-            if !eliding {
-                if trimmed.contains("interface ")
+            if !eliding
+                && (trimmed.contains("interface ")
                     || trimmed.starts_with("type ")
-                    || trimmed.contains(" type ")
-                {
-                    if interface_depth.is_none() {
-                        interface_depth = Some(depth);
-                    }
-                }
+                    || trimmed.contains(" type "))
+                && interface_depth.is_none()
+            {
+                interface_depth = Some(depth);
             }
 
             let mut prev_char = '\0';
             let mut in_line_comment = false;
             let mut in_str: Option<char> = None;
-            let mut chars = trimmed.chars().peekable();
+            let chars = trimmed.chars();
 
             let mut line_should_elide = false;
             let mut body_start_indent = "";
 
-            while let Some(c) = chars.next() {
+            for c in chars {
                 if in_line_comment {
                     break;
                 }
@@ -114,9 +112,7 @@ impl LanguageAdapter for BraceLangAdapter {
                         }
                     }
                 } else if c == '}' {
-                    if depth > 0 {
-                        depth -= 1;
-                    }
+                    depth = depth.saturating_sub(1);
                     if let Some(id) = interface_depth {
                         if depth <= id {
                             interface_depth = None;
