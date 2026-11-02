@@ -5,7 +5,8 @@
 //! of test suites into individual L1 subsystems.
 
 /// Whether a project-relative path is test code: a test directory segment
-/// (`tests`, `test`, `commonTest`, `jvmTest`, `jsTest`, `__tests__`, `e2e`, `spec`, `specs`),
+/// (`tests`, `test`, `commonTest`, `jvmTest`, `jsTest`, `iosTest`, `androidTest`,
+/// `androidUnitTest`, `__tests__`, `e2e`, `spec`, `specs`),
 /// or a test file name pattern (`*Test.kt`, `*Tests.kt`, `*Spec.kt`, `*Test.java`,
 /// `*TestCase.java`, `*.test.*`, `*.spec.*`, `*_test.go`, `tests.rs`, `*_test.rs`,
 /// `*_tests.rs`, `test_*.py`, `*_test.py`).
@@ -23,6 +24,9 @@ pub fn is_test_path(rel: &str) -> bool {
                 | "commonTest"
                 | "jvmTest"
                 | "jsTest"
+                | "iosTest"
+                | "androidTest"
+                | "androidUnitTest"
                 | "__tests__"
                 | "e2e"
                 | "spec"
@@ -92,6 +96,16 @@ pub fn test_group_stem(rel: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_test_path() {
+        assert!(is_test_path("core/src/iosTest/kotlin/Fakes.kt"));
+        assert!(is_test_path("core/src/androidTest/kotlin/Helper.kt"));
+        assert!(is_test_path("core/src/androidUnitTest/kotlin/Mock.kt"));
+        assert!(is_test_path("core/src/commonTest/kotlin/Fakes.kt"));
+        assert!(is_test_path("core/src/jvmTest/kotlin/Utils.kt"));
+        assert!(!is_test_path("core/src/iosMain/kotlin/Fakes.kt"));
+    }
 
     #[test]
     fn test_target_extraction() {

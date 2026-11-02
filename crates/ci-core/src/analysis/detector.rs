@@ -21,6 +21,8 @@ pub(crate) const IGNORED_DIRS: &[&str] = &[
     "target",
     "dist",
     "build",
+    "gradle",
+    ".gradle",
     ".idea",
     ".vscode",
     ".cargo",

@@ -822,6 +822,8 @@ fn is_test_path_matches_known_shapes() {
         "core/src/commonTest/kotlin/MainTest.kt",
         "core/src/jvmTest/kotlin/MainTests.kt",
         "core/src/jsTest/kotlin/MainSpec.kt",
+        "core/src/iosTest/kotlin/Fakes.kt",
+        "core/src/androidTest/kotlin/Helper.kt",
         "app/src/test/java/ExampleTest.java",
         "app/src/test/java/ExampleTestCase.java",
         "src/components/Button.test.tsx",
