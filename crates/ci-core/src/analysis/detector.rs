@@ -609,10 +609,6 @@ pub use crate::tokens::count_tokens;
 fn detect_commands(root: &Path, pt: &ProjectType, with_rtk: bool) -> ProjectCommands {
     let mut cmds = ProjectCommands::default();
 
-    // Проверяем mise.toml на приоритетные команды
-    let mise_path = root.join("mise.toml");
-    let has_mise = mise_path.exists();
-
     match pt {
         ProjectType::Rust => {
             cmds.build = Some("cargo build".to_string());
@@ -741,9 +737,25 @@ fn detect_commands(root: &Path, pt: &ProjectType, with_rtk: bool) -> ProjectComm
         }
     }
 
-    if has_mise {
-        cmds.custom
-            .insert("runner".to_string(), "mise (task runner)".to_string());
+    if let Some(mise_tasks) = mise::parse_mise_tasks(root) {
+        if let Some(build) = mise_tasks.build {
+            cmds.build = Some(build);
+        }
+        if let Some(test) = mise_tasks.test {
+            cmds.test = Some(test);
+        }
+        if let Some(lint) = mise_tasks.lint {
+            cmds.lint = Some(lint);
+        }
+        if let Some(fmt) = mise_tasks.fmt {
+            cmds.fmt = Some(fmt);
+        }
+        if let Some(run) = mise_tasks.run {
+            cmds.run = Some(run);
+        }
+        for (k, v) in mise_tasks.custom {
+            cmds.custom.insert(k, v);
+        }
     }
 
     if with_rtk {
@@ -752,10 +764,8 @@ fn detect_commands(root: &Path, pt: &ProjectType, with_rtk: bool) -> ProjectComm
         cmds.lint = cmds.lint.map(|c| prefix_with_rtk(&c));
         cmds.fmt = cmds.fmt.map(|c| prefix_with_rtk(&c));
         cmds.run = cmds.run.map(|c| prefix_with_rtk(&c));
-        for (k, val) in cmds.custom.iter_mut() {
-            if k != "runner" {
-                *val = prefix_with_rtk(val);
-            }
+        for val in cmds.custom.values_mut() {
+            *val = prefix_with_rtk(val);
         }
     }
 
@@ -2415,6 +2425,9 @@ fn generate_default_rules(pt: &ProjectType, with_rtk: bool) -> Vec<String> {
         ],
     }
 }
+
+pub(crate) mod mise;
+pub use mise::{parse_mise_tasks, MiseTasks};
 
 #[cfg(test)]
 mod tests;

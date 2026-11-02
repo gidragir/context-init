@@ -1062,3 +1062,142 @@ fn test_detect_root_entrypoints_gradle_maven() {
     assert!(entrypoints.contains(&"settings.gradle.kts".to_string()));
     assert!(entrypoints.contains(&"pom.xml".to_string()));
 }
+
+#[test]
+fn test_parse_mise_tasks_multiline_and_depends() {
+    let dir = tempfile::tempdir().unwrap();
+    let toml = r#"
+[tasks.build]
+run = "./gradlew build"
+
+[tasks.test]
+description = "Run all tests"
+run = "./gradlew allTests"
+
+[tasks.desktop]
+run = "./gradlew :app-desktop:run"
+
+[tasks.check]
+depends = ["build", "test"]
+"#;
+    std::fs::write(dir.path().join("mise.toml"), toml).unwrap();
+    let tasks = super::mise::parse_mise_tasks(dir.path()).expect("mise tasks must be parsed");
+    assert_eq!(tasks.build.as_deref(), Some("mise run build"));
+    assert_eq!(tasks.test.as_deref(), Some("mise run test"));
+    assert_eq!(
+        tasks.custom.get("desktop").map(String::as_str),
+        Some("mise run desktop")
+    );
+    assert_eq!(
+        tasks.custom.get("check").map(String::as_str),
+        Some("mise run check")
+    );
+}
+
+#[test]
+fn test_parse_mise_tasks_runner() {
+    let dir = tempfile::tempdir().unwrap();
+    let toml = r#"
+[tasks.check]
+run = "cargo check"
+
+[tasks.clippy]
+run = "cargo clippy --all-targets"
+
+[tasks.format]
+run = "cargo fmt --check"
+
+[tasks.dev]
+run = "cargo run --example dev"
+
+[tasks.release]
+run = "cargo build --release"
+"#;
+    std::fs::write(dir.path().join("mise.toml"), toml).unwrap();
+    let tasks = super::mise::parse_mise_tasks(dir.path()).expect("mise tasks must be parsed");
+    // build is None because no build task
+    assert_eq!(tasks.build, None);
+    // test falls back to check
+    assert_eq!(tasks.test.as_deref(), Some("mise run check"));
+    // lint falls back to clippy
+    assert_eq!(tasks.lint.as_deref(), Some("mise run clippy"));
+    // fmt falls back to format
+    assert_eq!(tasks.fmt.as_deref(), Some("mise run format"));
+    // run falls back to dev
+    assert_eq!(tasks.run.as_deref(), Some("mise run dev"));
+    // custom contains non-primary-slot tasks: check, clippy, format, dev, release
+    assert_eq!(
+        tasks.custom.get("check").map(String::as_str),
+        Some("mise run check")
+    );
+    assert_eq!(
+        tasks.custom.get("clippy").map(String::as_str),
+        Some("mise run clippy")
+    );
+    assert_eq!(
+        tasks.custom.get("format").map(String::as_str),
+        Some("mise run format")
+    );
+    assert_eq!(
+        tasks.custom.get("dev").map(String::as_str),
+        Some("mise run dev")
+    );
+    assert_eq!(
+        tasks.custom.get("release").map(String::as_str),
+        Some("mise run release")
+    );
+}
+
+#[test]
+fn test_parse_mise_tasks_missing_or_no_tasks() {
+    let dir = tempfile::tempdir().unwrap();
+    // No mise.toml exists
+    assert!(super::mise::parse_mise_tasks(dir.path()).is_none());
+
+    // mise.toml without [tasks]
+    std::fs::write(dir.path().join("mise.toml"), "[tools]\nnode = '20'\n").unwrap();
+    assert!(super::mise::parse_mise_tasks(dir.path()).is_none());
+}
+
+#[test]
+fn test_detect_commands_with_mise_merging_and_rtk() {
+    let dir = tempfile::tempdir().unwrap();
+    let toml = r#"
+[tasks.build]
+run = "./gradlew assemble"
+
+[tasks.test]
+run = "./gradlew allTests"
+
+[tasks.extra]
+run = "./gradlew extraTask"
+"#;
+    std::fs::write(dir.path().join("mise.toml"), toml).unwrap();
+
+    // With rtk
+    let cmds = super::detect_commands(dir.path(), &ProjectType::Rust, true);
+    assert_eq!(cmds.build.as_deref(), Some("rtk mise run build"));
+    assert_eq!(cmds.test.as_deref(), Some("rtk mise run test"));
+    // Language default for Rust lint and fmt preserved, but prefixed with rtk
+    assert_eq!(cmds.lint.as_deref(), Some("rtk cargo clippy"));
+    assert_eq!(cmds.fmt.as_deref(), Some("rtk cargo fmt --check"));
+    // Custom task extra present and prefixed with rtk
+    assert_eq!(
+        cmds.custom.get("extra").map(String::as_str),
+        Some("rtk mise run extra")
+    );
+    // No fake "runner" command exists
+    assert!(!cmds.custom.contains_key("runner"));
+
+    // Without rtk
+    let cmds_no_rtk = super::detect_commands(dir.path(), &ProjectType::Rust, false);
+    assert_eq!(cmds_no_rtk.build.as_deref(), Some("mise run build"));
+    assert_eq!(cmds_no_rtk.test.as_deref(), Some("mise run test"));
+    assert_eq!(cmds_no_rtk.lint.as_deref(), Some("cargo clippy"));
+    assert_eq!(cmds_no_rtk.fmt.as_deref(), Some("cargo fmt --check"));
+    assert_eq!(
+        cmds_no_rtk.custom.get("extra").map(String::as_str),
+        Some("mise run extra")
+    );
+    assert!(!cmds_no_rtk.custom.contains_key("runner"));
+}
