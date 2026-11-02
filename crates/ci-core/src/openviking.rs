@@ -409,14 +409,46 @@ pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> Strin
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
-    let char_count = text.chars().count();
+    truncate_to_boundary(text, max_chars)
+}
+
+/// Safely truncates `text` to at most `max_chars` characters, prioritizing
+/// complete sentence boundaries or whitespace word boundaries over mid-word cuts.
+pub fn truncate_to_boundary(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    let char_count = trimmed.chars().count();
     if char_count <= max_chars {
-        return text.to_string();
+        return trimmed.to_string();
     }
     if max_chars <= 3 {
-        return text.chars().take(max_chars).collect();
+        return trimmed.chars().take(max_chars).collect();
     }
-    let prefix: String = text.chars().take(max_chars - 3).collect();
+
+    let budget = max_chars - 3;
+    let prefix_char_count = trimmed.chars().take(budget).count();
+    let byte_boundary = trimmed
+        .char_indices()
+        .nth(prefix_char_count)
+        .map(|(idx, _)| idx)
+        .unwrap_or(trimmed.len());
+    let prefix = &trimmed[..byte_boundary];
+
+    let min_useful_chars = budget / 2;
+    if let Some(pos) = prefix.rfind(['.', '!', '?']) {
+        let candidate = prefix[..=pos].trim_end();
+        if candidate.chars().count() >= min_useful_chars {
+            return candidate.to_string();
+        }
+    }
+
+    if let Some(pos) = prefix.rfind(|c: char| c.is_whitespace()) {
+        let word_prefix = &prefix[..pos];
+        let cleaned = word_prefix.trim_end_matches([' ', '\t', ',', ';', ':', '-', '—', '–', '.']);
+        if !cleaned.is_empty() {
+            return format!("{}...", cleaned);
+        }
+    }
+
     format!("{}...", prefix.trim_end())
 }
 

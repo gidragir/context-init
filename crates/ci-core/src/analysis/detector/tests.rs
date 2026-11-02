@@ -1016,3 +1016,29 @@ fn split_context_promotes_sibling_code_files_and_keeps_readme_pinned() {
         "README must never become standalone subsystem: {ids:?}"
     );
 }
+
+#[test]
+fn test_truncate_to_boundary_sentence_priority() {
+    let text = "Один открытый инструмент синхронизации Obsidian-хранилища на всех платформах (Linux, Windows, Android). Он ощущается как Google Drive Desktop: один раз указал папку vault и пароль, дальше всё синхронизируется само. Локально лежат обычные .md.";
+    let res = crate::openviking::truncate_to_boundary(text, 220);
+    assert_eq!(
+        res,
+        "Один открытый инструмент синхронизации Obsidian-хранилища на всех платформах (Linux, Windows, Android). Он ощущается как Google Drive Desktop: один раз указал папку vault и пароль, дальше всё синхронизируется само."
+    );
+}
+
+#[test]
+fn test_truncate_to_boundary_unbroken_url() {
+    let url = "https://example.com/very/long/unbroken/path/without/spaces/that/exceeds/the/character/limit/completely/and/keeps/going/until/it/is/truncated/safely";
+    let res = crate::openviking::truncate_to_boundary(url, 50);
+    assert!(res.ends_with("..."));
+    assert!(res.chars().count() <= 50);
+}
+
+#[test]
+fn test_truncate_to_boundary_trailing_punctuation() {
+    let text = "Первая часть текста: вторая часть текста, которая обрезается.";
+    let res = crate::openviking::truncate_to_boundary(text, 25);
+    assert!(!res.contains(":,"));
+    assert!(res.ends_with("..."));
+}

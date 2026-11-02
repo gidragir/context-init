@@ -587,7 +587,7 @@ fn extract_description(root: &Path, fallback_name: &str) -> String {
                     && !trimmed.starts_with("```")
                     && trimmed.len() > 15
                 {
-                    return trimmed.chars().take(220).collect();
+                    return crate::openviking::truncate_to_boundary(trimmed, 220);
                 }
             }
         }
