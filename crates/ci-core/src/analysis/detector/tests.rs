@@ -1383,3 +1383,39 @@ fn test_prevent_test_file_atomization_flat_dir() {
         "Representative files must be capped at 15"
     );
 }
+
+#[test]
+fn test_extract_kotlin_symbols_multiline_no_braces() {
+    let source = r#"
+package dev.mimir.core
+
+sealed interface SyncStatus
+
+class RemoteUnavailableException(message: String) : Exception(message)
+
+internal fun doInternalSync(force: Boolean = false): Boolean
+
+private fun ignoredHelper() {
+    println("secret")
+}
+
+data class Account(val id: String, val name: String)
+"#;
+    let adapter =
+        crate::analysis::lang::adapter_for_ext("kt").expect("Kotlin adapter must be registered");
+    let symbols = adapter.extract_symbols(source);
+    assert!(symbols
+        .iter()
+        .any(|s| s.contains("sealed interface SyncStatus")));
+    assert!(symbols
+        .iter()
+        .any(|s| s.contains("class RemoteUnavailableException")));
+    assert!(symbols
+        .iter()
+        .any(|s| s.contains("internal fun doInternalSync")));
+    assert!(symbols.iter().any(|s| s.contains("data class Account")));
+    assert!(
+        !symbols.iter().any(|s| s.contains("ignoredHelper")),
+        "private functions must be ignored"
+    );
+}

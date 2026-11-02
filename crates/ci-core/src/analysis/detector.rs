@@ -1769,9 +1769,10 @@ fn extract_symbols_from_single_file(path: &Path, deep: bool) -> Vec<String> {
                 return syms;
             }
         }
-        if matches!(ext.as_str(), "bsl" | "os") {
-            if let Some(adapter) = crate::analysis::lang::adapter_for_ext(&ext) {
-                return adapter.extract_symbols(content);
+        if let Some(adapter) = crate::analysis::lang::adapter_for_ext(&ext) {
+            let syms = adapter.extract_symbols(content);
+            if !syms.is_empty() {
+                return syms;
             }
         }
         extract_multiline_symbols(content, &ext, deep)
@@ -2208,7 +2209,7 @@ fn find_param_parens(s: &str) -> Option<(usize, usize)> {
     None
 }
 
-fn clean_multiline_signature(raw: &str, ext: &str) -> String {
+pub(crate) fn clean_multiline_signature(raw: &str, ext: &str) -> String {
     let mut sig = raw.trim();
     if ext == "py" {
         sig = sig.trim_end_matches(':').trim();

@@ -5,8 +5,8 @@ use crate::analysis::detector::extract_multiline_symbols;
 pub struct BraceLangAdapter;
 
 const BRACE_EXTENSIONS: &[&str] = &[
-    "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "astro", "vue", "svelte", "kt", "kts",
-    "java", "cs", "go",
+    "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "astro", "vue", "svelte", "java", "cs",
+    "go",
 ];
 
 impl LanguageAdapter for BraceLangAdapter {

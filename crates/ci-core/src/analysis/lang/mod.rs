@@ -2,6 +2,7 @@
 
 mod brace;
 mod bsl;
+mod kotlin;
 pub mod mdo;
 mod python;
 mod rust;
@@ -10,6 +11,7 @@ use std::path::Path;
 
 pub use brace::BraceLangAdapter;
 pub use bsl::BslAdapter;
+pub use kotlin::KotlinAdapter;
 pub use python::PythonAdapter;
 pub use rust::RustAdapter;
 
@@ -32,10 +34,11 @@ pub trait LanguageAdapter: Send + Sync {
 static RUST: RustAdapter = RustAdapter;
 static PYTHON: PythonAdapter = PythonAdapter;
 static BSL: BslAdapter = BslAdapter;
+static KOTLIN: KotlinAdapter = KotlinAdapter;
 static BRACE: BraceLangAdapter = BraceLangAdapter;
 
-fn all() -> [&'static dyn LanguageAdapter; 4] {
-    [&RUST, &PYTHON, &BSL, &BRACE]
+fn all() -> [&'static dyn LanguageAdapter; 5] {
+    [&RUST, &PYTHON, &BSL, &KOTLIN, &BRACE]
 }
 
 /// Adapter for a file extension (with or without the dot, any case).
