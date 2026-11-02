@@ -271,10 +271,11 @@ fn is_symbol_start(line: &str) -> bool {
             i += 1;
             continue;
         }
+        if w == "fun" && i + 1 < words.len() && words[i + 1] == "interface" {
+            i += 1;
+            continue;
+        }
         if MODIFIERS.contains(&w) {
-            if w == "fun" && i + 1 < words.len() && words[i + 1] == "interface" {
-                return true;
-            }
             i += 1;
             continue;
         }
@@ -296,15 +297,11 @@ fn is_symbol_start(line: &str) -> bool {
 fn is_fun_start(line: &str) -> bool {
     let trimmed = line.trim();
     let before_parens = trimmed.split('(').next().unwrap_or(trimmed);
-    for w in before_parens.split_whitespace() {
-        if w == "interface" {
-            return false;
-        }
-        if w == "fun" {
-            return true;
-        }
+    let words: Vec<&str> = before_parens.split_whitespace().collect();
+    if words.contains(&"interface") {
+        return false;
     }
-    false
+    words.contains(&"fun")
 }
 
 fn is_container_declaration(trimmed: &str) -> bool {
@@ -493,6 +490,9 @@ private fun secretFunction() {}
         assert!(symbols
             .iter()
             .any(|s| s.contains("fun interface EventListener")));
+        assert!(symbols
+            .iter()
+            .any(|s| s.contains("fun onEvent(event: String)")));
         assert!(symbols
             .iter()
             .any(|s| s.contains("typealias ActionHandler")));
