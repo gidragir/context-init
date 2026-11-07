@@ -620,7 +620,7 @@ async fn measure_v03(sandbox: &Path, initialized_workspace: &Path) -> V03Metrics
         server
             .workspace(Parameters(McpWorkspaceParams {
                 path: Some(sandbox.to_string_lossy().to_string()),
-                cursor: None,
+                ..McpWorkspaceParams::default()
             }))
             .await
             .expect("workspace"),

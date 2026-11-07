@@ -1269,7 +1269,7 @@ mod tests {
         let map = server
             .workspace(Parameters(McpWorkspaceParams {
                 path: Some(tmp.path().to_string_lossy().to_string()),
-                cursor: None,
+                ..McpWorkspaceParams::default()
             }))
             .await
             .expect("workspace");
@@ -1278,6 +1278,77 @@ mod tests {
             "{map}"
         );
         assert!(map.contains("OrderDto"), "{map}");
+    }
+
+    #[tokio::test]
+    async fn workspace_explicit_paths_reports_kb_status_and_disambiguates_names() {
+        let tmp = TempDirGuard::new("ws_paths");
+        let dir_a = tmp.path().join("dir_a/service");
+        let dir_b = tmp.path().join("dir_b/service");
+        let missing = tmp.path().join("missing/service");
+
+        fs::create_dir_all(dir_a.join("src")).unwrap();
+        fs::write(
+            dir_a.join("Cargo.toml"),
+            "[package]\nname = \"svc_a\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(dir_a.join("src/lib.rs"), "pub struct ServiceA;\n").unwrap();
+        git(&dir_a, &["init", "-q", "-b", "main"]);
+        git(&dir_a, &["add", "-A"]);
+        git(&dir_a, &["commit", "-q", "-m", "init"]);
+
+        fs::create_dir_all(dir_b.join("src")).unwrap();
+        fs::write(
+            dir_b.join("Cargo.toml"),
+            "[package]\nname = \"svc_b\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(dir_b.join("src/lib.rs"), "pub struct ServiceB;\n").unwrap();
+        git(&dir_b, &["init", "-q", "-b", "feature"]);
+        git(&dir_b, &["add", "-A"]);
+        git(&dir_b, &["commit", "-q", "-m", "init"]);
+
+        let server = ContextInitServer::new(None);
+        // Initialize knowledge base in dir_a only
+        server
+            .init(Parameters(McpInitParams {
+                path: Some(dir_a.to_string_lossy().to_string()),
+                ..McpInitParams::default()
+            }))
+            .await
+            .expect("init dir_a");
+
+        let out = server
+            .workspace(Parameters(McpWorkspaceParams {
+                path: None,
+                paths: Some(vec![
+                    dir_a.to_string_lossy().to_string(),
+                    dir_b.to_string_lossy().to_string(),
+                    missing.to_string_lossy().to_string(),
+                ]),
+                cursor: None,
+            }))
+            .await
+            .expect("workspace with paths");
+
+        assert!(
+            out.contains("dir_a/service"),
+            "must disambiguate name: {out}"
+        );
+        assert!(
+            out.contains("dir_b/service"),
+            "must disambiguate name: {out}"
+        );
+        assert!(out.contains("Ok"), "dir_a must be Ok: {out}");
+        assert!(
+            out.contains("Uninitialized"),
+            "dir_b must be Uninitialized: {out}"
+        );
+        assert!(
+            out.contains("MissingPath"),
+            "missing must be MissingPath: {out}"
+        );
     }
 
     #[tokio::test]
@@ -2246,7 +2317,7 @@ mod tests {
         let _ = server
             .workspace(Parameters(McpWorkspaceParams {
                 path: path.clone(),
-                cursor: None,
+                ..Default::default()
             }))
             .await;
         let _ = server

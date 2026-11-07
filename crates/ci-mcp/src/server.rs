@@ -607,10 +607,13 @@ impl ContextInitServer {
             .filter(|d| d.is_dir())
             .map(|d| normalize_existing_path(&d))
             .unwrap_or_else(|| resolved.root.clone());
+        let explicit_paths: Option<Vec<PathBuf>> =
+            p.paths.map(|v| v.into_iter().map(PathBuf::from).collect());
         let recorder = resolved.recorder(self.telemetry_sink.clone());
         self.instrumented("context_workspace", recorder, || async {
             ContextHandler::workspace(
                 &root,
+                explicit_paths.as_deref(),
                 resolved.config.max_response_tokens,
                 p.cursor.as_deref(),
             )

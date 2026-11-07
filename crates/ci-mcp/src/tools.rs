@@ -238,6 +238,9 @@ pub struct McpWorkspaceParams {
     /// Workspace directory containing several Git repositories (default: the resolved root).
     #[serde(default)]
     pub path: Option<String>,
+    /// Explicit list of repository paths to inspect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
     /// Pagination cursor for continuing output.
     #[serde(default)]
     pub cursor: Option<String>,

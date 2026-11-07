@@ -5,12 +5,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ci_core::analysis::detector;
 use ci_core::analysis::generator::{self, SummaryUpdate};
 use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
 use ci_core::analysis::resolve_knowledge_dir;
 use ci_core::analysis::scan::{render_scan_markdown, scan_project_with, ScanOptions};
 use ci_core::analysis::task::{build_task_digest, TaskDigestRequest};
-use ci_core::analysis::workspace::{analyze_workspace, render_workspace_l0};
+use ci_core::analysis::workspace::{
+    analyze_workspace_with, render_workspace_l0, WorkspaceKbStatus,
+};
 use ci_core::config::ROLE_NONE;
 use ci_core::config::{CliOverrides, Config, StorageMode, StoragePaths};
 use ci_core::git::{
@@ -819,10 +822,57 @@ impl ContextHandler {
     }
 
     /// Handler for `context_workspace` (D6): the L0 map of a directory of Git repositories.
-    pub fn workspace(root: &Path, max_tokens: usize, cursor: Option<&str>) -> Result<String> {
-        let report = analyze_workspace(root, &SystemGitBackend::new())?;
+    pub fn workspace(
+        root: &Path,
+        explicit_paths: Option<&[PathBuf]>,
+        max_tokens: usize,
+        cursor: Option<&str>,
+    ) -> Result<String> {
+        let inspect_kb = |p: &Path| -> WorkspaceKbStatus { Self::inspect_workspace_kb(p) };
+        let report =
+            analyze_workspace_with(root, explicit_paths, &SystemGitBackend::new(), &inspect_kb)?;
         let md = render_workspace_l0(&report);
         Ok(paginate_content(&md, cursor, max_tokens, false).rendered)
+    }
+
+    fn inspect_workspace_kb(p: &Path) -> WorkspaceKbStatus {
+        if !p.exists() {
+            return WorkspaceKbStatus::MissingPath;
+        }
+        let kd = p.join(".context-init/knowledge");
+        let l0_json = kd.join("L0_index.json");
+        if l0_json.is_file() {
+            let index = L0Index::load_from_file(&l0_json).ok();
+            let subsystems = index.as_ref().map_or(0, |i| i.subsystems.len());
+            if let Ok(analysis) = detector::analyze_project_with(
+                p,
+                &detector::AnalyzeOptions {
+                    deep: false,
+                    with_rtk: false,
+                    split_threshold_tokens: 15_000,
+                    scope: Default::default(),
+                },
+            ) {
+                if let Ok(audit_report) = generator::audit(&analysis, &kd) {
+                    let has_drift = !audit_report.missing_in_fs.is_empty()
+                        || !audit_report.untracked_in_knowledge.is_empty()
+                        || !audit_report.format_issues.is_empty();
+                    if has_drift {
+                        return WorkspaceKbStatus::Drift {
+                            subsystems,
+                            missing: audit_report.missing_in_fs.len(),
+                            untracked: audit_report.untracked_in_knowledge.len(),
+                            git_stale: false,
+                        };
+                    }
+                }
+            }
+            return WorkspaceKbStatus::Ok { subsystems };
+        }
+        if p.join(".agents/knowledge/L0_index.json").is_file() {
+            return WorkspaceKbStatus::LegacyAgentsDir;
+        }
+        WorkspaceKbStatus::Uninitialized
     }
 
     /// Handler for `context_init` (pipeline in [`crate::pipeline::run_init`]).
