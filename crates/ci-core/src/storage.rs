@@ -443,8 +443,6 @@ pub struct L0Index {
     pub subsystems: Vec<SubsystemInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub core_rules: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub stow_packages: Vec<String>,
     /// Build that last wrote this index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generator: Option<GeneratorStamp>,
@@ -464,7 +462,6 @@ impl Default for L0Index {
             commands: ProjectCommands::default(),
             subsystems: Vec::new(),
             core_rules: Vec::new(),
-            stow_packages: Vec::new(),
             generator: None,
         }
     }

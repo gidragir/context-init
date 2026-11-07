@@ -270,7 +270,7 @@ init = ["cli_helper", "local"]
         );
         // Project wins over global
         assert_eq!(cfg.integrations.rtk, RtkMode::On);
-        assert!(cfg.integrations.stow);
+        // Legacy stow = true in project_toml deserializes cleanly into _legacy_stow
         assert_eq!(
             cfg.roles.init,
             vec!["cli_helper".to_string(), "local".to_string()]

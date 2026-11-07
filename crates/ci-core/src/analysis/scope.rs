@@ -48,11 +48,54 @@ fn explicitly_included(rel: &str, include: &GlobSet) -> bool {
     !include.is_empty() && include.is_match(rel)
 }
 
-fn is_stow_or_dotfiles(rel: &str) -> bool {
-    rel.starts_with("infra/stow/")
-        || rel.starts_with("home/")
-        || rel.starts_with("linked/")
-        || rel.starts_with("dot_config/")
+pub(crate) fn include_allows_dir_traversal(rel_dir: &str, patterns: &[String]) -> bool {
+    let rel_dir = rel_dir.trim_matches('/');
+    if rel_dir.is_empty() {
+        return true;
+    }
+    for pat in patterns {
+        let pat = pat.trim().trim_start_matches("./").trim_matches('/');
+        if pat.is_empty() {
+            continue;
+        }
+        let segments: Vec<&str> = pat.split('/').collect();
+        // If the first segment contains glob wildcards (*, ?, [, {),
+        // it cannot open hidden dot-directories or ignored dirs.
+        if segments.is_empty()
+            || segments[0].contains('*')
+            || segments[0].contains('?')
+            || segments[0].contains('[')
+            || segments[0].contains('{')
+        {
+            continue;
+        }
+
+        let mut lit_segments = Vec::new();
+        let mut has_wildcard_after = false;
+        for &seg in &segments {
+            if seg.contains('*') || seg.contains('?') || seg.contains('[') || seg.contains('{') {
+                has_wildcard_after = true;
+                break;
+            }
+            lit_segments.push(seg);
+        }
+
+        if lit_segments.is_empty() {
+            continue;
+        }
+
+        let lit_prefix = lit_segments.join("/");
+        if rel_dir == lit_prefix {
+            return true;
+        }
+        if lit_prefix.starts_with(&format!("{rel_dir}/")) {
+            return true;
+        }
+        if has_wildcard_after && rel_dir.starts_with(&format!("{lit_prefix}/")) {
+            return true;
+        }
+    }
+    false
 }
 
 fn glob_set(patterns: &[String]) -> Result<GlobSet> {
@@ -94,6 +137,7 @@ impl ScopeFilter {
             .collect();
 
         let inc = Arc::new(include.clone());
+        let scope_patterns: Arc<Vec<String>> = Arc::new(scope.include.clone());
         let root_buf = root.to_path_buf();
         let walker = WalkBuilder::new(root)
             .hidden(false)
@@ -115,16 +159,14 @@ impl ScopeFilter {
                 let rel = rel_path.to_string_lossy().replace('\\', "/");
                 let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
                 if is_dir {
-                    if is_stow_or_dotfiles(&rel) {
-                        return !entry.path().join(".git").exists()
-                            || explicitly_included(&rel, &inc);
-                    }
+                    let explicitly_allowed = explicitly_included(&rel, &inc)
+                        || include_allows_dir_traversal(&rel, &scope_patterns);
                     if (name.starts_with('.') || IGNORED_DIRS.contains(&name.as_ref()))
-                        && !explicitly_included(&rel, &inc)
+                        && !explicitly_allowed
                     {
                         return false;
                     }
-                    if entry.path().join(".git").exists() && !explicitly_included(&rel, &inc) {
+                    if entry.path().join(".git").exists() && !explicitly_allowed {
                         return false;
                     }
                     true
@@ -239,5 +281,38 @@ mod tests {
         let scope = ScopeFilter::build(root, &ScopeConfig::default()).unwrap();
         let files = scope.files();
         assert_eq!(files, &["src/lib.rs".to_string()]);
+    }
+
+    #[test]
+    fn scope_include_prefix_descends_into_explicit_dot_dir_but_not_wildcard() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".config/app")).unwrap();
+        std::fs::write(root.join(".config/app/settings.toml"), "key = 1\n").unwrap();
+        std::fs::create_dir_all(root.join(".agents")).unwrap();
+        std::fs::write(root.join(".agents/secret.md"), "secret\n").unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git/config"), "bare = false\n").unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        let explicit_scope = ScopeConfig {
+            include: vec![".config/app/**".into()],
+            ..Default::default()
+        };
+        let filter = ScopeFilter::build(root, &explicit_scope).unwrap();
+        assert_eq!(filter.files(), &[".config/app/settings.toml".to_string()]);
+        assert!(!filter.files().contains(&".git/config".to_string()));
+
+        let wildcard_scope = ScopeConfig {
+            include: vec!["**/*.toml".into(), "**/*.md".into()],
+            ..Default::default()
+        };
+        let filter2 = ScopeFilter::build(root, &wildcard_scope).unwrap();
+        assert!(!filter2
+            .files()
+            .contains(&".config/app/settings.toml".to_string()));
+        assert!(!filter2.files().contains(&".agents/secret.md".to_string()));
+        assert!(!filter2.files().contains(&".git/config".to_string()));
     }
 }

@@ -356,7 +356,6 @@ pub fn generate(
         commands: analysis.commands.clone(),
         subsystems: subsystems.to_vec(),
         core_rules: analysis.rules.clone(),
-        stow_packages: Vec::new(),
         generator: Some(GeneratorStamp::current()),
     };
     normalize_index(&mut l0_index);

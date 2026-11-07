@@ -361,9 +361,6 @@ pub struct IntegrationsConfig {
     /// Enable `mise.toml` task discovery/integration.
     #[serde(default)]
     pub mise: bool,
-    /// Enable GNU Stow package topology detection.
-    #[serde(default)]
-    pub stow: bool,
 }
 
 impl IntegrationsConfig {
@@ -613,8 +610,6 @@ pub struct CliOverrides {
     pub rtk: Option<RtkMode>,
     /// Override `[integrations].mise`.
     pub mise: Option<bool>,
-    /// Override `[integrations].stow`.
-    pub stow: Option<bool>,
     /// Global `--model <alias>` override applied across all roles before role-specific overrides (D16).
     pub model: Option<String>,
     /// Role-specific overrides (`--role <role>=<alias[,alias2,...]>`, D16).
@@ -785,7 +780,8 @@ impl Default for Config {
 struct PartialIntegrationsConfig {
     rtk: Option<RtkMode>,
     mise: Option<bool>,
-    stow: Option<bool>,
+    #[serde(rename = "stow", default)]
+    _legacy_stow: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -952,9 +948,6 @@ impl Config {
             if let Some(mise) = integrations.mise {
                 self.integrations.mise = mise;
             }
-            if let Some(stow) = integrations.stow {
-                self.integrations.stow = stow;
-            }
         }
         if let Some(models) = partial.models {
             for (alias, pm) in models {
@@ -1079,12 +1072,6 @@ impl Config {
             self.integrations.mise = parse_env_bool("CONTEXT_INIT_MISE", &mise_str)?;
         }
 
-        if let Some(stow_str) =
-            non_empty("CONTEXT_INIT_STOW").or_else(|| non_empty("CONTEXT_INIT_INTEGRATIONS_STOW"))
-        {
-            self.integrations.stow = parse_env_bool("CONTEXT_INIT_STOW", &stow_str)?;
-        }
-
         if let Some(tel_str) = non_empty("CONTEXT_INIT_TELEMETRY_ENABLED")
             .or_else(|| non_empty("CONTEXT_INIT_TELEMETRY"))
         {
@@ -1133,9 +1120,6 @@ impl Config {
         }
         if let Some(mise) = cli.mise {
             self.integrations.mise = mise;
-        }
-        if let Some(stow) = cli.stow {
-            self.integrations.stow = stow;
         }
         if let Some(ref model_alias) = cli.model {
             self.roles.set_all(model_alias);
@@ -1279,7 +1263,6 @@ auto_refresh = false
 [integrations]
 rtk = "auto"
 mise = true
-stow = false
 
 [models.local]
 kind = "ollama"
