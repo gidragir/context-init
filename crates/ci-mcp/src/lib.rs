@@ -1636,6 +1636,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_subsystems_fits_65_entries_and_escapes_multiline_summary() {
+        let tmp = TempDirGuard::new("subsystems_65");
+        let kd = tmp.path().join(".context-init").join("knowledge");
+        fs::create_dir_all(kd.join("subsystems")).unwrap();
+        let mut subs = Vec::new();
+        for i in 0..65 {
+            let files = (0..10)
+                .map(|j| SubsystemFile {
+                    path: format!("src/sub_{i}/file_{j}.rs"),
+                    is_entrypoint: j == 0,
+                    lines: 20,
+                })
+                .collect();
+            let key_symbols = (0..10).map(|j| format!("Sym{j}")).collect();
+            let summary = if i == 0 {
+                "Multiline summary with \"quotes\"\nand second line.".to_string()
+            } else {
+                format!("Subsystem {i} description")
+            };
+            subs.push(SubsystemInfo {
+                id: format!("sub_{i}"),
+                name: format!("Subsystem {i}"),
+                summary,
+                l1_path: format!("subsystems/sub_{i}.md"),
+                tags: vec!["tag1".to_string(), "tag2".to_string()],
+                entrypoints: vec![format!("src/sub_{i}/file_0.rs")],
+                key_files: vec![format!("src/sub_{i}/file_0.rs")],
+                files,
+                key_symbols,
+                test_command: None,
+                tokens: 150,
+                parent: None,
+                summary_source: ci_core::SummarySource::Heuristic,
+                summary_model: None,
+                needs_review: false,
+            });
+        }
+        let index = L0Index {
+            subsystems: subs,
+            ..L0Index::default()
+        };
+        index.save_to_file(&kd.join("L0_index.json")).unwrap();
+
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        let out = server
+            .get_subsystems(Parameters(McpGetSubsystemsParams {
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                ..McpGetSubsystemsParams::default()
+            }))
+            .await
+            .expect("get_subsystems");
+
+        assert!(!out.contains("truncated: true"), "{out}");
+        assert!(out.len() < 9_000, "bytes={}", out.len());
+        let json_part = out.split("\n\n[").next().unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(json_part).unwrap();
+        assert_eq!(parsed.len(), 65);
+        assert_eq!(parsed[0]["file_count"], 10);
+        assert!(parsed[0].get("files").is_none());
+        assert!(parsed[0].get("key_symbols").is_none());
+        assert!(parsed[0].get("entrypoints").is_none());
+    }
+
+    #[tokio::test]
     async fn submit_rejects_traversal_ids() {
         let tmp = TempDirGuard::new("submit_traversal");
         let kd = seed_in_repo_knowledge(tmp.path());
@@ -2367,7 +2431,7 @@ mod tests {
         let path = initialized_project(&server, &tmp).await;
         fs::write(
             tmp.path().join(".context-init.toml"),
-            "max_response_tokens = 64\n[telemetry]\nenabled = true\n",
+            "max_response_tokens = 20\n[telemetry]\nenabled = true\n",
         )
         .unwrap();
 

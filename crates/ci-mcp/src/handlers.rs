@@ -354,30 +354,46 @@ impl ContextHandler {
         let git = SystemGitBackend::new();
         let snapshot = git.repo_snapshot(&project.root).ok();
         let mut any_stale = false;
+        let mut summaries = Vec::with_capacity(index.subsystems.len());
         for sub in &index.subsystems {
-            let (stale, _) = if let Some(snap) = &snapshot {
+            let (is_stale, _) = if let Some(snap) = &snapshot {
                 project.check_subsystem_staleness_with_snap(sub, snap, &git)
             } else {
                 project.check_subsystem_staleness(sub)
             };
-            if stale {
+            if is_stale {
                 any_stale = true;
-                break;
             }
+            let tokens = ci_core::analysis::subsystems::subsystem_tokens(&project.root, sub);
+            summaries.push(L0SubsystemSummary {
+                id: sub.id.clone(),
+                name: sub.name.clone(),
+                parent: sub.parent.clone(),
+                summary: sub.summary.clone(),
+                tags: sub.tags.clone(),
+                file_count: sub.files.len(),
+                tokens,
+                stale: is_stale,
+                needs_review: sub.needs_review,
+            });
         }
 
-        // Sizes are not stored in the base: count them live from the current sources.
-        let listing: Vec<serde_json::Value> = index
-            .subsystems
-            .iter()
-            .map(|sub| {
-                let mut v = serde_json::to_value(sub)?;
-                v["tokens"] =
-                    ci_core::analysis::subsystems::subsystem_tokens(&project.root, sub).into();
-                Ok(v)
-            })
-            .collect::<Result<_>>()?;
-        let json_text = serde_json::to_string_pretty(&listing)?;
+        let json_text = if summaries.is_empty() {
+            "[]".to_string()
+        } else {
+            let mut buf = String::from("[\n");
+            for (idx, entry) in summaries.iter().enumerate() {
+                buf.push_str("  ");
+                buf.push_str(&serde_json::to_string(entry)?);
+                if idx + 1 < summaries.len() {
+                    buf.push(',');
+                }
+                buf.push('\n');
+            }
+            buf.push(']');
+            buf
+        };
+
         let paginated = paginate_content(
             &json_text,
             cursor,

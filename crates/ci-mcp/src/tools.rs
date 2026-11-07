@@ -37,6 +37,24 @@ pub struct McpCheckResult {
     pub message: String,
 }
 
+/// Compact L0 projection of one subsystem returned by `context_get_subsystems`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct L0SubsystemSummary {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    pub file_count: usize,
+    pub tokens: usize,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_review: bool,
+}
+
 /// Parameters for `context_get_subsystems` tool.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct McpGetSubsystemsParams {
