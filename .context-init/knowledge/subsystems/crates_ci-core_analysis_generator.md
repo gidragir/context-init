@@ -3,7 +3,7 @@ directory: crates/ci-core/src/analysis/generator.rs
 source:
   kind: git
   blob_sha: b231c057aa6f9daa0356a6e39aed4d7ce72b21d8
-  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
+  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
 generated_by:
   component: context-init
   role: init

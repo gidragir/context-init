@@ -3,7 +3,7 @@ directory: src/cli
 source:
   kind: git
   blob_sha: 341e7a5b025e537093e70f98e72133e11675dbd8
-  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
+  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
 generated_by:
   component: context-init
   role: init

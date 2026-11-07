@@ -3,7 +3,7 @@ directory: crates/ci-llm/src/enrich.rs
 source:
   kind: git
   blob_sha: 66d17dbd2699be57fd4f5e19ba7574a557465c0a
-  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
+  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
 generated_by:
   component: context-init
   role: init

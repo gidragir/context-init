@@ -3,7 +3,7 @@ directory: crates/ci-core/src/git.rs
 source:
   kind: git
   blob_sha: dd7834620cdccd171a610b3da48a8380dfc95373
-  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
+  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
 generated_by:
   component: context-init
   role: init

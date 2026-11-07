@@ -3,7 +3,7 @@ directory: crates/ci-core/src/analysis/detector/gradle.rs
 source:
   kind: git
   blob_sha: 5ddb15648602923f5551e42993158819f0c8e062
-  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
+  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
 generated_by:
   component: context-init
   role: init

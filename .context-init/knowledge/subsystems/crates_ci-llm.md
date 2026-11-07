@@ -2,8 +2,8 @@
 directory: crates/ci-llm
 source:
   kind: git
-  blob_sha: 42d4313477923057a8b3614082c8fad2aacc4adb
-  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
+  blob_sha: 9ca137d270aadc75bc3f88a4545cf017b0b45b15
+  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
 generated_by:
   component: context-init
   role: init

@@ -3,7 +3,7 @@ directory: crates/ci-mcp/src/handlers.rs
 source:
   kind: git
   blob_sha: 5d914f6dd2462e99dcb0a795cea694707eba32dd
-  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
+  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
 generated_by:
   component: context-init
   role: init
