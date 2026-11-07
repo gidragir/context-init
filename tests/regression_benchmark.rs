@@ -684,7 +684,7 @@ const SEARCH_GOLD: [(&str, &str); 10] = [
     ("mcp server handlers", "crates_ci-mcp_handlers"),
     ("pagination budget", "crates_ci-mcp_pagination"),
     ("git staleness", "crates_ci-core_git"),
-    ("benchmark regression", "tests_regression_benchmark"),
+    ("benchmark regression", "tests"),
     (
         "модуль генератор generator",
         "crates_ci-core_analysis_generator",

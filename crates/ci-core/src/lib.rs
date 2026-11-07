@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn smoke_version_matches_workspace() {
-        assert_eq!(VERSION, "0.3.0");
+        assert_eq!(VERSION, "0.4.0");
         assert!(crate_info().starts_with("ci-core/"));
     }
 

@@ -209,9 +209,9 @@ mod tests {
 
     #[test]
     fn smoke_version_and_core_link() {
-        assert_eq!(VERSION, "0.3.0");
+        assert_eq!(VERSION, "0.4.0");
         assert_eq!(VERSION, ci_core::VERSION);
-        assert!(crate_info().contains("ci-llm/0.3.0"));
+        assert!(crate_info().contains("ci-llm/0.4.0"));
     }
 
     #[test]

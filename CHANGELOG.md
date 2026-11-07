@@ -1,6 +1,20 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-11-08
+
+### Added
+- **Core L0 Compactness Projection**: `context_get_subsystems` returns a dedicated compact `L0SubsystemSummary` (id, name, summary, tokens, file_count, parent, stale) instead of the full `SubsystemInfo` with all file lists and symbols. Eliminates MCP pagination overhead and reduces JSON response size by 80.7% (from ~41.8 KB to ~8.0 KB on 36 subsystems).
+- **Pruning Support (`update --prune`)**: Added `--prune` flag to `context-init update` and `prune: true` parameter to `context_update`. Automatically cleans removed root and split subsystems from `L0_index.json`, `L0_index.md`, deleted L1 card files, and `AGENTS.md`. `check` outputs actionable hints when stale subsystems remain.
+- **Batch Multi-Repo Inspection (`context_workspace`)**: Added `paths: Vec<String>` support to `context_workspace` and `--repo <PATH>` to the CLI. Displays a unified `| Repository | Branch | Dirty | KB Status | Subsystems |` table with `WorkspaceKbStatus` (`Ok`, `Drift`, `LegacyAgentsDir`, `Uninitialized`, `MissingPath`) without heavy BPE tokenization. Disambiguates identical directory basenames via parent path segments.
+- **Enhanced Topology Scanning (`context_scan`)**: Extracted `file_kind.rs` classifier for Dockerfile, Kubernetes, CI/CD, lockfiles, and configs. Added statistical `Outliers` detection and clean `suggested_scope` calculation. Added `max_depth` (1..=5, default: 2) aggregation and `--include-hidden` diagnostics flag.
+
+### Fixed
+- **Subsystem ID Collision Hardening**: Truncated subsystem IDs longer than 64 characters now append a deterministic 8-hex hash suffix (`_{hash}`) to avoid collisions. Duplicate subsystem IDs are pruned during L0 generation.
+- **Monorepo Container Direct Files**: Subsystem discovery preserves direct files in monorepo container directories (e.g. `packages/`, `crates/`) while properly excluding child package modules without recursive duplication.
+- **AST Splitter Hardening**: Enforced 1,000 token minimum floor for single-file promo subsystems and atomic flat collections. Eliminated orphaned micro-subsystems (`mise.rs`) and test module splittings.
+
+### Removed
+- **Stow-Specific Hardcoding**: Removed host-specific dotfiles/Stow special-casing in favor of declarative `[scope].include` directory traversal with prefix-matched globbing. Legacy `.context-init.toml` files with `stow = ...` remain backward-compatible.
 
 ### Added
 - Adoption and integrity hardening (v0.6+):
