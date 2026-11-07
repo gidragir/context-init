@@ -550,10 +550,10 @@ fn split_fixture(tag: &str) -> PathBuf {
     .unwrap();
     fs::write(src.join("lib.rs"), "pub mod analysis;\npub mod storage;\n").unwrap();
     fs::write(src.join("tiny.rs"), rust_source("tiny", 300)).unwrap();
-    fs::write(src.join("storage.rs"), rust_source("storage", 900)).unwrap();
+    fs::write(src.join("storage.rs"), rust_source("storage", 1000)).unwrap();
     fs::write(src.join("analysis").join("mod.rs"), "pub mod inner;\n").unwrap();
-    fs::write(src.join("analysis").join("a.rs"), rust_source("a", 600)).unwrap();
-    fs::write(src.join("analysis").join("b.rs"), rust_source("b", 600)).unwrap();
+    fs::write(src.join("analysis").join("a.rs"), rust_source("a", 400)).unwrap();
+    fs::write(src.join("analysis").join("b.rs"), rust_source("b", 400)).unwrap();
     fs::write(inner.join("mod.rs"), rust_source("inner", 700)).unwrap();
     temp_dir
 }
@@ -604,7 +604,7 @@ fn test_crate_under_threshold_keeps_single_stable_subsystem() {
 #[test]
 fn test_crate_over_threshold_is_split_into_module_subsystems() {
     let temp_dir = split_fixture("big");
-    let threshold = 1000;
+    let threshold = 1100;
     let analysis = analyze_with_threshold(&temp_dir, threshold);
     let ids: Vec<&str> = analysis
         .detected_modules
@@ -910,7 +910,7 @@ fn test_only_subsystem_tagged() {
         ("src/only/tests.rs", "pub struct Engine;\n"),
         ("src/big/mod.rs", "pub fn big() {}\n"),
         (
-            "src/big/tests.rs",
+            "src/big/tests/mod.rs",
             "pub struct Fixture;\npub fn helper_one() {}\npub fn helper_two() {}\n",
         ),
     ]);
@@ -1023,8 +1023,18 @@ fn split_context_promotes_sibling_code_files_and_keeps_readme_pinned() {
         .iter()
         .map(|s| s.id.as_str())
         .collect();
-    assert!(ids.contains(&"tests_cli"), "ids: {ids:?}");
-    assert!(ids.contains(&"tests_regression_benchmark"), "ids: {ids:?}");
+    assert!(
+        !ids.contains(&"tests_cli"),
+        "single test file must not become standalone subsystem: {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"tests_regression_benchmark"),
+        "single test file must not become standalone subsystem: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"tests"),
+        "root tests module must be kept: {ids:?}"
+    );
     assert!(
         !ids.contains(&"tests_readme"),
         "README must never become standalone subsystem: {ids:?}"
@@ -1451,5 +1461,108 @@ fn test_discover_subsystems_disambiguates_colliding_paths() {
         unique_ids.len(),
         "Module IDs must be unique: {:?}",
         ids
+    );
+}
+
+#[test]
+fn test_flat_scripts_collection_never_splits_into_single_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("scripts/ci")).unwrap();
+    // 20 flat script files of ~1200 tokens each (total > 24000)
+    for i in 1..=20 {
+        let content = format!(
+            "#!/bin/bash\n# Script {i}\n{}\n",
+            "echo 'doing work step'\n".repeat(200)
+        );
+        fs::write(root.join(format!("scripts/job_{i:02}.sh")), content).unwrap();
+    }
+    // Subdirectory scripts/ci with ~8000 tokens
+    let ci_content = format!(
+        "#!/bin/bash\n# CI task\n{}\n",
+        "echo 'ci step'\n".repeat(1200)
+    );
+    fs::write(root.join("scripts/ci/build.sh"), ci_content).unwrap();
+
+    let modules = super::discover_subsystems(root, &[], &ProjectType::Generic, false, false, 15000);
+    let ids: Vec<String> = modules.iter().map(|m| m.id.clone()).collect();
+    assert!(
+        ids.contains(&"scripts".to_string()),
+        "Must have parent 'scripts' module: {:?}",
+        ids
+    );
+    assert!(
+        ids.contains(&"scripts_ci".to_string()),
+        "Must have child 'scripts_ci' module: {:?}",
+        ids
+    );
+    // Flat files must NOT be promoted to individual subsystems
+    assert_eq!(
+        modules.len(),
+        2,
+        "Expected exactly 2 modules (scripts, scripts_ci), got: {:?}",
+        ids
+    );
+}
+
+#[test]
+fn test_root_tests_dir_does_not_promote_single_test_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("tests")).unwrap();
+    for i in 1..=5 {
+        let content = format!(
+            "// Test suite {i}\n#[test]\nfn test_{i}() {{\n{}\n}}\n",
+            "    assert!(true);\n".repeat(600)
+        );
+        fs::write(root.join(format!("tests/e2e_{i}.rs")), content).unwrap();
+    }
+    let modules = super::discover_subsystems(root, &[], &ProjectType::Generic, false, false, 15000);
+    let ids: Vec<String> = modules.iter().map(|m| m.id.clone()).collect();
+    assert_eq!(
+        modules.len(),
+        1,
+        "Expected single 'tests' module without single-file promotions, got: {:?}",
+        ids
+    );
+    assert_eq!(ids[0], "tests");
+}
+
+#[test]
+fn test_container_keeps_direct_files_without_duplicating_child_modules() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("packages/ui/src")).unwrap();
+    fs::write(
+        root.join("packages/tsconfig.base.json"),
+        "{\n  \"compilerOptions\": {}\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("packages/ui/src/index.ts"),
+        "export const a = 1;\n",
+    )
+    .unwrap();
+
+    let modules = super::discover_subsystems(root, &[], &ProjectType::Generic, false, false, 15000);
+    let ids: Vec<String> = modules.iter().map(|m| m.id.clone()).collect();
+    assert!(
+        ids.contains(&"packages".to_string()),
+        "Container 'packages' must be kept for direct files: {:?}",
+        ids
+    );
+    assert!(
+        ids.contains(&"packages_ui".to_string()),
+        "Child module 'packages_ui' must be present: {:?}",
+        ids
+    );
+
+    let pkg_mod = modules.iter().find(|m| m.id == "packages").unwrap();
+    let pkg_files: Vec<String> = pkg_mod.files.iter().map(|f| f.path.clone()).collect();
+    assert!(pkg_files.contains(&"packages/tsconfig.base.json".to_string()));
+    assert!(
+        !pkg_files.iter().any(|f| f.contains("packages/ui/src")),
+        "Container must not duplicate child files: {:?}",
+        pkg_files
     );
 }

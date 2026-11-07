@@ -1473,7 +1473,7 @@ mod tests {
             }
             out
         };
-        fs::write(src.join("big.rs"), body("big", 900)).unwrap();
+        fs::write(src.join("big.rs"), body("big", 1200)).unwrap();
         fs::write(src.join("small.rs"), body("small", 300)).unwrap();
         root
     }

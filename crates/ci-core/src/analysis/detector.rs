@@ -76,6 +76,8 @@ pub const CODE_EXTENSIONS: &[&str] = &[
     "toml", "yaml", "yml", "json", "xml", "md", "mdc", "kdl", "just",
 ];
 
+pub const MIN_SINGLE_FILE_SUBSYSTEM_TOKENS: usize = 1_000;
+
 /// Fast heuristic BPE token estimation without tiktoken BPE dictionary initialization.
 pub fn estimate_tokens_fast(text: &str) -> usize {
     let ascii = text.bytes().filter(|b| b.is_ascii()).count();
@@ -874,27 +876,13 @@ fn discover_subsystems(
         "cmd",
         "pkg",
         "libs",
-        "profiles",
         "infra",
-        "home",
-        "linked",
-        "dot_config",
         "submodules",
     ] {
         let parent_dir = root.join(common_parent);
         if parent_dir.is_dir() {
-            let is_container = matches!(
-                *common_parent,
-                "infra"
-                    | "libs"
-                    | "plugins"
-                    | "profiles"
-                    | "home"
-                    | "linked"
-                    | "dot_config"
-                    | "submodules"
-            );
             let mut has_subdirs = false;
+            let mut has_direct_files = false;
             if let Ok(entries) = fs::read_dir(&parent_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
@@ -910,12 +898,18 @@ fn discover_subsystems(
                                 dirs_to_inspect.push(path);
                             }
                         }
+                    } else if path.is_file() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if !name.starts_with('.')
+                            && !is_ignored_filename(&name)
+                            && !is_ignored_path(&path, root)
+                        {
+                            has_direct_files = true;
+                        }
                     }
                 }
             }
-            if is_container
-                && !has_subdirs
-                && contains_relevant_files(&parent_dir)
+            if (has_direct_files || (!has_subdirs && contains_relevant_files(&parent_dir)))
                 && !dirs_to_inspect.contains(&parent_dir)
             {
                 dirs_to_inspect.push(parent_dir);
@@ -1051,13 +1045,13 @@ fn discover_subsystems(
     dirs_to_inspect.sort();
 
     let mut result = Vec::new();
-    for dir in dirs_to_inspect {
-        if is_ignored_path(&dir, root) || !scope_allows_dir(&dir) {
+    for dir in &dirs_to_inspect {
+        if is_ignored_path(dir, root) || !scope_allows_dir(dir) {
             continue;
         }
         let rel_path = dir
             .strip_prefix(root)
-            .unwrap_or(&dir)
+            .unwrap_or(dir)
             .to_string_lossy()
             .replace('\\', "/");
         let module_name = dir
@@ -1065,8 +1059,14 @@ fn discover_subsystems(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| rel_path.clone());
 
+        let child_inspected_dirs: Vec<PathBuf> = dirs_to_inspect
+            .iter()
+            .filter(|other| other != &dir && other.starts_with(dir))
+            .cloned()
+            .collect();
+
         let mut all_files = Vec::new();
-        collect_files_recursive(&dir, root, &mut all_files, 0, 12);
+        collect_files_recursive_excluding(dir, root, &mut all_files, 0, 12, &child_inspected_dirs);
         if all_files.is_empty() {
             continue;
         }
@@ -1099,7 +1099,7 @@ fn discover_subsystems(
             .then(|| tokens_if_over(root, &all_files, split_threshold))
             .flatten();
         if let Some(counts) = counts {
-            let entries = module_entries(root, &dir, 0, true, &counts);
+            let entries = module_entries(root, dir, 0, true, &counts);
             let split = SplitContext {
                 root,
                 counts: &counts,
@@ -1107,7 +1107,7 @@ fn discover_subsystems(
                 deep,
                 test_cmd: &test_cmd,
             };
-            split.split(&dir, &id, &module_name, None, entries, &mut result);
+            split.split(dir, &id, &module_name, None, entries, &mut result);
             continue;
         }
 
@@ -1117,7 +1117,7 @@ fn discover_subsystems(
             .filter(|f| f.is_entrypoint)
             .map(|f| f.path.clone())
             .collect();
-        let symbols = extract_symbols_from_files(&dir, &files, deep);
+        let symbols = extract_symbols_from_files(dir, &files, deep);
 
         result.push(DiscoveredModule {
             id,
@@ -1393,6 +1393,50 @@ fn module_entries(
     by_stem.into_values().collect()
 }
 
+fn is_flat_file_collection(dir: &Path) -> bool {
+    const MANIFESTS: &[&str] = &[
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+        "build.gradle",
+        "build.gradle.kts",
+        "pom.xml",
+        "CMakeLists.txt",
+    ];
+    for m in MANIFESTS {
+        if dir.join(m).is_file() {
+            return false;
+        }
+    }
+    if dir.join("src").is_dir() {
+        return false;
+    }
+    if dir.with_extension("rs").is_file() {
+        return false;
+    }
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                if name == "lib.rs"
+                    || name == "mod.rs"
+                    || name == "__init__.py"
+                    || name.starts_with("main.")
+                    || name.starts_with("index.")
+                    || name.starts_with("app.")
+                    || name.starts_with("server.")
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 /// Splits an oversized module into subsystems that each fit `threshold` tokens.
 struct SplitContext<'a> {
     root: &'a Path,
@@ -1431,6 +1475,7 @@ impl SplitContext<'_> {
             return;
         }
 
+        let is_flat = is_flat_file_collection(dir);
         let mut order: Vec<usize> = (0..entries.len()).filter(|&i| !entries[i].pinned).collect();
         order.sort_by(|&a, &b| {
             entries[b]
@@ -1444,10 +1489,12 @@ impl SplitContext<'_> {
             if kept_tokens <= self.threshold {
                 break;
             }
-            // Invariant: never promote a single test file into an L1 subsystem
             let entry = &entries[i];
-            let is_single_test_file = id != "tests"
-                && entry.dir.is_none()
+            if entry.dir.is_none() && (entry.tokens < MIN_SINGLE_FILE_SUBSYSTEM_TOKENS || is_flat) {
+                continue;
+            }
+            // Invariant: never promote a single test file into an L1 subsystem on any level (including tests/ dir)
+            let is_single_test_file = entry.dir.is_none()
                 && entry.stem != "tests"
                 && !entry.stem.starts_with("tests_")
                 && entry
@@ -1459,44 +1506,6 @@ impl SplitContext<'_> {
             }
             promoted[i] = true;
             kept_tokens -= entries[i].tokens;
-        }
-
-        let has_promoted_file = entries
-            .iter()
-            .enumerate()
-            .any(|(i, e)| promoted[i] && e.dir.is_none());
-        let has_pinned_code_entrypoint = entries.iter().any(|e| {
-            e.pinned
-                && e.files.iter().any(|f| {
-                    f.is_entrypoint
-                        && Path::new(&f.path)
-                            .extension()
-                            .and_then(|ext| ext.to_str())
-                            .is_some_and(|ext| SOURCE_CODE_EXTENSIONS.contains(&ext))
-                })
-        });
-
-        if has_promoted_file && !has_pinned_code_entrypoint {
-            for (i, entry) in entries.iter().enumerate() {
-                if !promoted[i] && !entry.pinned && entry.dir.is_none() && entry.tokens >= 300 {
-                    let is_test = entry
-                        .files
-                        .iter()
-                        .any(|f| tests_classifier::is_test_path(&f.path));
-                    if is_test {
-                        continue;
-                    }
-                    let is_source = entry.files.iter().any(|f| {
-                        Path::new(&f.path)
-                            .extension()
-                            .and_then(|ext| ext.to_str())
-                            .is_some_and(|ext| SOURCE_CODE_EXTENSIONS.contains(&ext))
-                    });
-                    if is_source {
-                        promoted[i] = true;
-                    }
-                }
-            }
         }
 
         let mut kept_files = Vec::new();
@@ -1625,12 +1634,13 @@ impl SplitContext<'_> {
     }
 }
 
-fn collect_files_recursive(
+fn collect_files_recursive_excluding(
     current: &Path,
     root: &Path,
     acc: &mut Vec<SubsystemFile>,
     depth: usize,
     max_depth: usize,
+    excluded_dirs: &[PathBuf],
 ) {
     if depth > max_depth {
         return;
@@ -1646,13 +1656,33 @@ fn collect_files_recursive(
         let name = entry.file_name().to_string_lossy().to_string();
 
         if path.is_dir() {
+            if excluded_dirs.iter().any(|ex| ex == &path) {
+                continue;
+            }
             if !IGNORED_DIRS.contains(&name.as_str()) && scope_allows_dir(&path) {
-                collect_files_recursive(&path, root, acc, depth + 1, max_depth);
+                collect_files_recursive_excluding(
+                    &path,
+                    root,
+                    acc,
+                    depth + 1,
+                    max_depth,
+                    excluded_dirs,
+                );
             }
         } else if path.is_file() {
             acc.extend(subsystem_file(&path, &name, root));
         }
     }
+}
+
+fn collect_files_recursive(
+    current: &Path,
+    root: &Path,
+    acc: &mut Vec<SubsystemFile>,
+    depth: usize,
+    max_depth: usize,
+) {
+    collect_files_recursive_excluding(current, root, acc, depth, max_depth, &[]);
 }
 
 /// A code or markdown file (named `name`) as a subsystem file; `None` for other files.

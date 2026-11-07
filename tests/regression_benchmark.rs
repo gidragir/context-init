@@ -13,7 +13,7 @@ use ci_llm::{LlmRequest, RoleName, RoleRouter};
 use ci_mcp::pagination::count_tokens as count_reply_tokens;
 use ci_mcp::pipeline::{self, PipelineOptions};
 use ci_mcp::{
-    ContextInitServer, McpCheckParams, McpGetSubsystemParams, McpGetSubsystemsParams,
+    ContextInitServer, L0SubsystemSummary, McpCheckParams, McpGetSubsystemParams, McpGetSubsystemsParams,
     McpInitParams, McpPackParams, McpScanParams, McpSearchParams, McpTaskParams, McpUpdateParams,
     McpWorkspaceParams, ResolvedProject,
 };
@@ -267,7 +267,7 @@ async fn test_regression_benchmark_and_generate_report() {
         }))
         .await
         .expect("MCP context_get_subsystems failed");
-    let subs_list: Vec<SubsystemInfo> =
+    let subs_list: Vec<L0SubsystemSummary> =
         serde_json::from_str(subs_text.split("\n\n[").next().unwrap()).unwrap();
     assert!(!subs_list.is_empty());
     let sub_id = subs_list[0].id.clone();
