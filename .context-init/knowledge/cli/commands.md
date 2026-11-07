@@ -6,20 +6,25 @@
 
 | Задача | Команда |
 | :--- | :--- |
-| **Сборка** | `rtk cargo build` |
-| **Тестирование** | `rtk cargo test` |
-| **Линтинг** | `rtk cargo clippy` |
-| **Форматирование** | `rtk cargo fmt --check` |
+| **Сборка** | `rtk mise run build` |
+| **Тестирование** | `rtk mise run test` |
+| **Линтинг** | `rtk mise run lint` |
+| **Форматирование** | `rtk mise run fmt` |
 | **Запуск** | `rtk cargo run` |
 
 ## Пользовательские скрипты и задачи
 
 | Скрипт | Выполняемая команда |
 | :--- | :--- |
-| `runner` | `mise (task runner)` |
+| `check` | `rtk mise run check` |
+| `install` | `rtk mise run install` |
+| `dist` | `rtk mise run dist` |
+| `probe-adoption` | `rtk mise run probe-adoption` |
+| `audit-sessions` | `rtk mise run audit-sessions` |
+| `audit` | `rtk mise run audit` |
 
 ## Быстрый запуск
 ```bash
-rtk cargo build
-rtk cargo test
+rtk mise run build
+rtk mise run test
 ```

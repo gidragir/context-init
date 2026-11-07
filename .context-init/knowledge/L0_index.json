@@ -3,7 +3,7 @@
   "schema_version": 4,
   "project": "context-init",
   "description": "CLI-утилита на Rust для автоматической инициализации и поддержания трехуровневой базы знаний (**OpenViking L0-L2**) для автономных ИИ-ассистентов (Antigravity, Hermes, Claude Code, Cursor, Aider).",
-  "updated_at": "2026-11-01",
+  "updated_at": "2026-11-07",
   "project_type": "Rust (Cargo)",
   "entrypoints": [
     "src/main.rs",
@@ -11,13 +11,18 @@
     "mise.toml"
   ],
   "commands": {
-    "build": "rtk cargo build",
-    "test": "rtk cargo test",
-    "lint": "rtk cargo clippy",
-    "fmt": "rtk cargo fmt --check",
+    "build": "rtk mise run build",
+    "test": "rtk mise run test",
+    "lint": "rtk mise run lint",
+    "fmt": "rtk mise run fmt",
     "run": "rtk cargo run",
     "custom": {
-      "runner": "mise (task runner)"
+      "check": "rtk mise run check",
+      "install": "rtk mise run install",
+      "dist": "rtk mise run dist",
+      "probe-adoption": "rtk mise run probe-adoption",
+      "audit-sessions": "rtk mise run audit-sessions",
+      "audit": "rtk mise run audit"
     }
   },
   "subsystems": [
@@ -92,8 +97,8 @@
         "crates/ci-core/src/analysis/mod.rs"
       ],
       "key_files": [
+        "crates/ci-core/src/analysis/file_kind.rs",
         "crates/ci-core/src/analysis/mod.rs",
-        "crates/ci-core/src/analysis/scan.rs",
         "crates/ci-core/src/analysis/scope.rs",
         "crates/ci-core/src/analysis/subsystems.rs",
         "crates/ci-core/src/analysis/types.rs",
@@ -101,12 +106,12 @@
       ],
       "files": [
         {
-          "path": "crates/ci-core/src/analysis/mod.rs",
-          "is_entrypoint": true
+          "path": "crates/ci-core/src/analysis/file_kind.rs",
+          "is_entrypoint": false
         },
         {
-          "path": "crates/ci-core/src/analysis/scan.rs",
-          "is_entrypoint": false
+          "path": "crates/ci-core/src/analysis/mod.rs",
+          "is_entrypoint": true
         },
         {
           "path": "crates/ci-core/src/analysis/scope.rs",
@@ -128,14 +133,14 @@
       "key_symbols": [
         "pub const REPO_KNOWLEDGE_DIR: &str = \".context-init/knowledge\"",
         "pub fn resolve_knowledge_dir(root: &Path, mode: StorageMode, central_kb: &Path) -> PathBuf",
-        "pub const KNOWN_BINARY_EXTENSIONS: &[&str] = &[\"exe\", \"dll\", \"so\", \"dylib\", \"msi\", \"cab\", \"zip\", \"tar\", \"gz\", \"7z\", \"rar\", \"png\", \"jpg\", \"jpeg\", \"gif\", \"webp\", \"ico\", \"icns\", \"pdf\", \"woff\", \"woff2\", \"ttf\", \"otf\", \"eot\", \"mp3\", \"mp4\", \"wav\", \"ogg\", \"wasm\", \"pyc\", \"class\", \"jar\", \"db\", \"sqlite\", \"sqlite3\", \"cf\", \"epf\", \"erf\", \"bin\", \"pack\", \"idx\", ]",
-        "pub fn is_likely_binary(path: &Path) -> bool",
-        "pub struct ScanStat",
-        "pub struct ScanReport",
-        "pub fn scan_project(root: &Path, scope: &ScopeConfig) -> Result<ScanReport>",
-        "pub fn render_scan_markdown(project_id: &str, root: &Path, report: &ScanReport) -> String",
+        "pub fn canonical_file_ext(rel_path: &str) -> Option<String>",
+        "pub const ALWAYS_IGNORED_RUNTIME_DIRS: &[&str] = &[\".git\", \".context-init\", \"node_modules\", \"target\", \".venv\", \"venv\", \".cache\", \".worktrees\", \".claude/worktrees\", ]",
         "pub const IGNORED_LOCK_AND_ARTIFACT_FILES: &[&str] = &[\"Cargo.lock\", \"pnpm-lock.yaml\", \"package-lock.json\", \"yarn.lock\", \"bun.lock\", \"bun.lockb\", \"uv.lock\", \"poetry.lock\", \"Pipfile.lock\", \"composer.lock\", \"Gemfile.lock\", \"flake.lock\", \"skills-lock.json\", \"lazy-lock.json\", ]",
-        "pub const IGNORED_FILE_SUFFIXES: &[&str] = &[\".tsbuildinfo\", \".min.js\", \".min.css\", \".bundle.js\", \".js.map\", \".css.map\", \".d.ts.map\", ]"
+        "pub const IGNORED_FILE_SUFFIXES: &[&str] = &[\".tsbuildinfo\", \".min.js\", \".min.css\", \".bundle.js\", \".js.map\", \".css.map\", \".d.ts.map\", ]",
+        "pub fn is_ignored_filename(name: &str) -> bool",
+        "pub(crate) fn include_allows_dir_traversal(rel_dir: &str, patterns: &[String]) -> bool",
+        "pub fn validate_scope(scope: &ScopeConfig) -> Result<()>",
+        "pub struct ScopeFilter"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core",
@@ -153,29 +158,60 @@
         "rtk"
       ],
       "key_files": [
-        "crates/ci-core/src/analysis/detector.rs"
+        "crates/ci-core/src/analysis/detector.rs",
+        "crates/ci-core/src/analysis/detector/mise.rs"
       ],
       "files": [
         {
           "path": "crates/ci-core/src/analysis/detector.rs",
           "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/detector/mise.rs",
+          "is_entrypoint": false
         }
       ],
       "key_symbols": [
-        "pub(crate) const IGNORED_DIRS: &[&str] = &[\".git\", \".agents\", \".context-init\", \".gemini\", \"node_modules\", \"target\", \"dist\", \"build\", \".idea\", \".vscode\", \".cargo\", \"vendor\", \"__pycache__\", \".venv\", \"venv\", \".next\", \".nuxt\", \".turbo\", \".cache\", \"coverage\", \".mypy_cache\", \".pytest_cache\", \".ruff_cache\", \".vault\", \"out\", \".svelte-kit\", \".astro\", \".parcel-cache\", \".agent\", \".claude\", \".cursor\", \".windsurf\", \".github\", \".changeset\", \".deploy\", \".impeccable\", \".ipynb_checkpoints\", \".Trash-1000\", \".cargo-cache\", \".pnpm-store\", \".sccache\", \".uv-cache\", ]",
+        "pub(crate) const IGNORED_DIRS: &[&str] = &[\".git\", \".agents\", \".context-init\", \".gemini\", \"node_modules\", \"target\", \"dist\", \"build\", \"gradle\", \".gradle\", \".idea\", \".vscode\", \".cargo\", \"vendor\", \"__pycache__\", \".venv\", \"venv\", \".next\", \".nuxt\", \".turbo\", \".cache\", \"coverage\", \".mypy_cache\", \".pytest_cache\", \".ruff_cache\", \".vault\", \"out\", \".svelte-kit\", \".astro\", \".parcel-cache\", \".agent\", \".claude\", \".cursor\", \".windsurf\", \".github\", \".changeset\", \".deploy\", \".impeccable\", \".ipynb_checkpoints\", \".Trash-1000\", \".cargo-cache\", \".pnpm-store\", \".sccache\", \".uv-cache\", ]",
         "pub const SOURCE_CODE_EXTENSIONS: &[&str] = &[\"rs\", \"py\", \"ts\", \"tsx\", \"js\", \"jsx\", \"mjs\", \"cjs\", \"mts\", \"cts\", \"astro\", \"vue\", \"svelte\", \"go\", \"bsl\", \"os\", \"mdo\", \"java\", \"kt\", \"kts\", \"cs\", \"c\", \"cpp\", \"h\", \"hpp\", \"sh\", \"bash\", \"zsh\", \"fish\", \"ps1\", \"psm1\", \"lua\", \"nu\", \"sql\", \"prisma\", \"graphql\", \"proto\", \"css\", \"scss\", ]",
         "pub const CONFIG_AND_DOC_EXTENSIONS: &[&str] = &[\"toml\", \"yaml\", \"yml\", \"json\", \"xml\", \"md\", \"mdc\", \"kdl\", \"just\", ]",
         "pub const CODE_EXTENSIONS: &[&str] = &[\"rs\", \"py\", \"ts\", \"tsx\", \"js\", \"jsx\", \"mjs\", \"cjs\", \"mts\", \"cts\", \"astro\", \"vue\", \"svelte\", \"go\", \"bsl\", \"os\", \"mdo\", \"java\", \"kt\", \"kts\", \"cs\", \"c\", \"cpp\", \"h\", \"hpp\", \"sh\", \"bash\", \"zsh\", \"fish\", \"ps1\", \"psm1\", \"lua\", \"nu\", \"sql\", \"prisma\", \"graphql\", \"proto\", \"css\", \"scss\", \"toml\", \"yaml\", \"yml\", \"json\", \"xml\", \"md\", \"mdc\", \"kdl\", \"just\", ]",
+        "pub const MIN_SINGLE_FILE_SUBSYSTEM_TOKENS: usize = 1_000",
         "pub fn estimate_tokens_fast(text: &str) -> usize",
         "pub struct AnalyzeOptions",
         "pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<ProjectAnalysis>",
         "pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<ProjectAnalysis>",
-        "pub fn prefix_with_rtk(cmd: &str) -> String",
-        "pub fn is_ignored_path(path: &Path, root: &Path) -> bool"
+        "pub fn prefix_with_rtk(cmd: &str) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
-      "summary_source": "manual"
+      "summary_source": "manual",
+      "needs_review": true
+    },
+    {
+      "id": "crates_ci-core_analysis_detector_gradle",
+      "name": "Ci Core Analysis Detector Gradle",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/detector/gradle.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_detector_gradle.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_detector_gradle"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/detector/gradle.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/detector/gradle.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub fn parse_gradle_workspace(root: &Path) -> (Option<String>, Vec<String>)"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis_detector",
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis_detector_tests",
@@ -198,6 +234,33 @@
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis_detector",
       "summary_source": "manual"
+    },
+    {
+      "id": "crates_ci-core_analysis_detector_tests_classifier",
+      "name": "Ci Core Analysis Detector Tests Classifier",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/detector/tests_classifier.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_detector_tests_classifier.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_detector_tests_classifier"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/detector/tests_classifier.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/detector/tests_classifier.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub fn is_test_path(rel: &str) -> bool",
+        "pub fn test_target(rel: &str) -> Option<&'static str>",
+        "pub fn test_group_stem(rel: &str) -> String"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis_detector",
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis_generator",
@@ -226,10 +289,11 @@
         "pub fn restamp_card_source(card_path: &Path, root: &Path, directory: Option<&str>) -> Result<bool>",
         "pub fn generate(analysis: &ProjectAnalysis, subsystems: &[SubsystemInfo], knowledge_dir: &Path, opts: &GenerateOptions, ) -> Result<()>",
         "pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftReport>",
+        "pub struct UpdateStats",
         "pub fn update(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, ) -> Result<(usize, usize)>",
+        "pub fn update_with_options(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, prune: bool, ) -> Result<UpdateStats>",
         "pub struct SummaryUpdate",
-        "pub fn apply_summaries(analysis: &ProjectAnalysis, knowledge_dir: &Path, updates: &[SummaryUpdate], source: SummarySource, model: Option<&str>, agents_md: Option<StorageMode>, ) -> Result<usize>",
-        "pub fn sanitize_id(raw: &str) -> String"
+        "pub fn apply_summaries(analysis: &ProjectAnalysis, knowledge_dir: &Path, updates: &[SummaryUpdate], source: SummarySource, model: Option<&str>, agents_md: Option<StorageMode>, ) -> Result<usize>"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
@@ -253,6 +317,7 @@
       "key_files": [
         "crates/ci-core/src/analysis/lang/brace.rs",
         "crates/ci-core/src/analysis/lang/bsl.rs",
+        "crates/ci-core/src/analysis/lang/kotlin.rs",
         "crates/ci-core/src/analysis/lang/mdo.rs",
         "crates/ci-core/src/analysis/lang/mod.rs",
         "crates/ci-core/src/analysis/lang/python.rs",
@@ -265,6 +330,10 @@
         },
         {
           "path": "crates/ci-core/src/analysis/lang/bsl.rs",
+          "is_entrypoint": false
+        },
+        {
+          "path": "crates/ci-core/src/analysis/lang/kotlin.rs",
           "is_entrypoint": false
         },
         {
@@ -291,10 +360,10 @@
         "pub fn adapter_for_path(path: &Path) -> Option<&'static dyn LanguageAdapter>",
         "pub struct BraceLangAdapter",
         "pub struct BslAdapter",
+        "pub struct KotlinAdapter",
         "pub struct MdoObject",
         "pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject>",
-        "pub fn semantic_diff(old: Option<&MdoObject>, new: &MdoObject) -> Vec<String>",
-        "pub fn render_mdo_l2_card(obj: &MdoObject) -> String"
+        "pub fn semantic_diff(old: Option<&MdoObject>, new: &MdoObject) -> Vec<String>"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
@@ -334,6 +403,39 @@
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
       "summary_source": "manual"
+    },
+    {
+      "id": "crates_ci-core_analysis_scan",
+      "name": "Ci Core Analysis Scan",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/scan.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_scan.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_scan"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/scan.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/scan.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const KNOWN_BINARY_EXTENSIONS: &[&str] = &[\"exe\", \"dll\", \"so\", \"dylib\", \"msi\", \"cab\", \"zip\", \"tar\", \"gz\", \"7z\", \"rar\", \"png\", \"jpg\", \"jpeg\", \"gif\", \"webp\", \"ico\", \"icns\", \"pdf\", \"woff\", \"woff2\", \"ttf\", \"otf\", \"eot\", \"mp3\", \"mp4\", \"wav\", \"ogg\", \"wasm\", \"pyc\", \"class\", \"jar\", \"db\", \"sqlite\", \"sqlite3\", \"cf\", \"epf\", \"erf\", \"bin\", \"pack\", \"idx\", ]",
+        "pub fn is_likely_binary(path: &Path) -> bool",
+        "pub struct ScanOptions",
+        "pub struct ScanOutlier",
+        "pub struct ScanStat",
+        "pub struct ScanReport",
+        "pub fn scan_project(root: &Path, scope: &ScopeConfig) -> Result<ScanReport>",
+        "pub fn scan_project_with(root: &Path, scope: &ScopeConfig, opts: &ScanOptions, ) -> Result<ScanReport>",
+        "pub fn render_scan_markdown(project_id: &str, root: &Path, report: &ScanReport) -> String"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis",
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis_task",
@@ -458,7 +560,8 @@
         "pub struct CardFrontmatter",
         "pub struct OkfCard",
         "pub fn extract_l0_abstract(markdown: &str) -> String",
-        "pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String"
+        "pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String",
+        "pub fn truncate_to_boundary(text: &str, max_chars: usize) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core",
@@ -955,14 +1058,14 @@
       "key_symbols": [
         "pub struct McpCheckParams",
         "pub struct McpCheckResult",
+        "pub struct L0SubsystemSummary",
         "pub struct McpGetSubsystemsParams",
         "pub struct McpGetSubsystemParams",
         "pub struct McpPackParams",
         "pub struct McpSubmitParams",
         "pub struct SubmitResult",
         "pub struct McpFeedbackParams",
-        "pub struct FeedbackResult",
-        "pub struct McpInitParams"
+        "pub struct FeedbackResult"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
       "parent": "crates_ci-mcp",
@@ -971,7 +1074,7 @@
     {
       "id": "docs",
       "name": "Docs",
-      "summary": "Модуль и компоненты директории `docs` (9 файлов)",
+      "summary": "Модуль и компоненты директории `docs` (13 файлов)",
       "l1_path": "subsystems/docs.md",
       "tags": [
         "Rust (Cargo)",
@@ -983,10 +1086,14 @@
         "docs/superpowers/plans/2026-10-28-complete-design-v0.3-v0.6.md",
         "docs/superpowers/plans/2026-10-29-context-init-adoption-and-integrity.md",
         "docs/superpowers/plans/2026-11-01-data-projects-production.md",
+        "docs/superpowers/plans/2026-11-02-detector-robustness-and-kmp-support.md",
+        "docs/superpowers/plans/2026-11-07-core-l0-compactness-splitter-and-scan-hardening.md",
         "docs/superpowers/specs/2026-10-23-v0.3-step5-cli-design.md",
         "docs/superpowers/specs/2026-10-24-repo-storage-design.md",
         "docs/superpowers/specs/2026-10-29-context-init-adoption-and-integrity-design.md",
-        "docs/superpowers/specs/2026-11-01-data-projects-production-design.md"
+        "docs/superpowers/specs/2026-11-01-data-projects-production-design.md",
+        "docs/superpowers/specs/2026-11-02-detector-robustness-and-kmp-support-design.md",
+        "docs/superpowers/specs/2026-11-07-core-l0-compactness-splitter-and-scan-hardening-design.md"
       ],
       "files": [
         {
@@ -1010,6 +1117,14 @@
           "is_entrypoint": false
         },
         {
+          "path": "docs/superpowers/plans/2026-11-02-detector-robustness-and-kmp-support.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "docs/superpowers/plans/2026-11-07-core-l0-compactness-splitter-and-scan-hardening.md",
+          "is_entrypoint": false
+        },
+        {
           "path": "docs/superpowers/specs/2026-10-23-v0.3-step5-cli-design.md",
           "is_entrypoint": false
         },
@@ -1023,6 +1138,14 @@
         },
         {
           "path": "docs/superpowers/specs/2026-11-01-data-projects-production-design.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "docs/superpowers/specs/2026-11-02-detector-robustness-and-kmp-support-design.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "docs/superpowers/specs/2026-11-07-core-l0-compactness-splitter-and-scan-hardening-design.md",
           "is_entrypoint": false
         }
       ],
@@ -1388,9 +1511,14 @@
         "tests"
       ],
       "key_files": [
+        "tests/cli.rs",
         "tests/regression_benchmark.rs"
       ],
       "files": [
+        {
+          "path": "tests/cli.rs",
+          "is_entrypoint": false
+        },
         {
           "path": "tests/regression_benchmark.rs",
           "is_entrypoint": false
@@ -1398,50 +1526,6 @@
       ],
       "summary_source": "manual",
       "needs_review": true
-    },
-    {
-      "id": "tests_cli",
-      "name": "Tests Cli",
-      "summary": "Тесты для `tests`",
-      "l1_path": "subsystems/tests_cli.md",
-      "tags": [
-        "Rust (Cargo)",
-        "tests",
-        "tests_cli"
-      ],
-      "key_files": [
-        "tests/cli.rs"
-      ],
-      "files": [
-        {
-          "path": "tests/cli.rs",
-          "is_entrypoint": false
-        }
-      ],
-      "parent": "tests",
-      "summary_source": "heuristic"
-    },
-    {
-      "id": "tests_regression_benchmark",
-      "name": "Tests Regression Benchmark",
-      "summary": "Тесты для `tests`",
-      "l1_path": "subsystems/tests_regression_benchmark.md",
-      "tags": [
-        "Rust (Cargo)",
-        "tests",
-        "tests_regression_benchmark"
-      ],
-      "key_files": [
-        "tests/regression_benchmark.rs"
-      ],
-      "files": [
-        {
-          "path": "tests/regression_benchmark.rs",
-          "is_entrypoint": false
-        }
-      ],
-      "parent": "tests",
-      "summary_source": "heuristic"
     }
   ],
   "core_rules": [
@@ -1452,6 +1536,6 @@
   ],
   "generator": {
     "version": "0.3.0",
-    "build": "9660354-dirty"
+    "build": "cac1d2d-dirty"
   }
 }

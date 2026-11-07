@@ -1,6 +1,6 @@
 # 🗺 Карта архитектуры: context-init (L0)
 
-> **Стек:** Rust (Cargo) | **Обновлено:** 2026-11-01
+> **Стек:** Rust (Cargo) | **Обновлено:** 2026-11-07
 > **Описание:** CLI-утилита на Rust для автоматической инициализации и поддержания трехуровневой базы знаний (**OpenViking L0-L2**) для автономных ИИ-ассистентов (Antigravity, Hermes, Claude Code, Cursor, Aider).
 
 ## 🚪 Точки входа (Root Entrypoints)
@@ -11,13 +11,13 @@
 ## ⚡️ Быстрые команды
 ```bash
 # Сборка
-rtk cargo build
+rtk mise run build
 
 # Тесты
-rtk cargo test
+rtk mise run test
 
 # Линтер
-rtk cargo clippy
+rtk mise run lint
 
 # Запуск
 rtk cargo run
@@ -31,10 +31,13 @@ rtk cargo run
 | **ci-core** | Ядро без LLM: версия крейта, трейт Retriever и SearchHit для поиска по базе знаний; реэкспорт модулей analysis, config, git, storage, openviking, telemetry. | `crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs` | [subsystems/crates_ci-core.md](subsystems/crates_ci-core.md) |
 | **Анализ проекта** | Сканирование дерева (scan_project, ScanReport), конфиг области (scope), выделение подсистем и задачный дайджест; resolve_knowledge_dir выбирает repo (.context-init/knowledge) или центральное хранилище. | `crates/ci-core/src/analysis/mod.rs` | [subsystems/crates_ci-core_analysis.md](subsystems/crates_ci-core_analysis.md) |
 | **Детектор проекта** | analyze_project / analyze_project_with: определение типа проекта, команд, подсистем и сигнатур (deep); список IGNORED_DIRS и префикс rtk для генерируемых команд. | `-` | [subsystems/crates_ci-core_analysis_detector.md](subsystems/crates_ci-core_analysis_detector.md) |
+| **Ci Core Analysis Detector Gradle** | Модуль-файл `crates/ci-core/src/analysis/detector/gradle.rs` | `-` | [subsystems/crates_ci-core_analysis_detector_gradle.md](subsystems/crates_ci-core_analysis_detector_gradle.md) |
 | **Тесты детектора** | Юнит-тесты детектора; символы Engine, Status, MyService — фикстурный Rust-код для проверки извлечения сигнатур, а не API проекта. | `-` | [subsystems/crates_ci-core_analysis_detector_tests.md](subsystems/crates_ci-core_analysis_detector_tests.md) |
+| **Ci Core Analysis Detector Tests Classifier** | Модуль-файл `crates/ci-core/src/analysis/detector/tests_classifier.rs` | `-` | [subsystems/crates_ci-core_analysis_detector_tests_classifier.md](subsystems/crates_ci-core_analysis_detector_tests_classifier.md) |
 | **Генератор базы знаний** | Рендер L0-индекса и OKF-карточек L1 (render_subsystem_card_okf), generate для записи базы, audit для поиска дрейфа, restamp_card_source для обновления commit/blob SHA во frontmatter. | `-` | [subsystems/crates_ci-core_analysis_generator.md](subsystems/crates_ci-core_analysis_generator.md) |
 | **Языковые адаптеры** | Трейт LanguageAdapter (language_id, extensions, extract_symbols) и адаптеры Rust, Python, BSL и MDO (1С); ELIDED_BODY — маркер вырезанного тела при сжатии. | `crates/ci-core/src/analysis/lang/mod.rs` | [subsystems/crates_ci-core_analysis_lang.md](subsystems/crates_ci-core_analysis_lang.md) |
 | **Упаковщик контекста** | pack_subsystem / pack_files: сборка файлов подсистемы в XML или Markdown с AST-сжатием (тела функций вырезаются) для передачи в LLM. | `-` | [subsystems/crates_ci-core_analysis_pack.md](subsystems/crates_ci-core_analysis_pack.md) |
+| **Ci Core Analysis Scan** | Модуль-файл `crates/ci-core/src/analysis/scan.rs` | `-` | [subsystems/crates_ci-core_analysis_scan.md](subsystems/crates_ci-core_analysis_scan.md) |
 | **Ci Core Analysis Task** | Модуль-файл `crates/ci-core/src/analysis/task.rs` | `-` | [subsystems/crates_ci-core_analysis_task.md](subsystems/crates_ci-core_analysis_task.md) |
 | **Конфигурация** | Каскад конфигурации (глобальный, проектный, --config, env, CLI): язык (ru по умолчанию), бюджет ответа 4000 токенов, порог разбиения 15000, модели [models], роли [roles] (none = детерминированно), интеграции и телеметрия. | `-` | [subsystems/crates_ci-core_config.md](subsystems/crates_ci-core_config.md) |
 | **Git-бэкенд** | Трейт GitBackend (head_commit, статус, diff), GitStatusEntry и StalenessReport для определения устаревания карточек относительно коммитов. | `-` | [subsystems/crates_ci-core_git.md](subsystems/crates_ci-core_git.md) |
@@ -54,15 +57,13 @@ rtk cargo run
 | **Конвейер init/update** | run_init / run_update: анализ, обогащение ролями, генерация базы и AGENTS.md; FullDriftReport объединяет файловый и git-дрейф. | `-` | [subsystems/crates_ci-mcp_pipeline.md](subsystems/crates_ci-mcp_pipeline.md) |
 | **MCP-сервер** | ContextInitServer на stdio: регистрация инструментов, MCP roots (roots/list) для выбора проекта; TelemetrySink подключается через with_telemetry_sink (в продакшен-запуске run_mcp_server не подключён). | `-` | [subsystems/crates_ci-mcp_server.md](subsystems/crates_ci-mcp_server.md) |
 | **Ci Mcp Tools** | Модуль-файл `crates/ci-mcp/src/tools.rs` | `-` | [subsystems/crates_ci-mcp_tools.md](subsystems/crates_ci-mcp_tools.md) |
-| **Docs** | Модуль и компоненты директории `docs` (9 файлов) | `-` | [subsystems/docs.md](subsystems/docs.md) |
+| **Docs** | Модуль и компоненты директории `docs` (13 файлов) | `-` | [subsystems/docs.md](subsystems/docs.md) |
 | **Справочники** | Спецификация формата OpenViking (openviking_spec.md) — опорный документ для уровней L0-L2. | `-` | [subsystems/references.md](subsystems/references.md) |
 | **Отчёты бенчмарков** | BENCHMARK_REPORT.md и benchmark_latest.json — результаты регрессионного бенчмарка (токены, точность). | `-` | [subsystems/reports.md](subsystems/reports.md) |
 | **Scripts** | Модуль и компоненты директории `scripts` (9 файлов) | `-` | [subsystems/scripts.md](subsystems/scripts.md) |
 | **CLI** | Точка входа run() и подкоманды init, update, check, pack, mcp, config, migrate, setup, telemetry, feedback; GlobalArgs (--model, --role, --config, --compact) и сборка RoleRouter. | `src/cli/mod.rs` | [subsystems/src_cli.md](subsystems/src_cli.md) |
 | **CLI setup** | context-init setup: план регистрации MCP-сервера и короткого правила агента для харнессов (Claude Code, Antigravity и др.), слияние с существующими конфигами. | `src/cli/setup/mod.rs` | [subsystems/src_cli_setup.md](subsystems/src_cli_setup.md) |
 | **Интеграционные тесты CLI** | tests/cli.rs — сквозные тесты бинаря context-init по подкомандам. | `-` | [subsystems/tests.md](subsystems/tests.md) |
-| **Tests Cli** | Тесты для `tests` | `-` | [subsystems/tests_cli.md](subsystems/tests_cli.md) |
-| **Tests Regression Benchmark** | Тесты для `tests` | `-` | [subsystems/tests_regression_benchmark.md](subsystems/tests_regression_benchmark.md) |
 
 ## 📋 Инварианты и правила проекта
 - Все внешние крейты и зависимости строго объявляются в Cargo.toml.

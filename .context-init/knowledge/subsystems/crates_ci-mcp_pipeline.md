@@ -2,8 +2,8 @@
 directory: crates/ci-mcp/src/pipeline.rs
 source:
   kind: git
-  blob_sha: 9d5f2db3ba5c2e627655eab5ea7b0e9fd5ed7ce0
-  commit_sha: 9660354a570d6203128acd3df79cd62f23660f76
+  blob_sha: 2cac9ead388e7f32acc3bcf226804f8fcf587b53
+  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
 generated_by:
   component: context-init
   role: update

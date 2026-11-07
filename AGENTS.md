@@ -19,10 +19,13 @@
 - `crates_ci-core` (ci-core) — Ядро без LLM: версия крейта, трейт Retriever и SearchHit для поиска по базе знаний; реэкспорт модулей analysis, config, git, storage, openviking, telemetry.
 - `crates_ci-core_analysis` (Анализ проекта) — Сканирование дерева (scan_project, ScanReport), конфиг области (scope), выделение подсистем и задачный дайджест; resolve_knowledge_dir выбирает repo (.context-init/knowledge) или центральное хранилище.
 - `crates_ci-core_analysis_detector` (Детектор проекта) — analyze_project / analyze_project_with: определение типа проекта, команд, подсистем и сигнатур (deep); список IGNORED_DIRS и префикс rtk для генерируемых команд.
+- `crates_ci-core_analysis_detector_gradle` (Ci Core Analysis Detector Gradle) — Модуль-файл `crates/ci-core/src/analysis/detector/gradle.rs`
 - `crates_ci-core_analysis_detector_tests` (Тесты детектора) — Юнит-тесты детектора; символы Engine, Status, MyService — фикстурный Rust-код для проверки извлечения сигнатур, а не API проекта.
+- `crates_ci-core_analysis_detector_tests_classifier` (Ci Core Analysis Detector Tests Classifier) — Модуль-файл `crates/ci-core/src/analysis/detector/tests_classifier.rs`
 - `crates_ci-core_analysis_generator` (Генератор базы знаний) — Рендер L0-индекса и OKF-карточек L1 (render_subsystem_card_okf), generate для записи базы, audit для поиска дрейфа, restamp_card_source для обновления commit/blob SHA во frontmatter.
 - `crates_ci-core_analysis_lang` (Языковые адаптеры) — Трейт LanguageAdapter (language_id, extensions, extract_symbols) и адаптеры Rust, Python, BSL и MDO (1С); ELIDED_BODY — маркер вырезанного тела при сжатии.
 - `crates_ci-core_analysis_pack` (Упаковщик контекста) — pack_subsystem / pack_files: сборка файлов подсистемы в XML или Markdown с AST-сжатием (тела функций вырезаются) для передачи в LLM.
+- `crates_ci-core_analysis_scan` (Ci Core Analysis Scan) — Модуль-файл `crates/ci-core/src/analysis/scan.rs`
 - `crates_ci-core_analysis_task` (Ci Core Analysis Task) — Модуль-файл `crates/ci-core/src/analysis/task.rs`
 - `crates_ci-core_config` (Конфигурация) — Каскад конфигурации (глобальный, проектный, --config, env, CLI): язык (ru по умолчанию), бюджет ответа 4000 токенов, порог разбиения 15000, модели [models], роли [roles] (none = детерминированно), интеграции и телеметрия.
 - `crates_ci-core_git` (Git-бэкенд) — Трейт GitBackend (head_commit, статус, diff), GitStatusEntry и StalenessReport для определения устаревания карточек относительно коммитов.
@@ -42,12 +45,10 @@
 - `crates_ci-mcp_pipeline` (Конвейер init/update) — run_init / run_update: анализ, обогащение ролями, генерация базы и AGENTS.md; FullDriftReport объединяет файловый и git-дрейф.
 - `crates_ci-mcp_server` (MCP-сервер) — ContextInitServer на stdio: регистрация инструментов, MCP roots (roots/list) для выбора проекта; TelemetrySink подключается через with_telemetry_sink (в продакшен-запуске run_mcp_server не подключён).
 - `crates_ci-mcp_tools` (Ci Mcp Tools) — Модуль-файл `crates/ci-mcp/src/tools.rs`
-- `docs` (Docs) — Модуль и компоненты директории `docs` (9 файлов)
+- `docs` (Docs) — Модуль и компоненты директории `docs` (13 файлов)
 - `references` (Справочники) — Спецификация формата OpenViking (openviking_spec.md) — опорный документ для уровней L0-L2.
 - `reports` (Отчёты бенчмарков) — BENCHMARK_REPORT.md и benchmark_latest.json — результаты регрессионного бенчмарка (токены, точность).
 - `scripts` (Scripts) — Модуль и компоненты директории `scripts` (9 файлов)
 - `src_cli` (CLI) — Точка входа run() и подкоманды init, update, check, pack, mcp, config, migrate, setup, telemetry, feedback; GlobalArgs (--model, --role, --config, --compact) и сборка RoleRouter.
 - `src_cli_setup` (CLI setup) — context-init setup: план регистрации MCP-сервера и короткого правила агента для харнессов (Claude Code, Antigravity и др.), слияние с существующими конфигами.
 - `tests` (Интеграционные тесты CLI) — tests/cli.rs — сквозные тесты бинаря context-init по подкомандам.
-- `tests_cli` (Tests Cli) — Тесты для `tests`
-- `tests_regression_benchmark` (Tests Regression Benchmark) — Тесты для `tests`

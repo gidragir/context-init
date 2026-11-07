@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/openviking.rs
 source:
   kind: git
-  blob_sha: d0748321868e0379c157555376f25c17ac24b0f7
-  commit_sha: 2ea8f3affd3c7e26633575afd792de4875d13585
+  blob_sha: 0cc4de7ba10b4779cc82728037a00fae9d7e1577
+  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
 generated_by:
   component: context-init
   role: update
@@ -38,6 +38,7 @@ pub struct CardFrontmatter
 pub struct OkfCard
 pub fn extract_l0_abstract(markdown: &str) -> String
 pub fn extract_l0_abstract_with_limit(markdown: &str, max_chars: usize) -> String
+pub fn truncate_to_boundary(text: &str, max_chars: usize) -> String
 ```
 
 ## 🧪 Запуск и тестирование

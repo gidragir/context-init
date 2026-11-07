@@ -2,15 +2,15 @@
 directory: crates/ci-core/src/analysis/lang
 source:
   kind: git
-  blob_sha: 1ff79388243fd1e6ed7d45601582977f7288ec4e
-  commit_sha: 9660354a570d6203128acd3df79cd62f23660f76
+  blob_sha: 7e616e3cf5dd016e1c3a839d487d75f22352b28d
+  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
 generated_by:
   component: context-init
   role: update
   model: none
 freshness:
-  total_entries: 6
-  sampled_entries: 6
+  total_entries: 7
+  sampled_entries: 7
   unsampled_entries: 0
   pending_child_changes: 0
 ---
@@ -28,6 +28,7 @@ freshness:
 | :--- | :--- |
 | `crates/ci-core/src/analysis/lang/brace.rs` | Исходный код |
 | `crates/ci-core/src/analysis/lang/bsl.rs` | Исходный код |
+| `crates/ci-core/src/analysis/lang/kotlin.rs` | Исходный код |
 | `crates/ci-core/src/analysis/lang/mdo.rs` | Исходный код |
 | `crates/ci-core/src/analysis/lang/mod.rs` | ⭐ Точка входа |
 | `crates/ci-core/src/analysis/lang/python.rs` | Исходный код |
@@ -41,10 +42,10 @@ pub fn adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter>
 pub fn adapter_for_path(path: &Path) -> Option<&'static dyn LanguageAdapter>
 pub struct BraceLangAdapter
 pub struct BslAdapter
+pub struct KotlinAdapter
 pub struct MdoObject
 pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject>
 pub fn semantic_diff(old: Option<&MdoObject>, new: &MdoObject) -> Vec<String>
-pub fn render_mdo_l2_card(obj: &MdoObject) -> String
 ```
 
 ## 🧪 Запуск и тестирование
