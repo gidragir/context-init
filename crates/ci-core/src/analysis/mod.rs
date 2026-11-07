@@ -2,6 +2,7 @@
 //! `ci-llm`) → generate/update the L0–L2 knowledge base. Free of any LLM dependency.
 
 pub mod detector;
+pub mod file_kind;
 pub mod generator;
 pub mod lang;
 pub mod pack;

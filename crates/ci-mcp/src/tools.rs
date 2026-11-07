@@ -218,6 +218,12 @@ pub struct McpScanParams {
     /// Project identifier or directory path.
     #[serde(default)]
     pub project: Option<String>,
+    /// Directory aggregation depth (1..=5, default: 2).
+    #[serde(default)]
+    pub max_depth: Option<usize>,
+    /// Diagnostic mode: include hidden dot-directories.
+    #[serde(default)]
+    pub include_hidden: Option<bool>,
     /// Pagination cursor for continuing output.
     #[serde(default)]
     pub cursor: Option<String>,

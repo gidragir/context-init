@@ -4,7 +4,20 @@
 //! so nothing outside the project root can leak in.
 
 use crate::analysis::detector::IGNORED_DIRS;
+use crate::analysis::file_kind::canonical_file_ext;
 use crate::config::ScopeConfig;
+
+pub const ALWAYS_IGNORED_RUNTIME_DIRS: &[&str] = &[
+    ".git",
+    ".context-init",
+    "node_modules",
+    "target",
+    ".venv",
+    "venv",
+    ".cache",
+    ".worktrees",
+    ".claude/worktrees",
+];
 use anyhow::{Context, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
@@ -127,6 +140,15 @@ pub struct ScopeFilter {
 impl ScopeFilter {
     /// Walks `root` once (respecting `.gitignore`, `.ignore`, `.git/info/exclude`).
     pub fn build(root: &Path, scope: &ScopeConfig) -> Result<Self> {
+        Self::build_diagnostic(root, scope, false)
+    }
+
+    /// Diagnostic walk that can include hidden dot-directories when `include_hidden` is true.
+    pub fn build_diagnostic(
+        root: &Path,
+        scope: &ScopeConfig,
+        include_hidden: bool,
+    ) -> Result<Self> {
         let include = glob_set(&scope.include)?;
         let exclude = glob_set(&scope.exclude)?;
         let extensions: HashSet<String> = scope
@@ -159,10 +181,17 @@ impl ScopeFilter {
                 let rel = rel_path.to_string_lossy().replace('\\', "/");
                 let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
                 if is_dir {
+                    if ALWAYS_IGNORED_RUNTIME_DIRS
+                        .iter()
+                        .any(|d| rel == *d || rel.starts_with(&format!("{d}/")))
+                    {
+                        return false;
+                    }
                     let explicitly_allowed = explicitly_included(&rel, &inc)
                         || include_allows_dir_traversal(&rel, &scope_patterns);
                     if (name.starts_with('.') || IGNORED_DIRS.contains(&name.as_ref()))
                         && !explicitly_allowed
+                        && !include_hidden
                     {
                         return false;
                     }
@@ -206,12 +235,14 @@ impl ScopeFilter {
                 continue;
             }
             if !extensions.is_empty() {
-                let ext = Path::new(&rel)
+                let canon_ext = canonical_file_ext(&rel);
+                let raw_ext = Path::new(&rel)
                     .extension()
                     .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                if !extensions.contains(&ext) {
+                    .map(str::to_ascii_lowercase);
+                let matches_canon = canon_ext.as_ref().is_some_and(|e| extensions.contains(e));
+                let matches_raw = raw_ext.as_ref().is_some_and(|e| extensions.contains(e));
+                if !matches_canon && !matches_raw {
                     continue;
                 }
             }

@@ -8,14 +8,13 @@ use ci_core::analysis::detector::{self, count_tokens};
 use ci_core::analysis::generator;
 use ci_core::analysis::pack::{compress_code, format_rust_items, pack_subsystem, PackStyle};
 use ci_core::config::{Config, ModelConfig, ModelKind};
-use ci_core::storage::SubsystemInfo;
 use ci_llm::{LlmRequest, RoleName, RoleRouter};
 use ci_mcp::pagination::count_tokens as count_reply_tokens;
 use ci_mcp::pipeline::{self, PipelineOptions};
 use ci_mcp::{
-    ContextInitServer, L0SubsystemSummary, McpCheckParams, McpGetSubsystemParams, McpGetSubsystemsParams,
-    McpInitParams, McpPackParams, McpScanParams, McpSearchParams, McpTaskParams, McpUpdateParams,
-    McpWorkspaceParams, ResolvedProject,
+    ContextInitServer, L0SubsystemSummary, McpCheckParams, McpGetSubsystemParams,
+    McpGetSubsystemsParams, McpInitParams, McpPackParams, McpScanParams, McpSearchParams,
+    McpTaskParams, McpUpdateParams, McpWorkspaceParams, ResolvedProject,
 };
 
 #[derive(serde::Serialize, Debug, Clone)]

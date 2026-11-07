@@ -8,7 +8,7 @@ use std::sync::Arc;
 use ci_core::analysis::generator::{self, SummaryUpdate};
 use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
 use ci_core::analysis::resolve_knowledge_dir;
-use ci_core::analysis::scan::{render_scan_markdown, scan_project};
+use ci_core::analysis::scan::{render_scan_markdown, scan_project_with, ScanOptions};
 use ci_core::analysis::task::{build_task_digest, TaskDigestRequest};
 use ci_core::analysis::workspace::{analyze_workspace, render_workspace_l0};
 use ci_core::config::ROLE_NONE;
@@ -800,8 +800,12 @@ impl ContextHandler {
     }
 
     /// Handler for `context_scan` (D9).
-    pub fn scan(project: &ResolvedProject, cursor: Option<&str>) -> Result<String> {
-        let report = scan_project(&project.root, &project.config.scope)?;
+    pub fn scan(
+        project: &ResolvedProject,
+        cursor: Option<&str>,
+        opts: &ScanOptions,
+    ) -> Result<String> {
+        let report = scan_project_with(&project.root, &project.config.scope, opts)?;
         let scan_out = render_scan_markdown(&project.project_id, &project.root, &report);
         let paginated =
             paginate_content(&scan_out, cursor, project.config.max_response_tokens, false);

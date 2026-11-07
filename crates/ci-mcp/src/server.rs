@@ -629,8 +629,12 @@ impl ContextInitServer {
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
         let recorder = resolved.recorder(self.telemetry_sink.clone());
+        let opts = ci_core::analysis::scan::ScanOptions {
+            max_depth: p.max_depth.unwrap_or(2),
+            include_hidden: p.include_hidden.unwrap_or(false),
+        };
         self.instrumented("context_scan", recorder, || async {
-            ContextHandler::scan(&resolved, p.cursor.as_deref())
+            ContextHandler::scan(&resolved, p.cursor.as_deref(), &opts)
         })
         .await
     }
