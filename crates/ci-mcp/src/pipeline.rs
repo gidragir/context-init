@@ -28,6 +28,8 @@ pub struct PipelineOptions<'a> {
     pub dry_run: bool,
     /// Refresh the navigation section of the repo's `AGENTS.md`.
     pub with_agents_md: bool,
+    /// Prune deleted root and split subsystems from knowledge base and AGENTS.md (`update` only).
+    pub prune: bool,
     /// `--model` / MCP `model` override for the role chain (D16).
     pub model_override: Option<&'a str>,
 }
@@ -44,6 +46,8 @@ pub struct PipelineOutcome {
     pub added: usize,
     /// Existing subsystems refreshed (`update` only).
     pub updated: usize,
+    /// Subsystems pruned from knowledge base (`update` only).
+    pub pruned: usize,
     /// `update` found no subsystem that needs LLM enrichment (no model was consulted).
     pub nothing_to_enrich: bool,
 }
@@ -78,6 +82,7 @@ pub fn run_init(
     Ok(PipelineOutcome {
         added: subsystems.len(),
         updated: 0,
+        pruned: 0,
         nothing_to_enrich: false,
         analysis,
         subsystems,
@@ -97,15 +102,22 @@ pub fn run_update(
         analyze(project, router, RoleName::Update, opts, Some(&existing))?;
     let knowledge_dir = project.knowledge_dir.clone();
     let agents_md = opts.with_agents_md.then_some(project.storage);
-    let (added, updated) = generator::update(&analysis, &subsystems, &knowledge_dir, agents_md)?;
+    let stats = generator::update_with_options(
+        &analysis,
+        &subsystems,
+        &knowledge_dir,
+        agents_md,
+        opts.prune,
+    )?;
     let enrich = apply_enrichment(&analysis, &knowledge_dir, enrich, agents_md);
     Ok(PipelineOutcome {
         analysis,
         subsystems,
         knowledge_dir,
         enrich,
-        added,
-        updated,
+        added: stats.added,
+        updated: stats.updated,
+        pruned: stats.pruned,
         nothing_to_enrich,
     })
 }

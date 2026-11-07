@@ -207,6 +207,9 @@ pub struct McpUpdateParams {
     /// Model alias overriding the `update` role chain (D16).
     #[serde(default)]
     pub model: Option<String>,
+    /// Prune deleted root and split subsystems from knowledge base and AGENTS.md.
+    #[serde(default)]
+    pub prune: Option<bool>,
 }
 
 /// Parameters for `context_scan` tool (D9).

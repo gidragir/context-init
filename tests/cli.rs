@@ -1212,3 +1212,101 @@ fn cli_task_records_efficiency() {
     assert!(effs[0].source_tokens > 0);
     assert!(effs[0].response_tokens > 0);
 }
+
+#[test]
+fn cli_update_prune_cleans_missing_subsystems() {
+    let sb = Sandbox::new("cli_prune");
+    let proj = sb.project();
+    let src_a = proj.join("crates/alpha/src");
+    let src_b = proj.join("crates/beta/src");
+    fs::create_dir_all(&src_a).unwrap();
+    fs::create_dir_all(&src_b).unwrap();
+    fs::write(
+        proj.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/alpha\", \"crates/beta\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        proj.join("crates/alpha/Cargo.toml"),
+        "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(src_a.join("lib.rs"), "pub fn a() {}\n").unwrap();
+    fs::write(
+        proj.join("crates/beta/Cargo.toml"),
+        "[package]\nname = \"beta\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(src_b.join("lib.rs"), "pub fn b() {}\n").unwrap();
+
+    let out = sb.run(&["init", "--compact"]);
+    assert!(out.status.success(), "init failed: {}", stderr(&out));
+
+    let card_b = proj.join(".context-init/knowledge/subsystems/crates_beta.md");
+    assert!(card_b.is_file());
+
+    // Remove beta module
+    fs::remove_dir_all(proj.join("crates/beta")).unwrap();
+    fs::write(
+        proj.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/alpha\"]\n",
+    )
+    .unwrap();
+
+    // Check reports drift with prune hint
+    let check_out = sb.run(&["check", "--compact"]);
+    let check_str = stdout(&check_out);
+    assert!(
+        check_str.contains("missing=[crates_beta]"),
+        "check: {check_str}"
+    );
+    assert!(
+        check_str.contains("update --prune"),
+        "prune hint: {check_str}"
+    );
+
+    // Run update --prune
+    let update_out = sb.run(&["update", "--prune", "--compact"]);
+    assert!(
+        update_out.status.success(),
+        "update failed: {}",
+        stderr(&update_out)
+    );
+    let update_str = stdout(&update_out);
+    assert!(
+        update_str.contains("1 pruned"),
+        "update output: {update_str}"
+    );
+    assert!(!card_b.exists(), "card file must be deleted");
+
+    // Check now reports OK: 0 drift
+    let clean_check = sb.run(&["check", "--compact", "--exit-code"]);
+    assert!(
+        clean_check.status.success(),
+        "clean check failed: {}{}",
+        stdout(&clean_check),
+        stderr(&clean_check)
+    );
+    assert!(
+        stdout(&clean_check).contains("OK"),
+        "check ok: {}",
+        stdout(&clean_check)
+    );
+}
+
+#[test]
+fn cli_check_reports_legacy_agents_knowledge_hint() {
+    let sb = Sandbox::new("cli_legacy_hint");
+    let proj = sb.project();
+    let legacy = proj.join(".agents/knowledge");
+    fs::create_dir_all(&legacy).unwrap();
+    fs::write(legacy.join("L0_index.json"), "{}\n").unwrap();
+
+    let out = sb.run(&["check"]);
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(
+        text.contains("Legacy knowledge base found at"),
+        "output: {text}"
+    );
+    assert!(text.contains(".agents/knowledge"), "output: {text}");
+}

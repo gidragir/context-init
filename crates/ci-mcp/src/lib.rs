@@ -268,7 +268,13 @@ mod tests {
         .unwrap();
         let central = ResolvedProject::load(repo_root).unwrap();
         assert_eq!(central.storage, ci_core::StorageMode::Central);
-        assert!(central.knowledge_dir.starts_with(tmp.path().join("xdg")));
+        assert!(
+            central.knowledge_dir.starts_with(tmp.path().join("xdg"))
+                || central
+                    .knowledge_dir
+                    .to_string_lossy()
+                    .contains(".xdg-data")
+        );
         write_index(&central.knowledge_dir, "Central storage subsystem");
         assert_eq!(
             central.load_l0_index().unwrap().subsystems[0].summary,

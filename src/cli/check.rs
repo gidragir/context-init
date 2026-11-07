@@ -27,13 +27,19 @@ pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode> {
 
     if global.compact {
         if has_drift {
+            let prune_hint = if !report.missing_in_fs.is_empty() {
+                " (use update --prune / prune=true to clean removed subsystems)"
+            } else {
+                ""
+            };
             println!(
-                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}], git_stale={}, format=[{}]",
+                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}], git_stale={}, format=[{}]{}",
                 report.up_to_date_count,
                 report.missing_in_fs.join(", "),
                 report.untracked_in_knowledge.join(", "),
                 report.git_stale,
-                report.format_issues.join("; ")
+                report.format_issues.join("; "),
+                prune_hint
             );
         } else {
             println!("OK: {} subsystems up-to-date", report.up_to_date_count);
@@ -49,6 +55,7 @@ pub fn run(global: &GlobalArgs, args: &CheckArgs) -> Result<ExitCode> {
             for m in &report.missing_in_fs {
                 println!("      - {}", m.red());
             }
+            println!("\nRun `context-init update --prune` to clean removed subsystems.");
         }
         if !report.untracked_in_knowledge.is_empty() {
             println!("   ! New modules missing from the knowledge base:");

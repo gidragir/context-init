@@ -90,6 +90,9 @@ pub struct UpdateArgs {
     /// Do not update the navigation section in the repo's AGENTS.md
     #[arg(long)]
     pub no_agents_md: bool,
+    /// Prune deleted root and split subsystems from knowledge base and AGENTS.md
+    #[arg(long)]
+    pub prune: bool,
     #[command(flatten)]
     pub rtk: RtkArgs,
 }
@@ -154,6 +157,7 @@ pub fn run_init(global: &GlobalArgs, args: &InitArgs) -> Result<ExitCode> {
         force: args.force,
         dry_run: args.dry_run,
         with_agents_md: !args.no_agents_md,
+        prune: false,
         model_override: None,
     };
     if let Some(hint) = pipeline::storage_mismatch_hint(&project) {
@@ -214,6 +218,7 @@ pub fn run_update(global: &GlobalArgs, args: &UpdateArgs) -> Result<ExitCode> {
     let opts = PipelineOptions {
         deep: args.deep,
         with_agents_md: !args.no_agents_md,
+        prune: args.prune,
         ..PipelineOptions::default()
     };
     if let Some(hint) = pipeline::storage_mismatch_hint(&project) {
@@ -225,17 +230,19 @@ pub fn run_update(global: &GlobalArgs, args: &UpdateArgs) -> Result<ExitCode> {
     }
     if global.compact {
         println!(
-            "OK: updated {} added, {} refreshed in {}",
+            "OK: updated {} added, {} refreshed, {} pruned in {}",
             out.added,
             out.updated,
+            out.pruned,
             out.knowledge_dir.display()
         );
     } else {
         println!(
-            "{} {} added, {} refreshed in {}",
+            "{} {} added, {} refreshed, {} pruned in {}",
             "DONE:".green().bold(),
             out.added,
             out.updated,
+            out.pruned,
             out.knowledge_dir.display().to_string().cyan()
         );
     }

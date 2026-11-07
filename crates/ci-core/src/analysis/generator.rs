@@ -541,12 +541,30 @@ fn version_newer(candidate: &str, running: &str) -> bool {
 /// Summaries follow their provenance: only a `Heuristic` summary is refreshed from the
 /// detector (one that lost its generated prefix is reclassified `Manual` and kept); any
 /// other summary is kept and flagged `needs_review` when the subsystem's file set changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UpdateStats {
+    pub added: usize,
+    pub updated: usize,
+    pub pruned: usize,
+}
+
 pub fn update(
     analysis: &ProjectAnalysis,
     new_subsystems: &[SubsystemInfo],
     knowledge_dir: &Path,
     agents_md: Option<StorageMode>,
 ) -> Result<(usize, usize)> {
+    let stats = update_with_options(analysis, new_subsystems, knowledge_dir, agents_md, false)?;
+    Ok((stats.added, stats.updated))
+}
+
+pub fn update_with_options(
+    analysis: &ProjectAnalysis,
+    new_subsystems: &[SubsystemInfo],
+    knowledge_dir: &Path,
+    agents_md: Option<StorageMode>,
+    prune: bool,
+) -> Result<UpdateStats> {
     let base_dir = knowledge_dir.to_path_buf();
     let l0_path = base_dir.join("L0_index.json");
 
@@ -557,7 +575,11 @@ pub fn update(
             ..GenerateOptions::default()
         };
         generate(analysis, new_subsystems, knowledge_dir, &opts)?;
-        return Ok((new_subsystems.len(), 0));
+        return Ok(UpdateStats {
+            added: new_subsystems.len(),
+            updated: 0,
+            pruned: 0,
+        });
     }
 
     let mut index = L0Index::load_from_file(&l0_path)?;
@@ -575,6 +597,7 @@ pub fn update(
     let mut added_count = 0;
     let mut updated_count = 0;
     let mut new_ids: Vec<String> = Vec::new();
+    let mut matched_existing_ids = std::collections::HashSet::new();
 
     for new_sub in new_subsystems {
         if let Some(existing) = index.subsystems.iter_mut().find(|s| {
@@ -586,6 +609,7 @@ pub fn update(
                         || new_sub.id == "main"
                         || new_sub.id == "src_main"))
         }) {
+            matched_existing_ids.insert(existing.id.clone());
             if let Some(card) = safe_join(&base_dir, &existing.l1_path) {
                 if card_is_pristine(&card, existing, &old_analysis) {
                     pristine_ids.push(existing.id.clone());
@@ -618,17 +642,25 @@ pub fn update(
             updated_count += 1;
         } else {
             new_ids.push(new_sub.id.clone());
+            matched_existing_ids.insert(new_sub.id.clone());
             index.subsystems.push(new_sub.clone());
             added_count += 1;
         }
     }
 
     // Split-off modules whose crate is no longer split are gone, cards included.
+    // When prune is enabled, any root or split subsystem missing from the new set is pruned.
     let mut superseded = Vec::new();
+    let mut pruned_count = 0;
     index.subsystems.retain(|s| {
-        let keep = s.parent.is_none() || new_subsystems.iter().any(|n| n.id == s.id);
+        let keep = if prune {
+            matched_existing_ids.contains(&s.id)
+        } else {
+            s.parent.is_none() || new_subsystems.iter().any(|n| n.id == s.id)
+        };
         if !keep {
             superseded.push(s.l1_path.clone());
+            pruned_count += 1;
         }
         keep
     });
@@ -659,6 +691,7 @@ pub fn update(
         |path: &Path, content: &str| fs::read(path).ok().as_deref() != Some(content.as_bytes());
     let l0_md_path = base_dir.join("L0_index.md");
     let changed = !superseded_cards.is_empty()
+        || pruned_count > 0
         || differs(&l0_path, &render_l0_json(&index)?)
         || differs(&l0_md_path, &render_l0_markdown(&index, &index.updated_at))
         || rendered.iter().any(|(p, c)| differs(p, c));
@@ -685,7 +718,11 @@ pub fn update(
         )?;
     }
 
-    Ok((added_count, updated_count))
+    Ok(UpdateStats {
+        added: added_count,
+        updated: updated_count,
+        pruned: pruned_count,
+    })
 }
 
 /// New summary for one subsystem, merged by [`apply_summaries`].
@@ -2090,5 +2127,94 @@ mod tests {
             assert!(!report.stale, "{} stale: {report:?}", sub.id);
         }
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_update_prune_removes_deleted_root_subsystem_card_and_agents_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let kd = root.join(".context-init/knowledge");
+        let src_a = root.join("crates/alpha/src");
+        let src_b = root.join("crates/beta/src");
+        fs::create_dir_all(&src_a).unwrap();
+        fs::create_dir_all(&src_b).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/alpha\", \"crates/beta\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("crates/alpha/Cargo.toml"),
+            "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(src_a.join("lib.rs"), "pub fn a() {}\n").unwrap();
+        fs::write(
+            root.join("crates/beta/Cargo.toml"),
+            "[package]\nname = \"beta\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(src_b.join("lib.rs"), "pub fn b() {}\n").unwrap();
+
+        let (analysis, subs) = deterministic(root);
+        let gen_opts = GenerateOptions {
+            agents_md: Some(StorageMode::Repo),
+            ..GenerateOptions::default()
+        };
+        generate(&analysis, &subs, &kd, &gen_opts).unwrap();
+
+        let card_b = kd.join("subsystems/crates_beta.md");
+        assert!(card_b.is_file());
+        let agents_text = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(agents_text.contains("crates_beta"));
+
+        // Delete beta from the project
+        fs::remove_dir_all(root.join("crates/beta")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/alpha\"]\n",
+        )
+        .unwrap();
+
+        let (new_analysis, new_subs) = deterministic(root);
+        assert!(!new_subs.iter().any(|s| s.id == "crates_beta"));
+
+        // With prune = false: beta remains in the index (missing_in_fs)
+        let stats_no_prune = update_with_options(
+            &new_analysis,
+            &new_subs,
+            &kd,
+            Some(StorageMode::Repo),
+            false,
+        )
+        .unwrap();
+        assert_eq!(stats_no_prune.pruned, 0);
+        let audit_res = audit(&new_analysis, &kd).unwrap();
+        assert!(audit_res.missing_in_fs.contains(&"crates_beta".to_string()));
+        assert!(card_b.is_file());
+
+        // With prune = true: beta is removed from index, card is deleted, AGENTS.md cleaned
+        let stats_prune =
+            update_with_options(&new_analysis, &new_subs, &kd, Some(StorageMode::Repo), true)
+                .unwrap();
+        assert_eq!(stats_prune.pruned, 1);
+        assert!(!card_b.exists(), "card file must be deleted");
+        let agents_after = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(
+            !agents_after.contains("crates_beta"),
+            "AGENTS.md must not contain pruned module"
+        );
+
+        let audit_clean = audit(&new_analysis, &kd).unwrap();
+        assert!(
+            audit_clean.missing_in_fs.is_empty(),
+            "missing_in_fs must be empty: {:?}",
+            audit_clean.missing_in_fs
+        );
+        assert!(
+            audit_clean.untracked_in_knowledge.is_empty(),
+            "untracked must be empty: {:?}",
+            audit_clean.untracked_in_knowledge
+        );
     }
 }

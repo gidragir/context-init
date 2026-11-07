@@ -314,13 +314,19 @@ impl ContextHandler {
         let message = if !has_drift {
             format!("OK: {} subsystems verified up-to-date", up_to_date_count)
         } else {
+            let prune_hint = if !missing_in_fs.is_empty() {
+                " (use update --prune / prune=true to clean removed subsystems)"
+            } else {
+                ""
+            };
             format!(
-                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}], git_stale={}, format=[{}]",
+                "DRIFT: up_to_date={}, missing=[{}], untracked=[{}], git_stale={}, format=[{}]{}",
                 up_to_date_count,
                 missing_in_fs.join(", "),
                 untracked_in_knowledge.join(", "),
                 git_stale,
-                format_issues.join("; ")
+                format_issues.join("; "),
+                prune_hint
             )
         };
 
@@ -830,6 +836,7 @@ impl ContextHandler {
             force: params.force.unwrap_or(false),
             dry_run: false,
             with_agents_md: params.with_agents_md.unwrap_or(true),
+            prune: false,
             model_override: params.model.as_deref(),
         };
         let hint = pipeline::storage_mismatch_hint(project);
@@ -853,6 +860,7 @@ impl ContextHandler {
     ) -> Result<HandlerReply> {
         let opts = PipelineOptions {
             deep: params.deep.unwrap_or(false),
+            prune: params.prune.unwrap_or(false),
             with_agents_md: project.config.touch_agents_md,
             model_override: params.model.as_deref(),
             ..PipelineOptions::default()
@@ -860,10 +868,11 @@ impl ContextHandler {
         let hint = pipeline::storage_mismatch_hint(project);
         let out = pipeline::run_update(project, router, &opts)?;
         let mut text = format!(
-            "Knowledge base updated at {}: {} added, {} refreshed.",
+            "Knowledge base updated at {}: {} added, {} refreshed, {} pruned.",
             out.knowledge_dir.display(),
             out.added,
-            out.updated
+            out.updated,
+            out.pruned
         );
         if let Some(hint) = hint {
             text.push_str(&format!("\n{hint}"));
