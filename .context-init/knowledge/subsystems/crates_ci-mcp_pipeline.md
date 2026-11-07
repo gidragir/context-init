@@ -3,10 +3,10 @@ directory: crates/ci-mcp/src/pipeline.rs
 source:
   kind: git
   blob_sha: 2cac9ead388e7f32acc3bcf226804f8fcf587b53
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Конвейер init/update (L1)
+# Подсистема: Ci Mcp Pipeline (L1)
 
-run_init / run_update: анализ, обогащение ролями, генерация базы и AGENTS.md; FullDriftReport объединяет файловый и git-дрейф.
+Модуль-файл `crates/ci-mcp/src/pipeline.rs`
 
 > **Идентификатор:** `crates_ci-mcp_pipeline`
-> **Теги:** drift, init, pipeline, update
+> **Теги:** Rust (Cargo), crates_ci-mcp_pipeline
 
 ## 📁 Точки входа и структура файлов
 

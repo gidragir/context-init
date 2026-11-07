@@ -3,10 +3,10 @@ directory: crates/ci-llm
 source:
   kind: git
   blob_sha: 42d4313477923057a8b3614082c8fad2aacc4adb
-  commit_sha: 2ea8f3affd3c7e26633575afd792de4875d13585
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 3
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: ci-llm (L1)
+# Подсистема: Ci Llm (L1)
 
-Слой LLM: трейт провайдера, RoleName, AgentWorkPackage и ValidatedAgentOutput для передачи работы агенту-харнессу через MCP.
+Подсистема `crates/ci-llm` с ключевыми точками входа: crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs
 
 > **Идентификатор:** `crates_ci-llm`
-> **Теги:** agent-handoff, llm, provider
+> **Теги:** Rust (Cargo), crates_ci-llm
 
 ## 📁 Точки входа и структура файлов
 

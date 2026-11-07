@@ -3,10 +3,10 @@ directory: crates/ci-core/src/openviking.rs
 source:
   kind: git
   blob_sha: 0cc4de7ba10b4779cc82728037a00fae9d7e1577
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Формат OpenViking/OKF (L1)
+# Подсистема: Ci Core Openviking (L1)
 
-Типы frontmatter OKF-карточек: CardSource, CardGeneratedBy, CardFreshness, CardFrontmatter; лимит L0-аннотации 256 символов.
+Модуль-файл `crates/ci-core/src/openviking.rs`
 
 > **Идентификатор:** `crates_ci-core_openviking`
-> **Теги:** okf, openviking, schema
+> **Теги:** Rust (Cargo), crates_ci-core_openviking
 
 ## 📁 Точки входа и структура файлов
 

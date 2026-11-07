@@ -3,10 +3,10 @@ directory: crates/ci-core/src
 source:
   kind: git
   blob_sha: 61ea768a3e9a43e18c5288292a26e12b80d209f2
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 2
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Телеметрия (L1)
+# Подсистема: Ci Core Telemetry (L1)
 
-Opt-in JSONL-телеметрия без путей и кода: операционные (tool, channel mcp/cli, harness), эффективность (токены ответа vs исходника, усечения, stale), LLM- и сессионные сигналы; рендер дайджеста.
+Модуль и компоненты директории `crates/ci-core/src/telemetry` (2 файлов)
 
 > **Идентификатор:** `crates_ci-core_telemetry`
-> **Теги:** jsonl, privacy, telemetry
+> **Теги:** Rust (Cargo), crates_ci-core_telemetry
 
 ## 📁 Точки входа и структура файлов
 

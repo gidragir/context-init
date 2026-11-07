@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis
 source:
   kind: git
   blob_sha: 4bf0bc416b8cb4383227bb9172024a529f4b8b3c
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 6
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Анализ проекта (L1)
+# Подсистема: Ci Core Analysis (L1)
 
-Сканирование дерева (scan_project, ScanReport), конфиг области (scope), выделение подсистем и задачный дайджест; resolve_knowledge_dir выбирает repo (.context-init/knowledge) или центральное хранилище.
+Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs
 
 > **Идентификатор:** `crates_ci-core_analysis`
-> **Теги:** analysis, scan, storage-mode, subsystems
+> **Теги:** Rust (Cargo), crates_ci-core_analysis
 
 ## 📁 Точки входа и структура файлов
 

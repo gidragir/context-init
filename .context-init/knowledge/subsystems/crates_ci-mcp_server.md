@@ -3,10 +3,10 @@ directory: crates/ci-mcp/src/server.rs
 source:
   kind: git
   blob_sha: d2d74bd54fa70b29c23d0dbee02d01c973273fbc
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: MCP-сервер (L1)
+# Подсистема: Ci Mcp Server (L1)
 
-ContextInitServer на stdio: регистрация инструментов, MCP roots (roots/list) для выбора проекта; TelemetrySink подключается через with_telemetry_sink (в продакшен-запуске run_mcp_server не подключён).
+Модуль-файл `crates/ci-mcp/src/server.rs`
 
 > **Идентификатор:** `crates_ci-mcp_server`
-> **Теги:** mcp, roots, server, telemetry
+> **Теги:** Rust (Cargo), crates_ci-mcp_server
 
 ## 📁 Точки входа и структура файлов
 

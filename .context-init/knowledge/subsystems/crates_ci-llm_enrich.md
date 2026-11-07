@@ -3,10 +3,10 @@ directory: crates/ci-llm/src/enrich.rs
 source:
   kind: git
   blob_sha: 66d17dbd2699be57fd4f5e19ba7574a557465c0a
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Обогащение подсистем (L1)
+# Подсистема: Ci Llm Enrich (L1)
 
-enrich_subsystems: прогон роли через маршрутизатор и слияние сводок/тегов по id; EnrichOutcome (Skipped, Enriched, PendingAgent, Failed) никогда не ломает конвейер.
+Модуль-файл `crates/ci-llm/src/enrich.rs`
 
 > **Идентификатор:** `crates_ci-llm_enrich`
-> **Теги:** enrich, llm, pipeline
+> **Теги:** Rust (Cargo), crates_ci-llm_enrich
 
 ## 📁 Точки входа и структура файлов
 

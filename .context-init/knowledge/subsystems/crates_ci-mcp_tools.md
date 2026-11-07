@@ -3,10 +3,10 @@ directory: crates/ci-mcp/src/tools.rs
 source:
   kind: git
   blob_sha: 027ef2ca662324657b74b49c694668245ff9363b
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1

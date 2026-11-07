@@ -3,21 +3,21 @@ directory: scripts
 source:
   kind: git
   blob_sha: 2676993145e9f10831c150e5e35ccae06cd42acd
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
-  total_entries: 8
-  sampled_entries: 8
+  total_entries: 9
+  sampled_entries: 9
   unsampled_entries: 0
   pending_child_changes: 0
 ---
 
 # Подсистема: Scripts (L1)
 
-Модуль и компоненты директории `scripts` (8 файлов)
+Модуль и компоненты директории `scripts` (9 файлов)
 
 > **Идентификатор:** `scripts`
 > **Теги:** Rust (Cargo), scripts
@@ -33,6 +33,7 @@ freshness:
 | `scripts/probes/03-agent-handoff-flow.md` | Исходный код |
 | `scripts/probes/04-default-tokens.md` | Исходный код |
 | `scripts/probes/05-search-boost.md` | Исходный код |
+| `scripts/tests/fixtures/claude/proj/main/subagents/agent-1.meta.json` | Исходный код |
 | `scripts/tests/test_audit_sessions.py` | Исходный код |
 
 ## 🔑 Ключевой контракт и экспорты
@@ -45,14 +46,9 @@ def audit_claude_dir( claude_dir: Path, project_substr: Optional[str] ) -> Dict[
 def resolve_antigravity_dirs(arg: Optional[str]) -> List[Path]
 def audit_antigravity(dirs: Iterable[Path]) -> Tuple[int, Counter]
 def format_json_output( claude_results: Dict[str, Dict[str, Dict[str, int]]], ag_dbs: int, ag_tools: Counter, ) -> str
-def format_table_output( claude_results: Dict[str, Dict[str, Dict[str, int]]], ag_dbs: int, ag_tools: Counter, ) -> str
-def fmt_row(cells: List[str]) -> str
-def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace
-def main(argv: Optional[List[str]] = None) -> int
-def fmt_row(...): parts = [] for i, cell in enumerate(cells): if i in (2, 4, 5): # numeric columns right-aligned parts.append(cell.rjust(widths[i])) else: parts.append(cell.ljust(widths[i])) return " ".join(parts) print("") print(fmt_row(headers)) print(" ".join("-" * w for w ...
 ```
 
 ## 🧪 Запуск и тестирование
 ```bash
-cargo test
+rtk mise run test
 ```

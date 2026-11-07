@@ -3,10 +3,10 @@ directory: crates/ci-mcp/src/pagination.rs
 source:
   kind: git
   blob_sha: 042310663a7bbfd2195ac951707ba3381ad6aa79
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Пагинация (L1)
+# Подсистема: Ci Mcp Pagination (L1)
 
-Подсчёт токенов, бюджетирование ответа и курсоры base64url (CursorData) для постраничной выдачи больших результатов.
+Модуль-файл `crates/ci-mcp/src/pagination.rs`
 
 > **Идентификатор:** `crates_ci-mcp_pagination`
-> **Теги:** mcp, pagination, tokens
+> **Теги:** Rust (Cargo), crates_ci-mcp_pagination
 
 ## 📁 Точки входа и структура файлов
 

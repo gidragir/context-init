@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis/detector/tests.rs
 source:
   kind: git
   blob_sha: d5f82d01fc6030e05bcb3a7e26dec7f57f62d48f
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Тесты детектора (L1)
+# Подсистема: Ci Core Analysis Detector Tests (L1)
 
-Юнит-тесты детектора; символы Engine, Status, MyService — фикстурный Rust-код для проверки извлечения сигнатур, а не API проекта.
+Тесты для `crates_ci-core_analysis_detector`
 
 > **Идентификатор:** `crates_ci-core_analysis_detector_tests`
-> **Теги:** fixtures, tests
+> **Теги:** Rust (Cargo), crates_ci-core_analysis_detector_tests, tests
 
 ## 📁 Точки входа и структура файлов
 

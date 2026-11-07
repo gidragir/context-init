@@ -3,10 +3,10 @@ directory: crates/ci-core/src/storage.rs
 source:
   kind: git
   blob_sha: 553754966fc687ebde4427d88892cf72f4a3f3d3
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Хранилище (L1)
+# Подсистема: Ci Core Storage (L1)
 
-L0-индекс (схема v3), нормализация путей, переводов строк и git remote; идентификация проекта для центрального хранилища в XDG data dir.
+Модуль-файл `crates/ci-core/src/storage.rs`
 
 > **Идентификатор:** `crates_ci-core_storage`
-> **Теги:** l0-index, paths, storage
+> **Теги:** Rust (Cargo), crates_ci-core_storage
 
 ## 📁 Точки входа и структура файлов
 

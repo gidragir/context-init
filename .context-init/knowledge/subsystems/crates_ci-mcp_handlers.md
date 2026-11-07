@@ -3,10 +3,10 @@ directory: crates/ci-mcp/src/handlers.rs
 source:
   kind: git
   blob_sha: 5d914f6dd2462e99dcb0a795cea694707eba32dd
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Обработчики MCP (L1)
+# Подсистема: Ci Mcp Handlers (L1)
 
-ResolvedProject (загрузка конфига и базы), обработчики get_subsystems/get_subsystem/pack/search/task/check/submit; ограничение pack all (5 страниц), сохранение агентских submission с проверкой id.
+Модуль-файл `crates/ci-mcp/src/handlers.rs`
 
 > **Идентификатор:** `crates_ci-mcp_handlers`
-> **Теги:** handlers, mcp, submit
+> **Теги:** Rust (Cargo), crates_ci-mcp_handlers
 
 ## 📁 Точки входа и структура файлов
 

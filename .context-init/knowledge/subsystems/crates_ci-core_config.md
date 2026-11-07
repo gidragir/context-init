@@ -3,10 +3,10 @@ directory: crates/ci-core/src/config.rs
 source:
   kind: git
   blob_sha: 5379ec78cfc2c63a2e9cecc5fee362fa173cd48c
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Конфигурация (L1)
+# Подсистема: Ci Core Config (L1)
 
-Каскад конфигурации (глобальный, проектный, --config, env, CLI): язык (ru по умолчанию), бюджет ответа 4000 токенов, порог разбиения 15000, модели [models], роли [roles] (none = детерминированно), интеграции и телеметрия.
+Модуль-файл `crates/ci-core/src/config.rs`
 
 > **Идентификатор:** `crates_ci-core_config`
-> **Теги:** cascade, config, models, roles
+> **Теги:** Rust (Cargo), crates_ci-core_config
 
 ## 📁 Точки входа и структура файлов
 

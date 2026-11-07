@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis/generator.rs
 source:
   kind: git
   blob_sha: b231c057aa6f9daa0356a6e39aed4d7ce72b21d8
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Генератор базы знаний (L1)
+# Подсистема: Ci Core Analysis Generator (L1)
 
-Рендер L0-индекса и OKF-карточек L1 (render_subsystem_card_okf), generate для записи базы, audit для поиска дрейфа, restamp_card_source для обновления commit/blob SHA во frontmatter.
+Модуль-файл `crates/ci-core/src/analysis/generator.rs`
 
 > **Идентификатор:** `crates_ci-core_analysis_generator`
-> **Теги:** drift, generator, l0, l1, okf
+> **Теги:** Rust (Cargo), crates_ci-core_analysis_generator
 
 ## 📁 Точки входа и структура файлов
 

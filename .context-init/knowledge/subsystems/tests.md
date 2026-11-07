@@ -1,34 +1,35 @@
 ---
-directory: tests/regression_benchmark.rs
+directory: tests
 source:
   kind: git
-  blob_sha: 15ec845699f22bedca622915d3a78034474ac158
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  blob_sha: f60996fcb8d18bf65b8d730746bb5b0f9342e1a1
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
-  total_entries: 1
-  sampled_entries: 1
+  total_entries: 2
+  sampled_entries: 2
   unsampled_entries: 0
   pending_child_changes: 0
 ---
 
-# Подсистема: Интеграционные тесты CLI (L1)
+# Подсистема: Tests (L1)
 
-tests/cli.rs — сквозные тесты бинаря context-init по подкомандам.
+Тесты проекта
 
 > **Идентификатор:** `tests`
-> **Теги:** cli, integration, tests
+> **Теги:** Rust (Cargo), tests, tests
 
 ## 📁 Точки входа и структура файлов
 
 | Файл | Статус |
 | :--- | :--- |
+| `tests/cli.rs` | Исходный код |
 | `tests/regression_benchmark.rs` | Исходный код |
 
 ## 🧪 Запуск и тестирование
 ```bash
-cargo test
+rtk mise run test
 ```

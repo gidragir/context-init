@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis/detector/tests_classifier.rs
 source:
   kind: git
   blob_sha: 47884625561e5b3d757166677683662725dfeea9
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1

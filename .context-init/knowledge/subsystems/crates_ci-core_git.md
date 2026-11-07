@@ -3,10 +3,10 @@ directory: crates/ci-core/src/git.rs
 source:
   kind: git
   blob_sha: dd7834620cdccd171a610b3da48a8380dfc95373
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Git-бэкенд (L1)
+# Подсистема: Ci Core Git (L1)
 
-Трейт GitBackend (head_commit, статус, diff), GitStatusEntry и StalenessReport для определения устаревания карточек относительно коммитов.
+Модуль-файл `crates/ci-core/src/git.rs`
 
 > **Идентификатор:** `crates_ci-core_git`
-> **Теги:** git, staleness
+> **Теги:** Rust (Cargo), crates_ci-core_git
 
 ## 📁 Точки входа и структура файлов
 

@@ -3,10 +3,10 @@ directory: crates/ci-core
 source:
   kind: git
   blob_sha: a052247c0bb7b21b05ac6dac6e0c16332564ae1a
-  commit_sha: d8acb6e026f3c5cf497ef12860f10754102db968
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 5
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: ci-core (L1)
+# Подсистема: Ci Core (L1)
 
-Ядро без LLM: версия крейта, трейт Retriever и SearchHit для поиска по базе знаний; реэкспорт модулей analysis, config, git, storage, openviking, telemetry.
+Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs
 
 > **Идентификатор:** `crates_ci-core`
-> **Теги:** core, crate-root, search
+> **Теги:** Rust (Cargo), crates_ci-core
 
 ## 📁 Точки входа и структура файлов
 

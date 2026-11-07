@@ -2,11 +2,11 @@
 directory: src/cli
 source:
   kind: git
-  blob_sha: ceaaf1fb5b1d173146d06133e765886a1eacd707
-  commit_sha: fff7dd106863757218c552cb8ef5b18e46c70899
+  blob_sha: 341e7a5b025e537093e70f98e72133e11675dbd8
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 14
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: CLI (L1)
+# Подсистема: Cli (L1)
 
-Точка входа run() и подкоманды init, update, check, pack, mcp, config, migrate, setup, telemetry, feedback; GlobalArgs (--model, --role, --config, --compact) и сборка RoleRouter.
+Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs
 
 > **Идентификатор:** `src_cli`
-> **Теги:** clap, cli, entrypoint
+> **Теги:** Rust (Cargo), src_cli
 
 ## 📁 Точки входа и структура файлов
 
@@ -44,8 +44,6 @@ freshness:
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub struct GlobalArgs
-pub fn overrides(&self, rtk: Option<RtkMode>) -> Result<CliOverrides>
-pub fn load_project(&self, path: &Path, rtk: Option<RtkMode>) -> Result<ResolvedProject>
 pub fn router_for(project: &ResolvedProject) -> Result<RoleRouter>
 pub fn telemetry_scope(project: &ResolvedProject) -> TelemetryScope
 pub fn run() -> Result<ExitCode>
@@ -55,27 +53,9 @@ pub struct ConfigArgs
 pub enum ConfigCommand
 pub fn run(global: &GlobalArgs, args: &ConfigArgs) -> Result<ExitCode>
 pub struct FeedbackArgs
-pub fn run(global: &GlobalArgs, args: &FeedbackArgs) -> Result<ExitCode>
-pub struct RtkArgs
-pub struct InitArgs
-pub struct UpdateArgs
-pub fn run_init(global: &GlobalArgs, args: &InitArgs) -> Result<ExitCode>
-pub fn run_update(global: &GlobalArgs, args: &UpdateArgs) -> Result<ExitCode>
-pub struct McpArgs
-pub fn run(args: &McpArgs) -> Result<ExitCode>
-pub struct MigrateArgs
-pub fn run(global: &GlobalArgs, args: &MigrateArgs) -> Result<ExitCode>
-pub fn banner(subtitle: &str)
-pub fn analysis_summary(analysis: &ProjectAnalysis)
-pub fn notice(msg: &str)
-pub struct PackArgs
-pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode>
-pub struct ScanArgs
-pub fn run(global: &GlobalArgs, args: &ScanArgs) -> Result<ExitCode>
-pub struct SearchArgs
 ```
 
 ## 🧪 Запуск и тестирование
 ```bash
-cargo test
+rtk mise run test
 ```

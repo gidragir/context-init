@@ -2,34 +2,47 @@
 directory: reports
 source:
   kind: git
-  blob_sha: a2f8a1e2454b9e5454bbdf23314c9c81f9cb4b0b
-  commit_sha: 04e787fc09f8a1918eaa133e0f27e78243d42c89
+  blob_sha: efe363e70fea8405fa69e6d3b985ff3b77da5594
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
-  total_entries: 2
-  sampled_entries: 2
+  total_entries: 15
+  sampled_entries: 15
   unsampled_entries: 0
   pending_child_changes: 0
 ---
 
-# Подсистема: Отчёты бенчмарков (L1)
+# Подсистема: Reports (L1)
 
-BENCHMARK_REPORT.md и benchmark_latest.json — результаты регрессионного бенчмарка (токены, точность).
+Модуль и компоненты директории `reports` (15 файлов)
 
 > **Идентификатор:** `reports`
-> **Теги:** benchmark, reports
+> **Теги:** Rust (Cargo), reports
 
 ## 📁 Точки входа и структура файлов
 
 | Файл | Статус |
 | :--- | :--- |
 | `reports/BENCHMARK_REPORT.md` | Исходный код |
+| `reports/adoption_probe_2026-10.md` | Исходный код |
 | `reports/benchmark_latest.json` | Исходный код |
+| `reports/subagents/ci-core_summary.md` | Исходный код |
+| `reports/subagents/ci-core_verification.md` | Исходный код |
+| `reports/subagents/ci-llm_summary.md` | Исходный код |
+| `reports/subagents/ci-llm_verification.md` | Исходный код |
+| `reports/subagents/ci-mcp_summary.md` | Исходный код |
+| `reports/subagents/ci-mcp_verification.md` | Исходный код |
+| `reports/subagents/context-init_summary.md` | Исходный код |
+| `reports/subagents/context-init_verification.md` | Исходный код |
+| `reports/subagents/crate_split_summary.md` | Исходный код |
+| `reports/subagents/step1_workspace_summary.md` | Исходный код |
+| `reports/subagents/step1_workspace_verification.md` | Исходный код |
+| `reports/subagents/v0.3_handoff.md` | Исходный код |
 
 ## 🧪 Запуск и тестирование
 ```bash
-cargo test
+rtk mise run test
 ```

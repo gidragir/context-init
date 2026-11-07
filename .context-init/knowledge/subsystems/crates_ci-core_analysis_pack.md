@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis/pack.rs
 source:
   kind: git
   blob_sha: 887615585a7d09a2cbc087cab2df8e9938a4e779
-  commit_sha: 9660354a570d6203128acd3df79cd62f23660f76
+  commit_sha: e9daa96fc49222863d0ca3be1c21d8edee9a512b
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1
@@ -15,12 +15,12 @@ freshness:
   pending_child_changes: 0
 ---
 
-# Подсистема: Упаковщик контекста (L1)
+# Подсистема: Ci Core Analysis Pack (L1)
 
-pack_subsystem / pack_files: сборка файлов подсистемы в XML или Markdown с AST-сжатием (тела функций вырезаются) для передачи в LLM.
+Модуль-файл `crates/ci-core/src/analysis/pack.rs`
 
 > **Идентификатор:** `crates_ci-core_analysis_pack`
-> **Теги:** compression, context, pack
+> **Теги:** Rust (Cargo), crates_ci-core_analysis_pack
 
 ## 📁 Точки входа и структура файлов
 

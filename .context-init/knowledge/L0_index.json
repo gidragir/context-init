@@ -17,24 +17,23 @@
     "fmt": "rtk mise run fmt",
     "run": "rtk cargo run",
     "custom": {
-      "check": "rtk mise run check",
       "install": "rtk mise run install",
+      "check": "rtk mise run check",
       "dist": "rtk mise run dist",
       "probe-adoption": "rtk mise run probe-adoption",
-      "audit-sessions": "rtk mise run audit-sessions",
-      "audit": "rtk mise run audit"
+      "audit": "rtk mise run audit",
+      "audit-sessions": "rtk mise run audit-sessions"
     }
   },
   "subsystems": [
     {
       "id": "crates_ci-core",
-      "name": "ci-core",
-      "summary": "Ядро без LLM: версия крейта, трейт Retriever и SearchHit для поиска по базе знаний; реэкспорт модулей analysis, config, git, storage, openviking, telemetry.",
+      "name": "Ci Core",
+      "summary": "Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs",
       "l1_path": "subsystems/crates_ci-core.md",
       "tags": [
-        "core",
-        "crate-root",
-        "search"
+        "Rust (Cargo)",
+        "crates_ci-core"
       ],
       "entrypoints": [
         "crates/ci-core/Cargo.toml",
@@ -79,19 +78,16 @@
         "pub fn count_tokens(text: &str) -> usize"
       ],
       "test_command": "rtk cargo test -p ci-core",
-      "summary_source": "manual",
-      "needs_review": true
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis",
-      "name": "Анализ проекта",
-      "summary": "Сканирование дерева (scan_project, ScanReport), конфиг области (scope), выделение подсистем и задачный дайджест; resolve_knowledge_dir выбирает repo (.context-init/knowledge) или центральное хранилище.",
+      "name": "Ci Core Analysis",
+      "summary": "Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs",
       "l1_path": "subsystems/crates_ci-core_analysis.md",
       "tags": [
-        "analysis",
-        "scan",
-        "storage-mode",
-        "subsystems"
+        "Rust (Cargo)",
+        "crates_ci-core_analysis"
       ],
       "entrypoints": [
         "crates/ci-core/src/analysis/mod.rs"
@@ -144,18 +140,16 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core",
-      "summary_source": "manual",
-      "needs_review": true
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis_detector",
-      "name": "Детектор проекта",
-      "summary": "analyze_project / analyze_project_with: определение типа проекта, команд, подсистем и сигнатур (deep); список IGNORED_DIRS и префикс rtk для генерируемых команд.",
+      "name": "Ci Core Analysis Detector",
+      "summary": "Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (2 файлов)",
       "l1_path": "subsystems/crates_ci-core_analysis_detector.md",
       "tags": [
-        "detector",
-        "project-type",
-        "rtk"
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_detector"
       ],
       "key_files": [
         "crates/ci-core/src/analysis/detector.rs",
@@ -185,8 +179,7 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
-      "summary_source": "manual",
-      "needs_review": true
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis_detector_gradle",
@@ -215,11 +208,12 @@
     },
     {
       "id": "crates_ci-core_analysis_detector_tests",
-      "name": "Тесты детектора",
-      "summary": "Юнит-тесты детектора; символы Engine, Status, MyService — фикстурный Rust-код для проверки извлечения сигнатур, а не API проекта.",
+      "name": "Ci Core Analysis Detector Tests",
+      "summary": "Тесты для `crates_ci-core_analysis_detector`",
       "l1_path": "subsystems/crates_ci-core_analysis_detector_tests.md",
       "tags": [
-        "fixtures",
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_detector_tests",
         "tests"
       ],
       "key_files": [
@@ -233,7 +227,7 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis_detector",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis_detector_tests_classifier",
@@ -264,15 +258,12 @@
     },
     {
       "id": "crates_ci-core_analysis_generator",
-      "name": "Генератор базы знаний",
-      "summary": "Рендер L0-индекса и OKF-карточек L1 (render_subsystem_card_okf), generate для записи базы, audit для поиска дрейфа, restamp_card_source для обновления commit/blob SHA во frontmatter.",
+      "name": "Ci Core Analysis Generator",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/generator.rs`",
       "l1_path": "subsystems/crates_ci-core_analysis_generator.md",
       "tags": [
-        "drift",
-        "generator",
-        "l0",
-        "l1",
-        "okf"
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_generator"
       ],
       "key_files": [
         "crates/ci-core/src/analysis/generator.rs"
@@ -297,19 +288,16 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis_lang",
-      "name": "Языковые адаптеры",
-      "summary": "Трейт LanguageAdapter (language_id, extensions, extract_symbols) и адаптеры Rust, Python, BSL и MDO (1С); ELIDED_BODY — маркер вырезанного тела при сжатии.",
+      "name": "Ci Core Analysis Lang",
+      "summary": "Подсистема `crates/ci-core/src/analysis/lang` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs",
       "l1_path": "subsystems/crates_ci-core_analysis_lang.md",
       "tags": [
-        "1c",
-        "ast",
-        "languages",
-        "python",
-        "rust"
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_lang"
       ],
       "entrypoints": [
         "crates/ci-core/src/analysis/lang/mod.rs"
@@ -367,18 +355,16 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
-      "summary_source": "manual",
-      "needs_review": true
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis_pack",
-      "name": "Упаковщик контекста",
-      "summary": "pack_subsystem / pack_files: сборка файлов подсистемы в XML или Markdown с AST-сжатием (тела функций вырезаются) для передачи в LLM.",
+      "name": "Ci Core Analysis Pack",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/pack.rs`",
       "l1_path": "subsystems/crates_ci-core_analysis_pack.md",
       "tags": [
-        "compression",
-        "context",
-        "pack"
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_pack"
       ],
       "key_files": [
         "crates/ci-core/src/analysis/pack.rs"
@@ -402,7 +388,7 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_analysis_scan",
@@ -465,14 +451,12 @@
     },
     {
       "id": "crates_ci-core_config",
-      "name": "Конфигурация",
-      "summary": "Каскад конфигурации (глобальный, проектный, --config, env, CLI): язык (ru по умолчанию), бюджет ответа 4000 токенов, порог разбиения 15000, модели [models], роли [roles] (none = детерминированно), интеграции и телеметрия.",
+      "name": "Ci Core Config",
+      "summary": "Модуль-файл `crates/ci-core/src/config.rs`",
       "l1_path": "subsystems/crates_ci-core_config.md",
       "tags": [
-        "cascade",
-        "config",
-        "models",
-        "roles"
+        "Rust (Cargo)",
+        "crates_ci-core_config"
       ],
       "key_files": [
         "crates/ci-core/src/config.rs"
@@ -497,16 +481,16 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_git",
-      "name": "Git-бэкенд",
-      "summary": "Трейт GitBackend (head_commit, статус, diff), GitStatusEntry и StalenessReport для определения устаревания карточек относительно коммитов.",
+      "name": "Ci Core Git",
+      "summary": "Модуль-файл `crates/ci-core/src/git.rs`",
       "l1_path": "subsystems/crates_ci-core_git.md",
       "tags": [
-        "git",
-        "staleness"
+        "Rust (Cargo)",
+        "crates_ci-core_git"
       ],
       "key_files": [
         "crates/ci-core/src/git.rs"
@@ -531,17 +515,16 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_openviking",
-      "name": "Формат OpenViking/OKF",
-      "summary": "Типы frontmatter OKF-карточек: CardSource, CardGeneratedBy, CardFreshness, CardFrontmatter; лимит L0-аннотации 256 символов.",
+      "name": "Ci Core Openviking",
+      "summary": "Модуль-файл `crates/ci-core/src/openviking.rs`",
       "l1_path": "subsystems/crates_ci-core_openviking.md",
       "tags": [
-        "okf",
-        "openviking",
-        "schema"
+        "Rust (Cargo)",
+        "crates_ci-core_openviking"
       ],
       "key_files": [
         "crates/ci-core/src/openviking.rs"
@@ -565,17 +548,16 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_storage",
-      "name": "Хранилище",
-      "summary": "L0-индекс (схема v3), нормализация путей, переводов строк и git remote; идентификация проекта для центрального хранилища в XDG data dir.",
+      "name": "Ci Core Storage",
+      "summary": "Модуль-файл `crates/ci-core/src/storage.rs`",
       "l1_path": "subsystems/crates_ci-core_storage.md",
       "tags": [
-        "l0-index",
-        "paths",
-        "storage"
+        "Rust (Cargo)",
+        "crates_ci-core_storage"
       ],
       "key_files": [
         "crates/ci-core/src/storage.rs"
@@ -600,17 +582,16 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-core_telemetry",
-      "name": "Телеметрия",
-      "summary": "Opt-in JSONL-телеметрия без путей и кода: операционные (tool, channel mcp/cli, harness), эффективность (токены ответа vs исходника, усечения, stale), LLM- и сессионные сигналы; рендер дайджеста.",
+      "name": "Ci Core Telemetry",
+      "summary": "Модуль и компоненты директории `crates/ci-core/src/telemetry` (2 файлов)",
       "l1_path": "subsystems/crates_ci-core_telemetry.md",
       "tags": [
-        "jsonl",
-        "privacy",
-        "telemetry"
+        "Rust (Cargo)",
+        "crates_ci-core_telemetry"
       ],
       "key_files": [
         "crates/ci-core/src/telemetry.rs",
@@ -640,18 +621,16 @@
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core",
-      "summary_source": "manual",
-      "needs_review": true
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-llm",
-      "name": "ci-llm",
-      "summary": "Слой LLM: трейт провайдера, RoleName, AgentWorkPackage и ValidatedAgentOutput для передачи работы агенту-харнессу через MCP.",
+      "name": "Ci Llm",
+      "summary": "Подсистема `crates/ci-llm` с ключевыми точками входа: crates/ci-llm/Cargo.toml, crates/ci-llm/src/lib.rs",
       "l1_path": "subsystems/crates_ci-llm.md",
       "tags": [
-        "agent-handoff",
-        "llm",
-        "provider"
+        "Rust (Cargo)",
+        "crates_ci-llm"
       ],
       "entrypoints": [
         "crates/ci-llm/Cargo.toml",
@@ -689,17 +668,16 @@
         "pub struct LlmExecutionError"
       ],
       "test_command": "rtk cargo test -p ci-llm",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-llm_decorators",
-      "name": "Декораторы провайдеров",
-      "summary": "RetryDecorator с backoff и TimeoutDecorator — обёртки над LlmProvider для повторов и таймаутов.",
+      "name": "Ci Llm Decorators",
+      "summary": "Модуль-файл `crates/ci-llm/src/decorators.rs`",
       "l1_path": "subsystems/crates_ci-llm_decorators.md",
       "tags": [
-        "llm",
-        "retry",
-        "timeout"
+        "Rust (Cargo)",
+        "crates_ci-llm_decorators"
       ],
       "key_files": [
         "crates/ci-llm/src/decorators.rs"
@@ -719,17 +697,16 @@
       ],
       "test_command": "rtk cargo test -p ci-llm",
       "parent": "crates_ci-llm",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-llm_enrich",
-      "name": "Обогащение подсистем",
-      "summary": "enrich_subsystems: прогон роли через маршрутизатор и слияние сводок/тегов по id; EnrichOutcome (Skipped, Enriched, PendingAgent, Failed) никогда не ломает конвейер.",
+      "name": "Ci Llm Enrich",
+      "summary": "Модуль-файл `crates/ci-llm/src/enrich.rs`",
       "l1_path": "subsystems/crates_ci-llm_enrich.md",
       "tags": [
-        "enrich",
-        "llm",
-        "pipeline"
+        "Rust (Cargo)",
+        "crates_ci-llm_enrich"
       ],
       "key_files": [
         "crates/ci-llm/src/enrich.rs"
@@ -747,16 +724,16 @@
       ],
       "test_command": "rtk cargo test -p ci-llm",
       "parent": "crates_ci-llm",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-llm_prompts",
-      "name": "Шаблоны промптов",
-      "summary": "Реестр PromptTemplate с источниками (встроенные/пользовательские) и PromptVars (факты, проект, язык) для ролей init/update/task/search.",
+      "name": "Ci Llm Prompts",
+      "summary": "Модуль-файл `crates/ci-llm/src/prompts.rs`",
       "l1_path": "subsystems/crates_ci-llm_prompts.md",
       "tags": [
-        "prompts",
-        "templates"
+        "Rust (Cargo)",
+        "crates_ci-llm_prompts"
       ],
       "key_files": [
         "crates/ci-llm/src/prompts.rs"
@@ -777,18 +754,16 @@
       ],
       "test_command": "rtk cargo test -p ci-llm",
       "parent": "crates_ci-llm",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-llm_providers",
-      "name": "LLM-провайдеры",
-      "summary": "Провайдеры ollama, command и agent (handoff через context_submit); заглушки openai_compat/anthropic/gemini; парсинг SubsystemAiSummary, healthcheck Ollama, таймаут 60 с по умолчанию.",
+      "name": "Ci Llm Providers",
+      "summary": "Модуль-файл `crates/ci-llm/src/providers.rs`",
       "l1_path": "subsystems/crates_ci-llm_providers.md",
       "tags": [
-        "agent",
-        "command",
-        "llm",
-        "ollama"
+        "Rust (Cargo)",
+        "crates_ci-llm_providers"
       ],
       "key_files": [
         "crates/ci-llm/src/providers.rs"
@@ -813,17 +788,16 @@
       ],
       "test_command": "rtk cargo test -p ci-llm",
       "parent": "crates_ci-llm",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-llm_router",
-      "name": "Маршрутизатор ролей",
-      "summary": "RoleRouter исполняет цепочку моделей для роли с фолбэком; RoleExecutionOutcome различает детерминированный, завершённый и фолбэк-исход.",
+      "name": "Ci Llm Router",
+      "summary": "Модуль-файл `crates/ci-llm/src/router.rs`",
       "l1_path": "subsystems/crates_ci-llm_router.md",
       "tags": [
-        "fallback",
-        "llm",
-        "router"
+        "Rust (Cargo)",
+        "crates_ci-llm_router"
       ],
       "key_files": [
         "crates/ci-llm/src/router.rs"
@@ -840,17 +814,16 @@
       ],
       "test_command": "rtk cargo test -p ci-llm",
       "parent": "crates_ci-llm",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-llm_schema",
-      "name": "JSON-схемы ответов",
-      "summary": "Извлечение JSON из ответа модели, валидация по JSON Schema и схемы по умолчанию для каждой роли (default_role_json_schema).",
+      "name": "Ci Llm Schema",
+      "summary": "Модуль-файл `crates/ci-llm/src/schema.rs`",
       "l1_path": "subsystems/crates_ci-llm_schema.md",
       "tags": [
-        "json-schema",
-        "llm",
-        "validation"
+        "Rust (Cargo)",
+        "crates_ci-llm_schema"
       ],
       "key_files": [
         "crates/ci-llm/src/schema.rs"
@@ -869,17 +842,16 @@
       ],
       "test_command": "rtk cargo test -p ci-llm",
       "parent": "crates_ci-llm",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-mcp",
-      "name": "ci-mcp",
-      "summary": "MCP-сервер context-init: параметры и результаты инструментов (McpCheckParams, McpGetSubsystemsParams и др.) в tools.rs.",
+      "name": "Ci Mcp",
+      "summary": "Подсистема `crates/ci-mcp` с ключевыми точками входа: crates/ci-mcp/Cargo.toml, crates/ci-mcp/src/lib.rs",
       "l1_path": "subsystems/crates_ci-mcp.md",
       "tags": [
-        "crate-root",
-        "mcp",
-        "tools"
+        "Rust (Cargo)",
+        "crates_ci-mcp"
       ],
       "entrypoints": [
         "crates/ci-mcp/Cargo.toml",
@@ -904,18 +876,16 @@
         "pub fn crate_info() -> String"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
-      "summary_source": "manual",
-      "needs_review": true
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-mcp_handlers",
-      "name": "Обработчики MCP",
-      "summary": "ResolvedProject (загрузка конфига и базы), обработчики get_subsystems/get_subsystem/pack/search/task/check/submit; ограничение pack all (5 страниц), сохранение агентских submission с проверкой id.",
+      "name": "Ci Mcp Handlers",
+      "summary": "Модуль-файл `crates/ci-mcp/src/handlers.rs`",
       "l1_path": "subsystems/crates_ci-mcp_handlers.md",
       "tags": [
-        "handlers",
-        "mcp",
-        "submit"
+        "Rust (Cargo)",
+        "crates_ci-mcp_handlers"
       ],
       "key_files": [
         "crates/ci-mcp/src/handlers.rs"
@@ -936,17 +906,16 @@
       ],
       "test_command": "rtk cargo test -p ci-mcp",
       "parent": "crates_ci-mcp",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-mcp_pagination",
-      "name": "Пагинация",
-      "summary": "Подсчёт токенов, бюджетирование ответа и курсоры base64url (CursorData) для постраничной выдачи больших результатов.",
+      "name": "Ci Mcp Pagination",
+      "summary": "Модуль-файл `crates/ci-mcp/src/pagination.rs`",
       "l1_path": "subsystems/crates_ci-mcp_pagination.md",
       "tags": [
-        "mcp",
-        "pagination",
-        "tokens"
+        "Rust (Cargo)",
+        "crates_ci-mcp_pagination"
       ],
       "key_files": [
         "crates/ci-mcp/src/pagination.rs"
@@ -969,18 +938,16 @@
       ],
       "test_command": "rtk cargo test -p ci-mcp",
       "parent": "crates_ci-mcp",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-mcp_pipeline",
-      "name": "Конвейер init/update",
-      "summary": "run_init / run_update: анализ, обогащение ролями, генерация базы и AGENTS.md; FullDriftReport объединяет файловый и git-дрейф.",
+      "name": "Ci Mcp Pipeline",
+      "summary": "Модуль-файл `crates/ci-mcp/src/pipeline.rs`",
       "l1_path": "subsystems/crates_ci-mcp_pipeline.md",
       "tags": [
-        "drift",
-        "init",
-        "pipeline",
-        "update"
+        "Rust (Cargo)",
+        "crates_ci-mcp_pipeline"
       ],
       "key_files": [
         "crates/ci-mcp/src/pipeline.rs"
@@ -1005,18 +972,16 @@
       ],
       "test_command": "rtk cargo test -p ci-mcp",
       "parent": "crates_ci-mcp",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-mcp_server",
-      "name": "MCP-сервер",
-      "summary": "ContextInitServer на stdio: регистрация инструментов, MCP roots (roots/list) для выбора проекта; TelemetrySink подключается через with_telemetry_sink (в продакшен-запуске run_mcp_server не подключён).",
+      "name": "Ci Mcp Server",
+      "summary": "Модуль-файл `crates/ci-mcp/src/server.rs`",
       "l1_path": "subsystems/crates_ci-mcp_server.md",
       "tags": [
-        "mcp",
-        "roots",
-        "server",
-        "telemetry"
+        "Rust (Cargo)",
+        "crates_ci-mcp_server"
       ],
       "key_files": [
         "crates/ci-mcp/src/server.rs"
@@ -1035,7 +1000,7 @@
       ],
       "test_command": "rtk cargo test -p ci-mcp",
       "parent": "crates_ci-mcp",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "crates_ci-mcp_tools",
@@ -1162,12 +1127,12 @@
     },
     {
       "id": "references",
-      "name": "Справочники",
-      "summary": "Спецификация формата OpenViking (openviking_spec.md) — опорный документ для уровней L0-L2.",
+      "name": "References",
+      "summary": "Модуль и компоненты директории `references` (1 файлов)",
       "l1_path": "subsystems/references.md",
       "tags": [
-        "docs",
-        "spec"
+        "Rust (Cargo)",
+        "references"
       ],
       "key_files": [
         "references/openviking_spec.md"
@@ -1178,15 +1143,15 @@
           "is_entrypoint": false
         }
       ],
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "reports",
-      "name": "Отчёты бенчмарков",
-      "summary": "BENCHMARK_REPORT.md и benchmark_latest.json — результаты регрессионного бенчмарка (токены, точность).",
+      "name": "Reports",
+      "summary": "Модуль и компоненты директории `reports` (15 файлов)",
       "l1_path": "subsystems/reports.md",
       "tags": [
-        "benchmark",
+        "Rust (Cargo)",
         "reports"
       ],
       "key_files": [
@@ -1268,8 +1233,7 @@
           "is_entrypoint": false
         }
       ],
-      "summary_source": "manual",
-      "needs_review": true
+      "summary_source": "heuristic"
     },
     {
       "id": "scripts",
@@ -1343,13 +1307,12 @@
     },
     {
       "id": "src_cli",
-      "name": "CLI",
-      "summary": "Точка входа run() и подкоманды init, update, check, pack, mcp, config, migrate, setup, telemetry, feedback; GlobalArgs (--model, --role, --config, --compact) и сборка RoleRouter.",
+      "name": "Cli",
+      "summary": "Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs",
       "l1_path": "subsystems/src_cli.md",
       "tags": [
-        "clap",
-        "cli",
-        "entrypoint"
+        "Rust (Cargo)",
+        "src_cli"
       ],
       "entrypoints": [
         "src/cli/mod.rs"
@@ -1440,18 +1403,16 @@
         "pub fn run(global: &GlobalArgs, args: &ConfigArgs) -> Result<ExitCode>",
         "pub struct FeedbackArgs"
       ],
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "src_cli_setup",
-      "name": "CLI setup",
-      "summary": "context-init setup: план регистрации MCP-сервера и короткого правила агента для харнессов (Claude Code, Antigravity и др.), слияние с существующими конфигами.",
+      "name": "Cli Setup",
+      "summary": "Подсистема `src/cli/setup` с ключевыми точками входа: src/cli/setup/mod.rs",
       "l1_path": "subsystems/src_cli_setup.md",
       "tags": [
-        "cli",
-        "harness",
-        "mcp",
-        "setup"
+        "Rust (Cargo)",
+        "src_cli_setup"
       ],
       "entrypoints": [
         "src/cli/setup/mod.rs"
@@ -1498,16 +1459,16 @@
         "pub enum RuleTarget"
       ],
       "parent": "src_cli",
-      "summary_source": "manual"
+      "summary_source": "heuristic"
     },
     {
       "id": "tests",
-      "name": "Интеграционные тесты CLI",
-      "summary": "tests/cli.rs — сквозные тесты бинаря context-init по подкомандам.",
+      "name": "Tests",
+      "summary": "Тесты проекта",
       "l1_path": "subsystems/tests.md",
       "tags": [
-        "cli",
-        "integration",
+        "Rust (Cargo)",
+        "tests",
         "tests"
       ],
       "key_files": [
@@ -1524,8 +1485,7 @@
           "is_entrypoint": false
         }
       ],
-      "summary_source": "manual",
-      "needs_review": true
+      "summary_source": "heuristic"
     }
   ],
   "core_rules": [
@@ -1536,6 +1496,6 @@
   ],
   "generator": {
     "version": "0.3.0",
-    "build": "cac1d2d-dirty"
+    "build": "e9daa96"
   }
 }
