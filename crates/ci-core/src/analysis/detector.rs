@@ -1134,6 +1134,17 @@ fn discover_subsystems(
     result.extend(flat_src_modules);
     result.sort_by(|a, b| a.dir_path.cmp(&b.dir_path));
 
+    // Disambiguate duplicate IDs from colliding dir paths (e.g. a/b_c vs a_b/c)
+    let mut id_counts: HashMap<String, usize> = HashMap::new();
+    for m in &result {
+        *id_counts.entry(m.id.clone()).or_default() += 1;
+    }
+    for m in &mut result {
+        if id_counts.get(&m.id).copied().unwrap_or(0) > 1 {
+            m.id = crate::analysis::generator::disambiguate_id(&m.id, &m.dir_path);
+        }
+    }
+
     result
 }
 

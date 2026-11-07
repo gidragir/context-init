@@ -1421,3 +1421,35 @@ data class Account(val id: String, val name: String)
         "private functions must be ignored"
     );
 }
+
+#[test]
+fn test_discover_subsystems_disambiguates_colliding_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    // a_b/c and a/b_c both sanitize to a_b_c without disambiguation
+    fs::create_dir_all(dir.path().join("a_b/c/src")).unwrap();
+    fs::write(dir.path().join("a_b/c/src/lib.rs"), "pub fn a() {}\n").unwrap();
+    fs::create_dir_all(dir.path().join("a/b_c/src")).unwrap();
+    fs::write(dir.path().join("a/b_c/src/lib.rs"), "pub fn b() {}\n").unwrap();
+
+    let ws_members = vec!["a/b_c".to_string(), "a_b/c".to_string()];
+    let modules = super::discover_subsystems(
+        dir.path(),
+        &ws_members,
+        &ProjectType::Generic,
+        false,
+        false,
+        15000,
+    );
+    assert_eq!(modules.len(), 2, "Expected 2 modules, got: {:?}", modules);
+    let ids: Vec<String> = modules.iter().map(|m| m.id.clone()).collect();
+    assert_ne!(ids[0], ids[1], "IDs must differ, got: {:?}", ids);
+    let mut unique_ids = ids.clone();
+    unique_ids.sort();
+    unique_ids.dedup();
+    assert_eq!(
+        ids.len(),
+        unique_ids.len(),
+        "Module IDs must be unique: {:?}",
+        ids
+    );
+}

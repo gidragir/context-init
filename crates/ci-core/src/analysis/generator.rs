@@ -284,6 +284,26 @@ pub fn restamp_card_source(card_path: &Path, root: &Path, directory: Option<&str
 /// tags of each subsystem lexicographically. `key_symbols` keep the detector's order.
 fn normalize_index(index: &mut L0Index) {
     index.subsystems.sort_by(|a, b| a.id.cmp(&b.id));
+    // Deduplicate any subsystems that share the same id.
+    // Give priority to non-Heuristic summary_source, then to larger files.len().
+    let mut deduped: Vec<SubsystemInfo> = Vec::with_capacity(index.subsystems.len());
+    for sub in index.subsystems.drain(..) {
+        if let Some(last) = deduped.last_mut() {
+            if last.id == sub.id {
+                let prefer_sub = (sub.summary_source != SummarySource::Heuristic
+                    && last.summary_source == SummarySource::Heuristic)
+                    || (sub.summary_source == last.summary_source
+                        && sub.files.len() > last.files.len());
+                if prefer_sub {
+                    *last = sub;
+                }
+                continue;
+            }
+        }
+        deduped.push(sub);
+    }
+    index.subsystems = deduped;
+
     for s in &mut index.subsystems {
         s.files.sort_by(|a, b| a.path.cmp(&b.path));
         s.entrypoints.sort();
@@ -1013,6 +1033,7 @@ fn render_root_agents_md(
     // Sorted by id, so split-off modules (`<crate>_<module>`) follow their crate.
     let mut sorted: Vec<&SubsystemInfo> = subsystems.iter().collect();
     sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    sorted.dedup_by(|a, b| a.id == b.id);
     for s in sorted {
         map_content.push_str(&format!("- `{}` ({}) — {}\n", s.id, s.name, s.summary));
     }
@@ -1038,10 +1059,23 @@ fn render_root_agents_md(
     }
 }
 
+/// Disambiguates an ID by appending a deterministic 8-hex SHA-256 suffix of `raw_key`.
+///
+/// Ensures the resulting ID is at most 64 characters long and does not have double separators.
+pub fn disambiguate_id(base_id: &str, raw_key: &str) -> String {
+    let digest = Sha256::digest(raw_key.as_bytes());
+    let hex8: String = digest[..4].iter().map(|b| format!("{b:02x}")).collect();
+    let prefix = base_id.chars().take(55).collect::<String>();
+    let prefix = prefix.trim_end_matches(['_', '-']);
+    let prefix = if prefix.is_empty() { "m" } else { prefix };
+    format!("{prefix}_{hex8}")
+}
+
 /// Turns a module path into a subsystem id matching `SUBSYSTEM_ID_PATTERN`.
 ///
 /// Separators and other characters become `_`; ids with no ASCII alphanumerics left
 /// (e.g. Cyrillic names) get a stable hash-based id so distinct modules never collide.
+/// Long paths (> 64 chars) receive a deterministic 8-hex hash suffix to prevent truncation collisions.
 pub fn sanitize_id(raw: &str) -> String {
     let mut id = String::with_capacity(raw.len());
     for c in raw.chars() {
@@ -1058,11 +1092,11 @@ pub fn sanitize_id(raw: &str) -> String {
         let hex: String = digest[..4].iter().map(|b| format!("{b:02x}")).collect();
         return format!("m_{hex}");
     }
-    id.chars()
-        .take(64)
-        .collect::<String>()
-        .trim_end_matches(['_', '-'])
-        .to_string()
+    if id.chars().count() > 64 {
+        disambiguate_id(id, raw)
+    } else {
+        id.to_string()
+    }
 }
 
 fn chrono_like_date() -> String {
@@ -1073,6 +1107,7 @@ fn chrono_like_date() -> String {
 mod tests {
     use super::*;
     use crate::config::StorageMode;
+    use crate::storage::SubsystemFile;
     use std::collections::BTreeMap;
     use std::time::SystemTime;
 
@@ -1080,6 +1115,71 @@ mod tests {
     fn test_sanitize_id() {
         assert_eq!(sanitize_id("src/detector"), "src_detector");
         assert_eq!(sanitize_id("packages\\core"), "packages_core");
+    }
+
+    #[test]
+    fn test_sanitize_id_long_paths_hash_and_boundary_separators() {
+        let a = sanitize_id(
+            "infra/packages/hermes/plugins/skill-retrieval/tests/test_issue_alpha_case",
+        );
+        let b =
+            sanitize_id("infra/packages/hermes/plugins/skill-retrieval/tests/test_issue_beta_case");
+        let sep = sanitize_id(&format!(
+            "{}____tail_exceeding_sixty_four_chars",
+            "a".repeat(53)
+        ));
+        assert_ne!(a, b);
+        assert!(a.len() <= 64 && b.len() <= 64 && sep.len() <= 64);
+        assert!(!sep.contains("__"));
+        crate::storage::validate_subsystem_id(&a).unwrap();
+        crate::storage::validate_subsystem_id(&sep).unwrap();
+    }
+
+    #[test]
+    fn test_normalize_index_and_agents_md_dedup_ids() {
+        let mut index = L0Index {
+            subsystems: vec![
+                SubsystemInfo {
+                    id: "mod_alpha".to_string(),
+                    name: "Alpha Old".to_string(),
+                    summary: "Heuristic summary".to_string(),
+                    l1_path: "subsystems/mod_alpha.md".to_string(),
+                    summary_source: SummarySource::Heuristic,
+                    files: vec![SubsystemFile {
+                        path: "src/a.rs".to_string(),
+                        is_entrypoint: true,
+                        lines: 10,
+                    }],
+                    ..SubsystemInfo::default()
+                },
+                SubsystemInfo {
+                    id: "mod_alpha".to_string(),
+                    name: "Alpha Enriched".to_string(),
+                    summary: "AI summary".to_string(),
+                    l1_path: "subsystems/mod_alpha.md".to_string(),
+                    summary_source: SummarySource::Llm,
+                    files: vec![SubsystemFile {
+                        path: "src/a.rs".to_string(),
+                        is_entrypoint: true,
+                        lines: 10,
+                    }],
+                    ..SubsystemInfo::default()
+                },
+            ],
+            ..L0Index::default()
+        };
+        normalize_index(&mut index);
+        assert_eq!(index.subsystems.len(), 1);
+        assert_eq!(index.subsystems[0].summary_source, SummarySource::Llm);
+
+        let rendered = render_root_agents_md(
+            Path::new("/dummy"),
+            "my_project",
+            &index.subsystems,
+            StorageMode::Repo,
+        );
+        let count = rendered.matches("- `mod_alpha`").count();
+        assert_eq!(count, 1);
     }
 
     #[test]
