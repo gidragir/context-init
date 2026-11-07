@@ -98,3 +98,30 @@ rtk context-init pack <subsystem_id> -o /tmp/context.xml
 ```bash
 rtk context-init init . --deep --with-rtk --compact
 ```
+
+### 6. Регламент выпуска релиза
+
+1. **Бамп версии в `Cargo.toml`:**
+   - Обновить `[workspace.package].version` и версии внутренних зависимостей `ci-core`, `ci-llm`, `ci-mcp`.
+   - Обновить тесты `smoke_version_*` в `crates/ci-*/src/lib.rs`.
+   - Если менялись или объединялись подсистемы, актуализировать `SEARCH_GOLD` в `tests/regression_benchmark.rs`.
+2. **Форматирование, линтинг и тесты:**
+   ```bash
+   rtk cargo fmt --all -- --check
+   rtk cargo clippy --workspace --all-targets -- -D warnings
+   rtk cargo test --workspace
+   ```
+3. **Синхронизация базы знаний (устранение `git_stale`):**
+   ```bash
+   rtk cargo run -- update . --prune --compact
+   rtk git add -A && rtk git commit -m "chore(release): vX.Y.Z"
+   rtk cargo run -- init . --force --compact
+   rtk git add -A && rtk git commit -m "chore(kb): sync knowledge base with release vX.Y.Z"
+   rtk cargo run -- check . --compact --exit-code
+   ```
+4. **Установка и тегирование:**
+   ```bash
+   mise run install
+   rtk git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   rtk git push origin main --tags
+   ```
