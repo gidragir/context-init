@@ -53,10 +53,16 @@ pub struct RepoGitSnapshot {
     pub head_commit: String,
     /// Working-tree and index status entries.
     pub status_entries: Vec<GitStatusEntry>,
-    /// `rel_path -> entry` from one `git ls-tree -r -t -z HEAD` (empty when not batched).
+    /// `path -> entry` from one `git ls-tree --full-tree -r -t -z HEAD`, keyed relative to the
+    /// repository root like `status_entries` (empty when not batched).
     #[serde(default, skip)]
     #[schemars(skip)]
     pub tree_entries: BTreeMap<String, GitTreeEntry>,
+    /// `git rev-parse --show-prefix` of the project root inside the repository (`""` at the
+    /// repository root, else `"sub/dir/"`).
+    #[serde(default, skip)]
+    #[schemars(skip)]
+    pub repo_prefix: String,
     /// `HEAD^{tree}` (for `directory == "."`); `None` on an unborn `HEAD` or when not batched.
     #[serde(default, skip)]
     #[schemars(skip)]
@@ -74,16 +80,25 @@ impl RepoGitSnapshot {
         self.unborn_head || self.root_tree_sha.is_some()
     }
 
-    fn status_touches(&self, norm_rel: &str) -> bool {
+    /// Whether `repo_path` (relative to the repository root) has a `git status` entry.
+    fn status_touches(&self, repo_path: &str) -> bool {
         self.status_entries
             .iter()
-            .any(|e| e.path == norm_rel || e.orig_path.as_deref() == Some(norm_rel))
+            .any(|e| e.path == repo_path || e.orig_path.as_deref() == Some(repo_path))
     }
 
     /// Same result as [`GitBackend::blob_sha`] of `SystemGitBackend`, served from the batched
     /// tree: `"."` from `root_tree_sha`, directories (and submodules) from `tree_entries`, clean
     /// tracked files from `tree_entries`; dirty/untracked/ignored files, symlinks and files on
     /// an unborn `HEAD` are hashed from the working tree (`git hash-object`).
+    ///
+    /// Files are looked up as `repo_prefix + path` (the project may sit in a subdirectory of
+    /// the repository); directories as `path` from the repository root, exactly like the
+    /// `rev-parse HEAD:<path>` of `blob_sha`.
+    ///
+    /// Known limitation: a file marked `assume-unchanged` / `skip-worktree` with local edits
+    /// has no `git status` entry, so its committed blob is returned where `blob_sha` would
+    /// hash the working-tree content.
     pub fn blob_sha_for(&self, repo_root: &Path, relative_path: &Path) -> Result<Option<String>> {
         let stripped_rel = relative_path
             .strip_prefix(repo_root)
@@ -104,9 +119,10 @@ impl RepoGitSnapshot {
             let is_symlink = std::fs::symlink_metadata(&full_path)
                 .map(|m| m.file_type().is_symlink())
                 .unwrap_or(true);
+            let repo_path = format!("{}{norm_rel}", self.repo_prefix);
             let clean_tracked =
-                (!self.unborn_head && !is_symlink && !self.status_touches(&norm_rel))
-                    .then(|| self.tree_entries.get(&norm_rel))
+                (!self.unborn_head && !is_symlink && !self.status_touches(&repo_path))
+                    .then(|| self.tree_entries.get(&repo_path))
                     .flatten()
                     .filter(|e| e.object_type == "blob");
             if let Some(entry) = clean_tracked {
@@ -587,18 +603,31 @@ impl GitBackend for SystemGitBackend {
         Ok(parse_porcelain_z(&output.stdout))
     }
 
-    /// One `git status`, one `git rev-parse --verify HEAD^{tree}` and one
-    /// `git ls-tree -r -t -z HEAD`; an unborn `HEAD` yields `unborn_head = true` instead of
-    /// an error (outside a repository `git status` still fails).
+    /// One `git status`, one `git rev-parse --show-prefix --verify HEAD^{tree}` and one
+    /// `git ls-tree --full-tree -r -t -z HEAD`; an unborn `HEAD` yields `unborn_head = true`
+    /// instead of an error (outside a repository `git status` still fails).
     fn repo_snapshot(&self, repo_root: &Path) -> Result<RepoGitSnapshot> {
         let status_entries = self.status_porcelain_z(repo_root)?;
-        let tree_out = self.run_git(repo_root, &["rev-parse", "--verify", "-q", "HEAD^{tree}"])?;
-        let root_tree_sha = tree_out
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&tree_out.stdout).trim().to_string())
-            .filter(|s| !s.is_empty());
-        let Some(root_tree_sha) = root_tree_sha else {
+        let tree_out = self.run_git(
+            repo_root,
+            &[
+                "rev-parse",
+                "--show-prefix",
+                "--verify",
+                "-q",
+                "HEAD^{tree}",
+            ],
+        )?;
+        // stdout: `<prefix>\n<tree sha>\n` (the prefix line is empty at the repository root).
+        let stdout = String::from_utf8_lossy(&tree_out.stdout).into_owned();
+        let lines: Vec<&str> = stdout.lines().collect();
+        let parsed = match lines.as_slice() {
+            [prefix, sha] if tree_out.status.success() && is_hex_sha(sha.trim()) => {
+                Some((normalize_prefix(prefix), sha.trim().to_string()))
+            }
+            _ => None,
+        };
+        let Some((repo_prefix, root_tree_sha)) = parsed else {
             return Ok(RepoGitSnapshot {
                 head_commit: self.head_commit(repo_root).unwrap_or_default(),
                 status_entries,
@@ -607,10 +636,13 @@ impl GitBackend for SystemGitBackend {
             });
         };
         let head_commit = self.head_commit(repo_root)?;
-        let ls_out = self.run_git(repo_root, &["ls-tree", "-r", "-t", "-z", "HEAD"])?;
+        let ls_out = self.run_git(
+            repo_root,
+            &["ls-tree", "--full-tree", "-r", "-t", "-z", "HEAD"],
+        )?;
         if !ls_out.status.success() {
             bail!(
-                "git ls-tree -r -t -z HEAD failed in {:?}: {}",
+                "git ls-tree --full-tree -r -t -z HEAD failed in {:?}: {}",
                 repo_root,
                 String::from_utf8_lossy(&ls_out.stderr).trim()
             );
@@ -619,6 +651,7 @@ impl GitBackend for SystemGitBackend {
             head_commit,
             status_entries,
             tree_entries: parse_ls_tree_z(&ls_out.stdout),
+            repo_prefix,
             root_tree_sha: Some(root_tree_sha),
             unborn_head: false,
         })
@@ -777,6 +810,17 @@ fn reject_option_like(revs: &[&str]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `git rev-parse --show-prefix` output as `""` or a normalized `"sub/dir/"`.
+fn normalize_prefix(raw: &str) -> String {
+    let norm = normalize_path(raw);
+    let norm = norm.trim_end_matches('/');
+    if norm.is_empty() || norm == "." {
+        String::new()
+    } else {
+        format!("{norm}/")
+    }
 }
 
 /// A recorded commit/blob id: hex only, abbreviated or full.
@@ -1289,6 +1333,53 @@ mod tests {
         std::fs::remove_file(root.join("src/sub/b.rs")).unwrap();
         let snap = git.repo_snapshot(root).unwrap();
         assert_parity(&git, &snap, root, &rels);
+    }
+
+    #[test]
+    fn snapshot_matches_blob_sha_for_project_nested_in_repo_subdirectory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        let proj = repo.join("proj");
+        let rels = [
+            ".",
+            "src",
+            "src/sub",
+            "src/a.rs",
+            "src/sub/b.rs",
+            "src/new.rs",
+            "missing",
+        ];
+        git_q(repo, &["init", "-q"]);
+        std::fs::create_dir_all(proj.join("src/sub")).unwrap();
+        std::fs::write(proj.join("src/a.rs"), "pub fn a() {}\n").unwrap();
+        std::fs::write(proj.join("src/sub/b.rs"), "pub fn b() {}\n").unwrap();
+        // A top-level `src` too: directory lookups must resolve from the same base as
+        // `rev-parse HEAD:<path>` (the repository root).
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/x.rs"), "pub fn x() {}\n").unwrap();
+        git_q(repo, &["add", "-A"]);
+        git_q(repo, &["commit", "-q", "-m", "init"]);
+        let git = SystemGitBackend::new();
+
+        let snap = git.repo_snapshot(&proj).unwrap();
+        assert!(snap.is_batched());
+        assert_eq!(snap.repo_prefix, "proj/");
+        assert_parity(&git, &snap, &proj, &rels);
+
+        // Unstaged edit + untracked file inside the nested project.
+        let clean_a = snap
+            .blob_sha_for(&proj, Path::new("src/a.rs"))
+            .unwrap()
+            .unwrap();
+        std::fs::write(proj.join("src/a.rs"), "pub fn a() { /* dirty */ }\n").unwrap();
+        std::fs::write(proj.join("src/new.rs"), "pub fn new() {}\n").unwrap();
+        let snap = git.repo_snapshot(&proj).unwrap();
+        let dirty_a = snap
+            .blob_sha_for(&proj, Path::new("src/a.rs"))
+            .unwrap()
+            .unwrap();
+        assert_ne!(dirty_a, clean_a);
+        assert_parity(&git, &snap, &proj, &rels);
     }
 
     #[test]
