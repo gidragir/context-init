@@ -24,7 +24,7 @@ pub enum EnrichOutcome {
     },
     /// The role resolved to an `agent` model: the harness must answer this package via
     /// `context_submit`.
-    PendingAgent(AgentWorkPackage),
+    PendingAgent(Box<AgentWorkPackage>),
     /// The provider chain failed; nothing is to be applied.
     Failed { warning: String },
 }
@@ -57,7 +57,7 @@ pub fn enrich_subsystems(
         }
     };
     if let Some(pkg) = resp.work_package {
-        return EnrichOutcome::PendingAgent(pkg);
+        return EnrichOutcome::PendingAgent(Box::new(pkg));
     }
     match parse_subsystem_summaries(&resp.content) {
         Ok(items) => {
@@ -316,7 +316,7 @@ mod tests {
             agents_md: false,
             project_root: None,
         };
-        let msg = cli_outcome_message(&EnrichOutcome::PendingAgent(pkg)).unwrap();
+        let msg = cli_outcome_message(&EnrichOutcome::PendingAgent(Box::new(pkg))).unwrap();
         assert!(msg.contains("agent") && msg.contains("MCP"), "{msg}");
         assert_eq!(cli_outcome_message(&EnrichOutcome::Skipped), None);
     }

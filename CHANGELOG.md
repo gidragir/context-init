@@ -5,6 +5,7 @@
 ### Fixed
 - Simplified the ignored-filename guard in scope walking to satisfy `clippy::needless_bool` on current stable toolchains.
 - Removed vendor-specific naming from the BSL project type labels so the `neutrality` CI invariant passes.
+- Boxed the agent work package in `EnrichOutcome::PendingAgent` to satisfy `clippy::large_enum_variant`.
 
 ## [0.5.0] - 2026-11-15
 

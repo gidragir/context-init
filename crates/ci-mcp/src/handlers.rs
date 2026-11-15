@@ -1043,7 +1043,7 @@ impl ContextHandler {
                      context_submit(package_id, submission).\npackage_id: {}\ninstruction: {}\njson_schema: {}\nfacts: {}",
                     pkg.package_id, pkg.instruction, pkg.json_schema, pkg.facts
                 ));
-                Some(pkg)
+                Some(*pkg)
             }
             other => {
                 if let Some(msg) = cli_outcome_message(&other) {
