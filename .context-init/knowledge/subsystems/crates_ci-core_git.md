@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/git.rs
 source:
   kind: git
-  blob_sha: dd7834620cdccd171a610b3da48a8380dfc95373
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  blob_sha: 253c3f932390492ab395526dfd81fc1bb656dbe6
+  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -31,15 +31,15 @@ freshness:
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub struct GitStatusEntry
+pub struct GitTreeEntry
+pub type DiffNameCache = BTreeMap<String, Option<Vec<String>>>
 pub struct RepoGitSnapshot
+pub fn snapshot_paths_tree_sha(backend: &dyn GitBackend, repo_root: &Path, snapshot: &RepoGitSnapshot, paths: &[String], ) -> Result<String>
 pub struct StalenessReport
 pub trait GitBackend
 pub fn resolve_git_dir(repo_root: &Path) -> Option<PathBuf>
 pub fn resolve_common_git_dir(git_dir: &Path) -> PathBuf
 pub fn read_head_commit_in_process(repo_root: &Path) -> Option<String>
-pub fn read_remote_url_in_process(repo_root: &Path) -> Option<String>
-pub struct SystemGitBackend
-pub fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitStatusEntry>
 ```
 
 ## 🧪 Запуск и тестирование

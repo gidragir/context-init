@@ -2,11 +2,11 @@
 directory: crates/ci-mcp/src/handlers.rs
 source:
   kind: git
-  blob_sha: 5d914f6dd2462e99dcb0a795cea694707eba32dd
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  blob_sha: cfe9dccedbc94f9a4305ec6ef302fa1b6306c255
+  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -36,6 +36,7 @@ pub const DEFAULT_SEARCH_TOP_K: usize = 10
 pub struct HandlerReply
 pub struct SubmitReply
 pub struct ContextHandler
+pub struct PackHandlerParams<'a>
 ```
 
 ## 🧪 Запуск и тестирование

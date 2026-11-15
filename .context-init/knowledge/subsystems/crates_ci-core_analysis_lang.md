@@ -2,15 +2,15 @@
 directory: crates/ci-core/src/analysis/lang
 source:
   kind: git
-  blob_sha: 7e616e3cf5dd016e1c3a839d487d75f22352b28d
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  blob_sha: 96aa5907cbaba9613a51cfdb97c180522fc1ffdf
+  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
-  total_entries: 7
-  sampled_entries: 7
+  total_entries: 5
+  sampled_entries: 5
   unsampled_entries: 0
   pending_child_changes: 0
 ---
@@ -28,8 +28,6 @@ freshness:
 | :--- | :--- |
 | `crates/ci-core/src/analysis/lang/brace.rs` | Исходный код |
 | `crates/ci-core/src/analysis/lang/bsl.rs` | Исходный код |
-| `crates/ci-core/src/analysis/lang/kotlin.rs` | Исходный код |
-| `crates/ci-core/src/analysis/lang/mdo.rs` | Исходный код |
 | `crates/ci-core/src/analysis/lang/mod.rs` | ⭐ Точка входа |
 | `crates/ci-core/src/analysis/lang/python.rs` | Исходный код |
 | `crates/ci-core/src/analysis/lang/rust.rs` | Исходный код |
@@ -37,15 +35,15 @@ freshness:
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub const ELIDED_BODY: &str = "⋮----"
+pub const INLINE_ELIDED: &str = "⋮"
+pub struct SymbolSpan
 pub trait LanguageAdapter
+pub fn symbol_name(span: &SymbolSpan) -> String
 pub fn adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter>
 pub fn adapter_for_path(path: &Path) -> Option<&'static dyn LanguageAdapter>
 pub struct BraceLangAdapter
 pub struct BslAdapter
-pub struct KotlinAdapter
-pub struct MdoObject
-pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject>
-pub fn semantic_diff(old: Option<&MdoObject>, new: &MdoObject) -> Vec<String>
+pub struct PythonAdapter
 ```
 
 ## 🧪 Запуск и тестирование

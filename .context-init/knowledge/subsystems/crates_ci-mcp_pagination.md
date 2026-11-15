@@ -2,11 +2,11 @@
 directory: crates/ci-mcp/src/pagination.rs
 source:
   kind: git
-  blob_sha: 042310663a7bbfd2195ac951707ba3381ad6aa79
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  blob_sha: 0ae54052aed6ebaf40520faacf3a89fa67247960
+  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -31,13 +31,15 @@ freshness:
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub struct CursorData
+pub struct PaginationMeta<'a>
+pub fn compute_query_hash(parts: &[&str], full_text: &str) -> u64
+pub fn extract_section_names(text: &str) -> Vec<String>
 pub fn base64_url_encode(data: &[u8]) -> String
 pub fn base64_url_decode(input: &str) -> Option<Vec<u8>>
 pub fn encode_cursor(cursor: &CursorData) -> String
 pub fn decode_cursor(cursor_str: &str) -> Option<CursorData>
 pub fn format_footer(truncated: bool, next_cursor: Option<&str>, stale: bool, tokens: usize, ) -> String
-pub struct PaginatedOutput
-pub fn paginate_content(full_text: &str, cursor: Option<&str>, max_tokens: usize, stale: bool, ) -> PaginatedOutput
+pub struct FooterExtras<'a>
 ```
 
 ## 🧪 Запуск и тестирование

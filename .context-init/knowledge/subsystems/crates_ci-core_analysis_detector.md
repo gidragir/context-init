@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/analysis
 source:
   kind: git
-  blob_sha: 4bf0bc416b8cb4383227bb9172024a529f4b8b3c
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  blob_sha: da14fb23be84d27ef2f81321bab0670bf1fe6d55
+  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 2
@@ -40,7 +40,7 @@ pub fn estimate_tokens_fast(text: &str) -> usize
 pub struct AnalyzeOptions
 pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<ProjectAnalysis>
 pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<ProjectAnalysis>
-pub fn prefix_with_rtk(cmd: &str) -> String
+pub fn analyze_project_with_cache(root: &Path, opts: &AnalyzeOptions, metrics_cache_dir: Option<&Path>, ) -> Result<ProjectAnalysis>
 ```
 
 ## 🧪 Запуск и тестирование

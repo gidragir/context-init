@@ -3,7 +3,7 @@
   "schema_version": 4,
   "project": "context-init",
   "description": "CLI-утилита на Rust для автоматической инициализации и поддержания трехуровневой базы знаний (**OpenViking L0-L2**) для автономных ИИ-ассистентов (Antigravity, Hermes, Claude Code, Cursor, Aider).",
-  "updated_at": "2026-11-07",
+  "updated_at": "2026-11-15",
   "project_type": "Rust (Cargo)",
   "entrypoints": [
     "src/main.rs",
@@ -17,12 +17,12 @@
     "fmt": "rtk mise run fmt",
     "run": "rtk cargo run",
     "custom": {
-      "install": "rtk mise run install",
-      "dist": "rtk mise run dist",
-      "check": "rtk mise run check",
       "audit-sessions": "rtk mise run audit-sessions",
       "audit": "rtk mise run audit",
-      "probe-adoption": "rtk mise run probe-adoption"
+      "check": "rtk mise run check",
+      "probe-adoption": "rtk mise run probe-adoption",
+      "install": "rtk mise run install",
+      "dist": "rtk mise run dist"
     }
   },
   "subsystems": [
@@ -143,6 +143,38 @@
       "summary_source": "heuristic"
     },
     {
+      "id": "crates_ci-core_analysis_cache",
+      "name": "Ci Core Analysis Cache",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/cache.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_cache.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_cache"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/cache.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/cache.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub const METRICS_CACHE_FILE: &str = \"metrics_v1.json\"",
+        "pub const RACY_WINDOW_NANOS: u64 = 2_000_000_000",
+        "pub struct FileMetrics",
+        "pub struct CachedFileEntry",
+        "pub fn sha256_hex(bytes: &[u8]) -> String",
+        "pub fn project_hash(root: &Path) -> String",
+        "pub struct DiskMetricsCache",
+        "pub struct AnalyzedFileCache"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis",
+      "summary_source": "heuristic"
+    },
+    {
       "id": "crates_ci-core_analysis_detector",
       "name": "Ci Core Analysis Detector",
       "summary": "Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (2 файлов)",
@@ -175,7 +207,7 @@
         "pub struct AnalyzeOptions",
         "pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<ProjectAnalysis>",
         "pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<ProjectAnalysis>",
-        "pub fn prefix_with_rtk(cmd: &str) -> String"
+        "pub fn analyze_project_with_cache(root: &Path, opts: &AnalyzeOptions, metrics_cache_dir: Option<&Path>, ) -> Result<ProjectAnalysis>"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
@@ -276,15 +308,15 @@
       ],
       "key_symbols": [
         "pub struct GenerateOptions",
+        "pub type CardCache = BTreeMap<String, String>",
         "pub fn render_subsystem_card_okf(sub: &SubsystemInfo, analysis: &ProjectAnalysis, source_shas: Option<(String, String)>, role: &str, model: &str, ) -> String",
         "pub fn restamp_card_source(card_path: &Path, root: &Path, directory: Option<&str>) -> Result<bool>",
         "pub fn generate(analysis: &ProjectAnalysis, subsystems: &[SubsystemInfo], knowledge_dir: &Path, opts: &GenerateOptions, ) -> Result<()>",
         "pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftReport>",
+        "pub fn audit_with_cache(analysis: &ProjectAnalysis, knowledge_dir: &Path, cards: &mut CardCache, ) -> Result<DriftReport>",
         "pub struct UpdateStats",
         "pub fn update(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, ) -> Result<(usize, usize)>",
-        "pub fn update_with_options(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, prune: bool, ) -> Result<UpdateStats>",
-        "pub struct SummaryUpdate",
-        "pub fn apply_summaries(analysis: &ProjectAnalysis, knowledge_dir: &Path, updates: &[SummaryUpdate], source: SummarySource, model: Option<&str>, agents_md: Option<StorageMode>, ) -> Result<usize>"
+        "pub fn update_with_options(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, prune: bool, ) -> Result<UpdateStats>"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
@@ -305,8 +337,6 @@
       "key_files": [
         "crates/ci-core/src/analysis/lang/brace.rs",
         "crates/ci-core/src/analysis/lang/bsl.rs",
-        "crates/ci-core/src/analysis/lang/kotlin.rs",
-        "crates/ci-core/src/analysis/lang/mdo.rs",
         "crates/ci-core/src/analysis/lang/mod.rs",
         "crates/ci-core/src/analysis/lang/python.rs",
         "crates/ci-core/src/analysis/lang/rust.rs"
@@ -318,14 +348,6 @@
         },
         {
           "path": "crates/ci-core/src/analysis/lang/bsl.rs",
-          "is_entrypoint": false
-        },
-        {
-          "path": "crates/ci-core/src/analysis/lang/kotlin.rs",
-          "is_entrypoint": false
-        },
-        {
-          "path": "crates/ci-core/src/analysis/lang/mdo.rs",
           "is_entrypoint": false
         },
         {
@@ -343,18 +365,107 @@
       ],
       "key_symbols": [
         "pub const ELIDED_BODY: &str = \"⋮----\"",
+        "pub const INLINE_ELIDED: &str = \"⋮\"",
+        "pub struct SymbolSpan",
         "pub trait LanguageAdapter",
+        "pub fn symbol_name(span: &SymbolSpan) -> String",
         "pub fn adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter>",
         "pub fn adapter_for_path(path: &Path) -> Option<&'static dyn LanguageAdapter>",
         "pub struct BraceLangAdapter",
         "pub struct BslAdapter",
-        "pub struct KotlinAdapter",
-        "pub struct MdoObject",
-        "pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject>",
-        "pub fn semantic_diff(old: Option<&MdoObject>, new: &MdoObject) -> Vec<String>"
+        "pub struct PythonAdapter"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
+      "summary_source": "heuristic"
+    },
+    {
+      "id": "crates_ci-core_analysis_lang_kotlin",
+      "name": "Ci Core Analysis Lang Kotlin",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/lang/kotlin.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_lang_kotlin.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_lang_kotlin"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/lang/kotlin.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/lang/kotlin.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct KotlinAdapter"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis_lang",
+      "summary_source": "heuristic"
+    },
+    {
+      "id": "crates_ci-core_analysis_lang_mdo",
+      "name": "Ci Core Analysis Lang Mdo",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/lang/mdo.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_lang_mdo.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_lang_mdo"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/lang/mdo.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/lang/mdo.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct MdoObject",
+        "pub fn parse_mdo_xml(xml: &str) -> Result<MdoObject>",
+        "pub fn semantic_diff(old: Option<&MdoObject>, new: &MdoObject) -> Vec<String>",
+        "pub fn render_mdo_l2_card(obj: &MdoObject) -> String",
+        "pub(crate) fn discover_mdo_subsystems(root: &Path, files: &[String], ) -> (Vec<DiscoveredModule>, BTreeSet<String>)",
+        "pub fn find_object_card(root: &Path, scope: &ScopeConfig, id: &str) -> Result<Option<String>>"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis_lang",
+      "summary_source": "heuristic"
+    },
+    {
+      "id": "crates_ci-core_analysis_lang_text",
+      "name": "Ci Core Analysis Lang Text",
+      "summary": "Модуль-файл `crates/ci-core/src/analysis/lang/text.rs`",
+      "l1_path": "subsystems/crates_ci-core_analysis_lang_text.md",
+      "tags": [
+        "Rust (Cargo)",
+        "crates_ci-core_analysis_lang_text"
+      ],
+      "key_files": [
+        "crates/ci-core/src/analysis/lang/text.rs"
+      ],
+      "files": [
+        {
+          "path": "crates/ci-core/src/analysis/lang/text.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub(crate) enum Backtick",
+        "pub(crate) struct Flavor",
+        "pub(crate) fn mask_code(source: &str, f: Flavor) -> Vec<String>",
+        "pub(crate) struct LineRules",
+        "pub(crate) fn go_private(t: &str) -> bool",
+        "pub(crate) fn apply_options(text: &str, opts: &CompressOptions, rules: &LineRules) -> String",
+        "pub(crate) type DetectFn<'a> = &'a dyn Fn(&str, Option<&'static str>) -> Option<(&'static str, bool)>",
+        "pub(crate) struct SpanRules<'a>",
+        "pub(crate) fn signature_text(lines: &[&str], start: usize, sig_line: usize, sig_col: usize, ) -> String",
+        "pub(crate) fn brace_spans(source: &str, masked: &[String], rules: &SpanRules<'_>, ) -> Vec<SymbolSpan>"
+      ],
+      "test_command": "rtk cargo test -p ci-core",
+      "parent": "crates_ci-core_analysis_lang",
       "summary_source": "heuristic"
     },
     {
@@ -377,14 +488,15 @@
       ],
       "key_symbols": [
         "pub enum PackStyle",
+        "pub enum PackMode",
+        "pub struct CompressOptions",
+        "pub struct PackRequest<'a>",
+        "pub fn compress_source_with(content: &str, ext: &str, opts: &CompressOptions) -> String",
         "pub struct PackedSubsystems",
         "pub fn pack_subsystem(root: &Path, knowledge_dir: &Path, index: &L0Index, subsystem_id: &str, compress: bool, style: PackStyle, ) -> Result<PackedSubsystems>",
-        "pub fn pack_files(root: &Path, subs: &[&SubsystemInfo], files: &[String], compress: bool, style: PackStyle, ) -> String",
-        "pub fn compress_source(content: &str, ext: &str) -> String",
-        "pub fn compress_rust_ast(content: &str) -> Option<String>",
-        "pub fn format_rust_items(items: &[syn :: Item]) -> String",
-        "pub fn normalize_rust_tokens(s: &str) -> String",
-        "pub fn compress_code(content: &str) -> String"
+        "pub fn validate_file_patterns(patterns: &[String]) -> Result<GlobSet>",
+        "pub fn pack_subsystem_with(root: &Path, knowledge_dir: &Path, index: &L0Index, req: &PackRequest<'_>, ) -> Result<PackedSubsystems>",
+        "pub fn pack_files(root: &Path, subs: &[&SubsystemInfo], files: &[String], compress: bool, style: PackStyle, ) -> String"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
@@ -410,14 +522,15 @@
       ],
       "key_symbols": [
         "pub const KNOWN_BINARY_EXTENSIONS: &[&str] = &[\"exe\", \"dll\", \"so\", \"dylib\", \"msi\", \"cab\", \"zip\", \"tar\", \"gz\", \"7z\", \"rar\", \"png\", \"jpg\", \"jpeg\", \"gif\", \"webp\", \"ico\", \"icns\", \"pdf\", \"woff\", \"woff2\", \"ttf\", \"otf\", \"eot\", \"mp3\", \"mp4\", \"wav\", \"ogg\", \"wasm\", \"pyc\", \"class\", \"jar\", \"db\", \"sqlite\", \"sqlite3\", \"cf\", \"epf\", \"erf\", \"bin\", \"pack\", \"idx\", ]",
+        "pub(crate) const BINARY_SNIFF_BYTES: usize = 8192",
         "pub fn is_likely_binary(path: &Path) -> bool",
+        "pub(crate) fn has_binary_extension(path: &Path) -> bool",
+        "pub(crate) fn header_is_binary(header: &[u8]) -> bool",
         "pub struct ScanOptions",
         "pub struct ScanOutlier",
         "pub struct ScanStat",
         "pub struct ScanReport",
-        "pub fn scan_project(root: &Path, scope: &ScopeConfig) -> Result<ScanReport>",
-        "pub fn scan_project_with(root: &Path, scope: &ScopeConfig, opts: &ScanOptions, ) -> Result<ScanReport>",
-        "pub fn render_scan_markdown(project_id: &str, root: &Path, report: &ScanReport) -> String"
+        "pub fn scan_project(root: &Path, scope: &ScopeConfig) -> Result<ScanReport>"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core_analysis",
@@ -503,15 +616,15 @@
       ],
       "key_symbols": [
         "pub struct GitStatusEntry",
+        "pub struct GitTreeEntry",
+        "pub type DiffNameCache = BTreeMap<String, Option<Vec<String>>>",
         "pub struct RepoGitSnapshot",
+        "pub fn snapshot_paths_tree_sha(backend: &dyn GitBackend, repo_root: &Path, snapshot: &RepoGitSnapshot, paths: &[String], ) -> Result<String>",
         "pub struct StalenessReport",
         "pub trait GitBackend",
         "pub fn resolve_git_dir(repo_root: &Path) -> Option<PathBuf>",
         "pub fn resolve_common_git_dir(git_dir: &Path) -> PathBuf",
-        "pub fn read_head_commit_in_process(repo_root: &Path) -> Option<String>",
-        "pub fn read_remote_url_in_process(repo_root: &Path) -> Option<String>",
-        "pub struct SystemGitBackend",
-        "pub fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitStatusEntry>"
+        "pub fn read_head_commit_in_process(repo_root: &Path) -> Option<String>"
       ],
       "test_command": "rtk cargo test -p ci-core",
       "parent": "crates_ci-core",
@@ -902,7 +1015,8 @@
         "pub const DEFAULT_SEARCH_TOP_K: usize = 10",
         "pub struct HandlerReply",
         "pub struct SubmitReply",
-        "pub struct ContextHandler"
+        "pub struct ContextHandler",
+        "pub struct PackHandlerParams<'a>"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
       "parent": "crates_ci-mcp",
@@ -928,13 +1042,15 @@
       ],
       "key_symbols": [
         "pub struct CursorData",
+        "pub struct PaginationMeta<'a>",
+        "pub fn compute_query_hash(parts: &[&str], full_text: &str) -> u64",
+        "pub fn extract_section_names(text: &str) -> Vec<String>",
         "pub fn base64_url_encode(data: &[u8]) -> String",
         "pub fn base64_url_decode(input: &str) -> Option<Vec<u8>>",
         "pub fn encode_cursor(cursor: &CursorData) -> String",
         "pub fn decode_cursor(cursor_str: &str) -> Option<CursorData>",
         "pub fn format_footer(truncated: bool, next_cursor: Option<&str>, stale: bool, tokens: usize, ) -> String",
-        "pub struct PaginatedOutput",
-        "pub fn paginate_content(full_text: &str, cursor: Option<&str>, max_tokens: usize, stale: bool, ) -> PaginatedOutput"
+        "pub struct FooterExtras<'a>"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
       "parent": "crates_ci-mcp",
@@ -966,9 +1082,9 @@
         "pub struct FullDriftReport",
         "pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport>",
         "pub fn validate_model_override(config: &Config, model_override: Option<&str>) -> Result<()>",
-        "pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<()>",
-        "pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>",
-        "pub fn subsystems_needing_enrichment(existing: &L0Index, fresh: &[SubsystemInfo]) -> Vec<String>"
+        "pub enum RefreshKind",
+        "pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<RefreshKind>",
+        "pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>"
       ],
       "test_command": "rtk cargo test -p ci-mcp",
       "parent": "crates_ci-mcp",
@@ -1326,7 +1442,6 @@
         "src/cli/migrate.rs",
         "src/cli/mod.rs",
         "src/cli/output.rs",
-        "src/cli/pack.rs",
         "src/cli/scan.rs",
         "src/cli/search.rs",
         "src/cli/task.rs",
@@ -1367,10 +1482,6 @@
           "is_entrypoint": false
         },
         {
-          "path": "src/cli/pack.rs",
-          "is_entrypoint": false
-        },
-        {
           "path": "src/cli/scan.rs",
           "is_entrypoint": false
         },
@@ -1403,6 +1514,34 @@
         "pub fn run(global: &GlobalArgs, args: &ConfigArgs) -> Result<ExitCode>",
         "pub struct FeedbackArgs"
       ],
+      "summary_source": "heuristic"
+    },
+    {
+      "id": "src_cli_pack",
+      "name": "Cli Pack",
+      "summary": "Модуль-файл `src/cli/pack.rs`",
+      "l1_path": "subsystems/src_cli_pack.md",
+      "tags": [
+        "Rust (Cargo)",
+        "src_cli_pack"
+      ],
+      "key_files": [
+        "src/cli/pack.rs"
+      ],
+      "files": [
+        {
+          "path": "src/cli/pack.rs",
+          "is_entrypoint": false
+        }
+      ],
+      "key_symbols": [
+        "pub struct PackArgs",
+        "pub struct BudgetLevel",
+        "pub struct CliBudget<'a>",
+        "pub fn apply_cli_budget(levels: &[BudgetLevel], budget: &CliBudget<'_>, query: &[&str], render: &mut dyn FnMut(&BudgetLevel) -> Result<String>, ) -> Result<String>",
+        "pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode>"
+      ],
+      "parent": "src_cli",
       "summary_source": "heuristic"
     },
     {
@@ -1496,6 +1635,6 @@
   ],
   "generator": {
     "version": "0.4.0",
-    "build": "05b1743"
+    "build": "df4fc0b-dirty"
   }
 }

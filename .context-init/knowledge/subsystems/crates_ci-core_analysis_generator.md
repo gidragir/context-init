@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/analysis/generator.rs
 source:
   kind: git
-  blob_sha: b231c057aa6f9daa0356a6e39aed4d7ce72b21d8
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  blob_sha: ae3ab19025a13480e7cbeaec4def5050f4d38f6a
+  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -31,15 +31,15 @@ freshness:
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub struct GenerateOptions
+pub type CardCache = BTreeMap<String, String>
 pub fn render_subsystem_card_okf(sub: &SubsystemInfo, analysis: &ProjectAnalysis, source_shas: Option<(String, String)>, role: &str, model: &str, ) -> String
 pub fn restamp_card_source(card_path: &Path, root: &Path, directory: Option<&str>) -> Result<bool>
 pub fn generate(analysis: &ProjectAnalysis, subsystems: &[SubsystemInfo], knowledge_dir: &Path, opts: &GenerateOptions, ) -> Result<()>
 pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftReport>
+pub fn audit_with_cache(analysis: &ProjectAnalysis, knowledge_dir: &Path, cards: &mut CardCache, ) -> Result<DriftReport>
 pub struct UpdateStats
 pub fn update(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, ) -> Result<(usize, usize)>
 pub fn update_with_options(analysis: &ProjectAnalysis, new_subsystems: &[SubsystemInfo], knowledge_dir: &Path, agents_md: Option<StorageMode>, prune: bool, ) -> Result<UpdateStats>
-pub struct SummaryUpdate
-pub fn apply_summaries(analysis: &ProjectAnalysis, knowledge_dir: &Path, updates: &[SummaryUpdate], source: SummarySource, model: Option<&str>, agents_md: Option<StorageMode>, ) -> Result<usize>
 ```
 
 ## 🧪 Запуск и тестирование

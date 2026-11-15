@@ -1,6 +1,6 @@
 # 🗺 Карта архитектуры: context-init (L0)
 
-> **Стек:** Rust (Cargo) | **Обновлено:** 2026-11-07
+> **Стек:** Rust (Cargo) | **Обновлено:** 2026-11-15
 > **Описание:** CLI-утилита на Rust для автоматической инициализации и поддержания трехуровневой базы знаний (**OpenViking L0-L2**) для автономных ИИ-ассистентов (Antigravity, Hermes, Claude Code, Cursor, Aider).
 
 ## 🚪 Точки входа (Root Entrypoints)
@@ -30,12 +30,16 @@ rtk cargo run
 | :--- | :--- | :--- | :--- |
 | **Ci Core** | Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs | `crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs` | [subsystems/crates_ci-core.md](subsystems/crates_ci-core.md) |
 | **Ci Core Analysis** | Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs | `crates/ci-core/src/analysis/mod.rs` | [subsystems/crates_ci-core_analysis.md](subsystems/crates_ci-core_analysis.md) |
+| **Ci Core Analysis Cache** | Модуль-файл `crates/ci-core/src/analysis/cache.rs` | `-` | [subsystems/crates_ci-core_analysis_cache.md](subsystems/crates_ci-core_analysis_cache.md) |
 | **Ci Core Analysis Detector** | Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (2 файлов) | `-` | [subsystems/crates_ci-core_analysis_detector.md](subsystems/crates_ci-core_analysis_detector.md) |
 | **Ci Core Analysis Detector Gradle** | Модуль-файл `crates/ci-core/src/analysis/detector/gradle.rs` | `-` | [subsystems/crates_ci-core_analysis_detector_gradle.md](subsystems/crates_ci-core_analysis_detector_gradle.md) |
 | **Ci Core Analysis Detector Tests** | Тесты для `crates_ci-core_analysis_detector` | `-` | [subsystems/crates_ci-core_analysis_detector_tests.md](subsystems/crates_ci-core_analysis_detector_tests.md) |
 | **Ci Core Analysis Detector Tests Classifier** | Модуль-файл `crates/ci-core/src/analysis/detector/tests_classifier.rs` | `-` | [subsystems/crates_ci-core_analysis_detector_tests_classifier.md](subsystems/crates_ci-core_analysis_detector_tests_classifier.md) |
 | **Ci Core Analysis Generator** | Модуль-файл `crates/ci-core/src/analysis/generator.rs` | `-` | [subsystems/crates_ci-core_analysis_generator.md](subsystems/crates_ci-core_analysis_generator.md) |
 | **Ci Core Analysis Lang** | Подсистема `crates/ci-core/src/analysis/lang` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs | `crates/ci-core/src/analysis/lang/mod.rs` | [subsystems/crates_ci-core_analysis_lang.md](subsystems/crates_ci-core_analysis_lang.md) |
+| **Ci Core Analysis Lang Kotlin** | Модуль-файл `crates/ci-core/src/analysis/lang/kotlin.rs` | `-` | [subsystems/crates_ci-core_analysis_lang_kotlin.md](subsystems/crates_ci-core_analysis_lang_kotlin.md) |
+| **Ci Core Analysis Lang Mdo** | Модуль-файл `crates/ci-core/src/analysis/lang/mdo.rs` | `-` | [subsystems/crates_ci-core_analysis_lang_mdo.md](subsystems/crates_ci-core_analysis_lang_mdo.md) |
+| **Ci Core Analysis Lang Text** | Модуль-файл `crates/ci-core/src/analysis/lang/text.rs` | `-` | [subsystems/crates_ci-core_analysis_lang_text.md](subsystems/crates_ci-core_analysis_lang_text.md) |
 | **Ci Core Analysis Pack** | Модуль-файл `crates/ci-core/src/analysis/pack.rs` | `-` | [subsystems/crates_ci-core_analysis_pack.md](subsystems/crates_ci-core_analysis_pack.md) |
 | **Ci Core Analysis Scan** | Модуль-файл `crates/ci-core/src/analysis/scan.rs` | `-` | [subsystems/crates_ci-core_analysis_scan.md](subsystems/crates_ci-core_analysis_scan.md) |
 | **Ci Core Analysis Task** | Модуль-файл `crates/ci-core/src/analysis/task.rs` | `-` | [subsystems/crates_ci-core_analysis_task.md](subsystems/crates_ci-core_analysis_task.md) |
@@ -62,6 +66,7 @@ rtk cargo run
 | **Reports** | Модуль и компоненты директории `reports` (15 файлов) | `-` | [subsystems/reports.md](subsystems/reports.md) |
 | **Scripts** | Модуль и компоненты директории `scripts` (9 файлов) | `-` | [subsystems/scripts.md](subsystems/scripts.md) |
 | **Cli** | Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs | `src/cli/mod.rs` | [subsystems/src_cli.md](subsystems/src_cli.md) |
+| **Cli Pack** | Модуль-файл `src/cli/pack.rs` | `-` | [subsystems/src_cli_pack.md](subsystems/src_cli_pack.md) |
 | **Cli Setup** | Подсистема `src/cli/setup` с ключевыми точками входа: src/cli/setup/mod.rs | `src/cli/setup/mod.rs` | [subsystems/src_cli_setup.md](subsystems/src_cli_setup.md) |
 | **Tests** | Тесты проекта | `-` | [subsystems/tests.md](subsystems/tests.md) |
 

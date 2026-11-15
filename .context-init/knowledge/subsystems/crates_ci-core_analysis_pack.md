@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/analysis/pack.rs
 source:
   kind: git
-  blob_sha: 887615585a7d09a2cbc087cab2df8e9938a4e779
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  blob_sha: 8fa22435a78a8b4d5a0ec09abe2d108afbcb172a
+  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -31,14 +31,15 @@ freshness:
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub enum PackStyle
+pub enum PackMode
+pub struct CompressOptions
+pub struct PackRequest<'a>
+pub fn compress_source_with(content: &str, ext: &str, opts: &CompressOptions) -> String
 pub struct PackedSubsystems
 pub fn pack_subsystem(root: &Path, knowledge_dir: &Path, index: &L0Index, subsystem_id: &str, compress: bool, style: PackStyle, ) -> Result<PackedSubsystems>
+pub fn validate_file_patterns(patterns: &[String]) -> Result<GlobSet>
+pub fn pack_subsystem_with(root: &Path, knowledge_dir: &Path, index: &L0Index, req: &PackRequest<'_>, ) -> Result<PackedSubsystems>
 pub fn pack_files(root: &Path, subs: &[&SubsystemInfo], files: &[String], compress: bool, style: PackStyle, ) -> String
-pub fn compress_source(content: &str, ext: &str) -> String
-pub fn compress_rust_ast(content: &str) -> Option<String>
-pub fn format_rust_items(items: &[syn :: Item]) -> String
-pub fn normalize_rust_tokens(s: &str) -> String
-pub fn compress_code(content: &str) -> String
 ```
 
 ## 🧪 Запуск и тестирование

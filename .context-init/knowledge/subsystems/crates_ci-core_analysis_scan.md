@@ -2,11 +2,11 @@
 directory: crates/ci-core/src/analysis/scan.rs
 source:
   kind: git
-  blob_sha: ee9151ff04f939eca86e19c74ce8fb75b8487414
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  blob_sha: 5b8c65bfa868dde1225162ff2143473b9892fd4e
+  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -31,14 +31,15 @@ freshness:
 ## 🔑 Ключевой контракт и экспорты
 ```text
 pub const KNOWN_BINARY_EXTENSIONS: &[&str] = &["exe", "dll", "so", "dylib", "msi", "cab", "zip", "tar", "gz", "7z", "rar", "png", "jpg", "jpeg", "gif", "webp", "ico", "icns", "pdf", "woff", "woff2", "ttf", "otf", "eot", "mp3", "mp4", "wav", "ogg", "wasm", "pyc", "class", "jar", "db", "sqlite", "sqlite3", "cf", "epf", "erf", "bin", "pack", "idx", ]
+pub(crate) const BINARY_SNIFF_BYTES: usize = 8192
 pub fn is_likely_binary(path: &Path) -> bool
+pub(crate) fn has_binary_extension(path: &Path) -> bool
+pub(crate) fn header_is_binary(header: &[u8]) -> bool
 pub struct ScanOptions
 pub struct ScanOutlier
 pub struct ScanStat
 pub struct ScanReport
 pub fn scan_project(root: &Path, scope: &ScopeConfig) -> Result<ScanReport>
-pub fn scan_project_with(root: &Path, scope: &ScopeConfig, opts: &ScanOptions, ) -> Result<ScanReport>
-pub fn render_scan_markdown(project_id: &str, root: &Path, report: &ScanReport) -> String
 ```
 
 ## 🧪 Запуск и тестирование

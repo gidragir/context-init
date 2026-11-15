@@ -2,11 +2,11 @@
 directory: crates/ci-mcp/src/pipeline.rs
 source:
   kind: git
-  blob_sha: 2cac9ead388e7f32acc3bcf226804f8fcf587b53
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  blob_sha: 0015d89a2b4f67dcea3d58478696486954ecedab
+  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 1
@@ -37,9 +37,9 @@ pub fn run_update(project: &ResolvedProject, router: &RoleRouter, opts: &Pipelin
 pub struct FullDriftReport
 pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport>
 pub fn validate_model_override(config: &Config, model_override: Option<&str>) -> Result<()>
-pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<()>
+pub enum RefreshKind
+pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<RefreshKind>
 pub fn storage_mismatch_hint(project: &ResolvedProject) -> Option<String>
-pub fn subsystems_needing_enrichment(existing: &L0Index, fresh: &[SubsystemInfo]) -> Vec<String>
 ```
 
 ## 🧪 Запуск и тестирование
