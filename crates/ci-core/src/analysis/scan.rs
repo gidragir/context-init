@@ -18,35 +18,76 @@ pub const KNOWN_BINARY_EXTENSIONS: &[&str] = &[
     "erf", "bin", "pack", "idx",
 ];
 
+/// Size of the header sniffed by [`header_is_binary`].
+pub(crate) const BINARY_SNIFF_BYTES: usize = 8192;
+
 /// Returns `true` if a file is binary by extension, contains NUL bytes, or has non-UTF-8 content.
 pub fn is_likely_binary(path: &Path) -> bool {
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        let ext_lower = ext.to_ascii_lowercase();
-        if KNOWN_BINARY_EXTENSIONS.contains(&ext_lower.as_str()) {
-            return true;
-        }
-    }
-
-    let Ok(mut file) = fs::File::open(path) else {
-        return false;
-    };
-    let mut buf = [0u8; 8192];
-    let Ok(n) = file.read(&mut buf) else {
-        return false;
-    };
-    if n == 0 {
-        return false;
-    }
-    let slice = &buf[..n];
-    if slice.contains(&0x00) {
+    if has_binary_extension(path) {
         return true;
     }
-    if let Err(err) = std::str::from_utf8(slice) {
-        if err.error_len().is_some() {
-            return true;
-        }
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut header = Vec::with_capacity(BINARY_SNIFF_BYTES);
+    if file
+        .take(BINARY_SNIFF_BYTES as u64)
+        .read_to_end(&mut header)
+        .is_err()
+    {
+        return false;
     }
-    false
+    header_is_binary(&header)
+}
+
+/// Whether `path` has a [`KNOWN_BINARY_EXTENSIONS`] extension.
+pub(crate) fn has_binary_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| KNOWN_BINARY_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+}
+
+/// Whether the first [`BINARY_SNIFF_BYTES`] of a file (`header`, possibly shorter) contain a
+/// NUL byte or an invalid (not merely truncated) UTF-8 sequence.
+pub(crate) fn header_is_binary(header: &[u8]) -> bool {
+    let header = &header[..header.len().min(BINARY_SNIFF_BYTES)];
+    if header.contains(&0x00) {
+        return true;
+    }
+    matches!(std::str::from_utf8(header), Err(err) if err.error_len().is_some())
+}
+
+/// Lines and BPE tokens of one scanned file, opening it exactly once: the binary sniff reads
+/// the header from the open handle, which then reads the rest only up to `TOKENIZE_MAX_BYTES`.
+fn scan_file_metrics(path: &Path) -> (usize, usize) {
+    if has_binary_extension(path) {
+        return (0, 0);
+    }
+    let Ok(mut file) = fs::File::open(path) else {
+        return (0, 0);
+    };
+    let size = file.metadata().map_or(0, |m| m.len() as usize);
+    let mut bytes = Vec::with_capacity(size.min(TOKENIZE_MAX_BYTES) + 1);
+    if (&mut file)
+        .take(BINARY_SNIFF_BYTES as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return (0, 0);
+    }
+    if header_is_binary(&bytes) {
+        return (0, 0);
+    }
+    if size > TOKENIZE_MAX_BYTES {
+        return (0, size / 4);
+    }
+    if file.read_to_end(&mut bytes).is_err() {
+        return (0, 0);
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => (text.lines().count(), count_tokens(&text)),
+        Err(_) => (0, 0),
+    }
 }
 
 /// Options for [`scan_project_with`].
@@ -143,7 +184,11 @@ pub fn scan_project_with(
     opts: &ScanOptions,
 ) -> Result<ScanReport> {
     let max_depth = opts.max_depth.clamp(1, 5);
-    let filter = ScopeFilter::build_diagnostic(root, scope, opts.include_hidden)?;
+    // One walk yields both the standard scope (for `suggested_scope`) and, in diagnostic
+    // mode, the scope including hidden dot-directories.
+    let (standard_filter, diagnostic_filter) =
+        ScopeFilter::build_with_diagnostic(root, scope, opts.include_hidden)?;
+    let filter = diagnostic_filter.as_ref().unwrap_or(&standard_filter);
     let mut dirs_depth1: BTreeMap<String, Tally> = BTreeMap::new();
     let mut subdirs_depth_n: BTreeMap<String, Tally> = BTreeMap::new();
     let mut exts: BTreeMap<String, Tally> = BTreeMap::new();
@@ -159,19 +204,7 @@ pub fn scan_project_with(
     let mut scanned_files: Vec<ScannedFile> = Vec::new();
 
     for rel in filter.files() {
-        let path = root.join(rel);
-        let size = fs::metadata(&path).map_or(0, |m| m.len() as usize);
-        let is_bin = is_likely_binary(&path);
-        let (lines, tokens) = if is_bin {
-            (0, 0)
-        } else if size > TOKENIZE_MAX_BYTES {
-            (0, size / 4)
-        } else {
-            match fs::read_to_string(&path) {
-                Ok(text) => (text.lines().count(), count_tokens(&text)),
-                Err(_) => (0, 0),
-            }
-        };
+        let (lines, tokens) = scan_file_metrics(&root.join(rel));
 
         let ext = canonical_file_ext(rel).unwrap_or_else(|| "none".to_string());
         let top_dir = rel.split_once('/').map_or(".", |(d, _)| d).to_string();
@@ -238,7 +271,6 @@ pub fn scan_project_with(
 
     // Suggested scope calculation:
     // Strictly computed on files passing standard ScopeFilter (without include_hidden)
-    let standard_filter = ScopeFilter::build(root, scope)?;
     let standard_set: HashSet<&str> = standard_filter.files().iter().map(|s| s.as_str()).collect();
 
     let mut clean_exts: BTreeMap<String, Tally> = BTreeMap::new();

@@ -149,6 +149,19 @@ impl ScopeFilter {
         scope: &ScopeConfig,
         include_hidden: bool,
     ) -> Result<Self> {
+        let (standard, diagnostic) = Self::build_with_diagnostic(root, scope, include_hidden)?;
+        Ok(diagnostic.unwrap_or(standard))
+    }
+
+    /// A single walk returning the standard scope and, when `include_hidden` is true, the
+    /// diagnostic scope that also descends into hidden dot-directories (and [`IGNORED_DIRS`])
+    /// not opened by `[scope].include`. Entries reachable only through such a directory are
+    /// left out of the standard scope, so it equals [`ScopeFilter::build`].
+    pub fn build_with_diagnostic(
+        root: &Path,
+        scope: &ScopeConfig,
+        include_hidden: bool,
+    ) -> Result<(Self, Option<Self>)> {
         let include = glob_set(&scope.include)?;
         let exclude = glob_set(&scope.exclude)?;
         let extensions: HashSet<String> = scope
@@ -208,8 +221,18 @@ impl ScopeFilter {
             })
             .build();
 
+        // Diagnostic-only directories: hidden (or ignored) and not opened by `include`, or
+        // below such a directory. The walk yields a directory before its contents.
+        let hidden_only = |name: &str, rel: &str| {
+            (name.starts_with('.') || IGNORED_DIRS.contains(&name))
+                && !(explicitly_included(rel, &include)
+                    || include_allows_dir_traversal(rel, &scope.include))
+        };
+        let mut hidden_dirs: HashSet<String> = HashSet::new();
         let mut files = Vec::new();
         let mut dirs = HashSet::new();
+        let mut diag_files = Vec::new();
+        let mut diag_dirs = HashSet::new();
         for entry in walker.flatten() {
             if entry.depth() == 0 {
                 continue;
@@ -224,8 +247,21 @@ impl ScopeFilter {
                 continue;
             };
             let rel = rel.to_string_lossy().replace('\\', "/");
+            let under_hidden = include_hidden && {
+                let parent = rel.rsplit_once('/').map_or("", |(p, _)| p);
+                hidden_dirs.contains(parent)
+            };
             if kind.is_dir() {
-                dirs.insert(rel);
+                let name = rel.rsplit('/').next().unwrap_or(&rel);
+                let is_hidden = include_hidden && (under_hidden || hidden_only(name, &rel));
+                if include_hidden {
+                    diag_dirs.insert(rel.clone());
+                }
+                if is_hidden {
+                    hidden_dirs.insert(rel);
+                } else {
+                    dirs.insert(rel);
+                }
                 continue;
             }
             if !kind.is_file() || exclude.is_match(&rel) {
@@ -246,16 +282,45 @@ impl ScopeFilter {
                     continue;
                 }
             }
-            files.push(rel);
+            if include_hidden {
+                diag_files.push(rel.clone());
+            }
+            if !under_hidden {
+                files.push(rel);
+            }
         }
+        let standard = Self::from_parts(root, files, dirs);
+        let diagnostic = include_hidden.then(|| Self::from_parts(root, diag_files, diag_dirs));
+        Ok((standard, diagnostic))
+    }
+
+    fn from_parts(root: &Path, mut files: Vec<String>, dirs: HashSet<String>) -> Self {
         files.sort();
         let file_set = files.iter().cloned().collect();
-        Ok(Self {
+        Self {
             root: root.to_path_buf(),
             files,
             file_set,
             dirs,
-        })
+        }
+    }
+
+    /// Files in scope below the relative directory `rel_dir` (`""` = every file), as a
+    /// contiguous slice of the sorted [`ScopeFilter::files`] found by binary search.
+    pub fn files_under(&self, rel_dir: &str) -> &[String] {
+        let rel_dir = rel_dir.trim_matches('/');
+        if rel_dir.is_empty() {
+            return &self.files;
+        }
+        let prefix = format!("{rel_dir}/");
+        let start = self.files.partition_point(|f| f.as_str() < prefix.as_str());
+        let len = self.files[start..].partition_point(|f| f.starts_with(&prefix));
+        &self.files[start..start + len]
+    }
+
+    /// Project-relative (`/`-separated) form of `path`; `None` when outside the root.
+    pub fn relative(&self, path: &Path) -> Option<String> {
+        self.rel(path)
     }
 
     /// Relative (`/`-separated) paths of all files in scope, sorted.
@@ -312,6 +377,58 @@ mod tests {
         let scope = ScopeFilter::build(root, &ScopeConfig::default()).unwrap();
         let files = scope.files();
         assert_eq!(files, &["src/lib.rs".to_string()]);
+    }
+
+    #[test]
+    fn single_walk_with_diagnostic_matches_separate_walks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for (rel, text) in [
+            ("src/lib.rs", "pub fn ok() {}\n"),
+            ("src/.hidden/x.rs", "fn x() {}\n"),
+            (".agents/guide.md", "# guide\n"),
+            (".agents/deep/more.md", "# more\n"),
+            (".config/app/settings.toml", "k = 1\n"),
+            ("vendor/dep.rs", "fn dep() {}\n"),
+            ("docs/notes.md", "# notes\n"),
+            (".gitignore", "ignored/\n"),
+            ("ignored/skip.rs", "fn skip() {}\n"),
+        ] {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
+        for scope in [
+            ScopeConfig::default(),
+            ScopeConfig {
+                include: vec![".config/app/**".into(), "src/**".into()],
+                ..Default::default()
+            },
+        ] {
+            let (standard, diagnostic) =
+                ScopeFilter::build_with_diagnostic(root, &scope, true).unwrap();
+            let separate_std = ScopeFilter::build(root, &scope).unwrap();
+            let separate_diag = ScopeFilter::build_diagnostic(root, &scope, true).unwrap();
+            let diagnostic = diagnostic.expect("diagnostic scope");
+            assert_eq!(standard.files(), separate_std.files(), "{scope:?}");
+            assert_eq!(standard.dirs, separate_std.dirs, "{scope:?}");
+            assert_eq!(diagnostic.files(), separate_diag.files(), "{scope:?}");
+            if scope.include.is_empty() {
+                assert!(diagnostic
+                    .files()
+                    .contains(&".agents/deep/more.md".to_string()));
+                assert!(!standard
+                    .files()
+                    .contains(&".agents/deep/more.md".to_string()));
+            }
+            let (only_std, none) = ScopeFilter::build_with_diagnostic(root, &scope, false).unwrap();
+            assert!(none.is_none());
+            assert_eq!(only_std.files(), standard.files());
+        }
+        let scope = ScopeFilter::build(root, &ScopeConfig::default()).unwrap();
+        assert_eq!(scope.files_under("src"), &["src/lib.rs".to_string()]);
+        assert_eq!(scope.files_under(""), scope.files());
+        assert!(scope.files_under("sr").is_empty());
     }
 
     #[test]
