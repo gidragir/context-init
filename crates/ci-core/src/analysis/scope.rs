@@ -213,10 +213,7 @@ impl ScopeFilter {
                     }
                     true
                 } else {
-                    if is_ignored_filename(&name) && !explicitly_included(&rel, &inc) {
-                        return false;
-                    }
-                    true
+                    !(is_ignored_filename(&name) && !explicitly_included(&rel, &inc))
                 }
             })
             .build();
