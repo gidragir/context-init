@@ -1818,6 +1818,8 @@ mod style_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // The file name contains `"` and `<`, which Windows forbids.
+    #[cfg(unix)]
     #[test]
     fn test_pack_xml_escapes_cdata_terminator_and_attributes() {
         let dir = tmp("xmlesc");

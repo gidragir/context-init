@@ -1504,7 +1504,10 @@ fn cli_check_reports_legacy_agents_knowledge_hint() {
         text.contains("Legacy knowledge base found at"),
         "output: {text}"
     );
-    assert!(text.contains(".agents/knowledge"), "output: {text}");
+    assert!(
+        text.replace('\\', "/").contains(".agents/knowledge"),
+        "output: {text}"
+    );
 }
 
 #[cfg(unix)]
