@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.2](https://github.com/gidragir/context-init/compare/v0.5.1...v0.5.2) - 2026-11-15
+
+### Fixed
+
+- *(llm)* box agent work package in EnrichOutcome to satisfy clippy
+
+### Other
+
+- make pack xml and legacy hint tests portable to windows
+
 ## [0.5.1] - 2026-11-15
 
 ### Fixed
