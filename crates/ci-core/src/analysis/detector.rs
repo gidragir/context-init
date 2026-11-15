@@ -231,7 +231,8 @@ pub fn analyze_project_with_cache(
 /// module's files as last recorded.
 ///
 /// Returns `Ok(None)` whenever a full detection is required instead: the project holds `.mdo`
-/// metadata (cross-directory subsystems), `rel_dir` is not an inspectable directory in scope,
+/// metadata (cross-directory subsystems), `rel_dir` is `src` or a monorepo parent directory
+/// (modules by layout), `rel_dir` is not an inspectable directory in scope,
 /// a build manifest outside `known_files` appeared in a subdirectory (a new nested module),
 /// or the module now crosses the split threshold. The returned analysis carries the project
 /// metadata and exactly this module in `detected_modules`.
@@ -247,7 +248,15 @@ pub fn analyze_module_in_place(
         .with_context(|| format!("Не удалось получить канонический путь для {:?}", root))?;
     let rel_dir = rel_dir.trim_matches('/');
     let dir = canonical.join(rel_dir);
-    if rel_dir.is_empty() || rel_dir == "." || !dir.is_dir() || is_ignored_path(&dir, &canonical) {
+    // `src` and the monorepo parents are modules by layout, not by manifest: a new file or
+    // subdirectory can turn them into several modules, which only a full detection sees.
+    if rel_dir.is_empty()
+        || rel_dir == "."
+        || rel_dir == "src"
+        || MONOREPO_PARENT_DIRS.contains(&rel_dir)
+        || !dir.is_dir()
+        || is_ignored_path(&dir, &canonical)
+    {
         return Ok(None);
     }
     let scope_filter = ScopeFilter::build(&canonical, &opts.scope)?;
@@ -989,20 +998,7 @@ fn discover_subsystems(
     }
 
     // 2. Стандартные папки монорепозиториев и сервисов
-    for common_parent in &[
-        "crates",
-        "packages",
-        "apps",
-        "services",
-        "modules",
-        "plugins",
-        "internal",
-        "cmd",
-        "pkg",
-        "libs",
-        "infra",
-        "submodules",
-    ] {
+    for common_parent in MONOREPO_PARENT_DIRS {
         let parent_dir = root.join(common_parent);
         if parent_dir.is_dir() {
             let mut has_subdirs = false;
@@ -1543,6 +1539,23 @@ fn module_entries(
     }
     by_stem.into_values().collect()
 }
+
+/// Standard monorepo/service parent directories: their subdirectories are modules, and the
+/// parent itself becomes one only while it has direct files or no subdirectories.
+const MONOREPO_PARENT_DIRS: &[&str] = &[
+    "crates",
+    "packages",
+    "apps",
+    "services",
+    "modules",
+    "plugins",
+    "internal",
+    "cmd",
+    "pkg",
+    "libs",
+    "infra",
+    "submodules",
+];
 
 /// Build manifests that make a directory a module of its own.
 const MODULE_MANIFESTS: &[&str] = &[

@@ -150,6 +150,8 @@ pub fn prefetch_bpe_tokens(cache: &AnalyzedFileCache, paths: &[&str]) {
 
 /// BPE token count of the subsystem's current sources through `cache` (memory, then the
 /// disk metrics cache when it is valid for the file, else the file itself).
+/// Files the cache classifies as binary (extension, NUL or invalid UTF-8 in the first 8 KiB)
+/// count as `0`, unlike [`subsystem_tokens`].
 pub fn subsystem_tokens_cached(cache: &AnalyzedFileCache, sub: &SubsystemInfo) -> usize {
     token_paths(sub)
         .into_iter()

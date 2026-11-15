@@ -246,7 +246,13 @@ fn live_source_tokens(cache: &AnalyzedFileCache, index: &L0Index, ids: &[&str]) 
             .collect(),
         ..L0Index::default()
     };
-    let total = subsystem_tokens(&hydrated, ids);
+    subsystem_tokens(&hydrated, ids)
+}
+
+/// [`live_source_tokens`] through a fresh project metrics cache, saved afterwards.
+fn project_source_tokens(project: &ResolvedProject, index: &L0Index, ids: &[&str]) -> usize {
+    let cache = project.metrics_cache();
+    let total = live_source_tokens(&cache, index, ids);
     let _ = cache.save();
     total
 }
@@ -521,7 +527,6 @@ impl ContextHandler {
         } else {
             // Synthesize compact L1 card from L0 metadata
             let tokens = ci_core::analysis::subsystems::subsystem_tokens_cached(&cache, sub);
-            let _ = cache.save();
             let mut card = format!(
                 "# Subsystem: {} (L1)\n\n> **ID:** `{}`\n> **Tags:** {} | **Tokens:** ~{} BPE\n\n## Summary\n{}\n\n",
                 sub.name,
@@ -573,6 +578,8 @@ impl ContextHandler {
                 &paginated,
             );
         }
+        // One write per call: best effort, an unwritable cache dir only costs the warm start.
+        let _ = cache.save();
         Ok(paginated.rendered)
     }
 
@@ -611,7 +618,7 @@ impl ContextHandler {
         let budget = project.config.max_response_tokens;
         let source_tokens = if tel.is_active() {
             let ids: Vec<&str> = matched_subs.iter().map(|s| s.id.as_str()).collect();
-            live_source_tokens(&project.metrics_cache(), &index, &ids)
+            project_source_tokens(project, &index, &ids)
         } else {
             0
         };
@@ -1056,7 +1063,7 @@ impl ContextHandler {
                 .map(|s| s.id.as_str())
                 .filter(|id| digest.contains(&format!("(subsystem: `{id}`)")))
                 .collect();
-            let source = live_source_tokens(&project.metrics_cache(), index, &affected);
+            let source = project_source_tokens(project, index, &affected);
             record_page(tel, "context_task", source, false, cursor, &paginated);
         }
         Ok(paginated.rendered)
@@ -1133,7 +1140,7 @@ impl ContextHandler {
         let paginated = paginate_content(&out, cursor, budget, false);
         if tel.is_active() {
             let ids: Vec<&str> = hits.iter().map(|h| h.subsystem_id.as_str()).collect();
-            let source = live_source_tokens(&project.metrics_cache(), &index, &ids);
+            let source = project_source_tokens(project, &index, &ids);
             record_page(
                 tel,
                 "context_search",

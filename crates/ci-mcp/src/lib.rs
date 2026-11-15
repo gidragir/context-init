@@ -2662,6 +2662,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_stale_card_falls_back_for_layout_modules_src_and_monorepo_parent() {
+        use crate::handlers::ResolvedProject;
+        use crate::pipeline::{refresh_stale_card, RefreshKind};
+
+        let tmp = TempDirGuard::new("refresh_layout");
+        isolate_config_dirs(&tmp);
+        let write = |rel: &str, text: &str| {
+            let p = tmp.path().join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        };
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"layout\"\nversion = \"0.1.0\"\n",
+        );
+        write("src/main.rs", "fn main() {}\n");
+        write("src/lib.rs", "pub fn lib_fn() -> u32 { 1 }\n");
+        write("crates/a.rs", "pub fn a() -> u32 { 1 }\n");
+        write("crates/b.rs", "pub fn b() -> u32 { 2 }\n");
+        git(tmp.path(), &["init", "-q"]);
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "base"]);
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "kb"]);
+
+        let project = ResolvedProject::load(tmp.path().to_path_buf()).unwrap();
+        let index = project.load_l0_index().unwrap();
+        let find = |id: &str| {
+            index
+                .subsystems
+                .iter()
+                .find(|s| s.id == id)
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} missing: {:?}", index.subsystems))
+        };
+        let src = find("src");
+        let crates = find("crates");
+
+        // A third file in `src` turns it into flat modules (src_core, src_util, ...).
+        write("src/util.rs", "pub fn util() -> u32 { 3 }\n");
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "util"]);
+        assert_eq!(
+            refresh_stale_card(&project, &src).unwrap(),
+            RefreshKind::Full
+        );
+
+        // A code subdirectory without manifest under a monorepo parent becomes its own module.
+        write("crates/foo/mod.rs", "pub fn foo() -> u32 { 4 }\n");
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "foo"]);
+        assert_eq!(
+            refresh_stale_card(&project, &crates).unwrap(),
+            RefreshKind::Full
+        );
+    }
+
+    #[tokio::test]
     async fn refresh_stale_card_handles_single_crate_and_falls_back_for_split_or_mdo() {
         use crate::handlers::ResolvedProject;
         use crate::pipeline::{refresh_stale_card, RefreshKind};
