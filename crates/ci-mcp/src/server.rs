@@ -705,6 +705,16 @@ impl ContextInitServer {
     }
 }
 
+/// Usage protocol advertised in `ServerConfig.instructions`.
+const SERVER_INSTRUCTIONS: &str = "context-init: navigate the project via its L0-L2 knowledge base instead of reading files broadly. \
+Always pass \"path\": \"<repo_root>\". \
+Route: context_get_subsystems {\"path\":\"<repo_root>\"} -> \
+context_pack {\"path\":\"<repo_root>\",\"subsystem_id\":\"<id>\",\"mode\":\"toc\"} -> \
+context_pack {\"path\":\"<repo_root>\",\"subsystem_id\":\"<id>\",\"files\":[\"<file>\"],\"compress\":false}. \
+style=\"compact\" (default) is the densest. \
+If a reply ends with truncated: true, repeat the same call with \"cursor\": \"<next_cursor>\" or narrow it with files=[...]. \
+Run context_check before finishing; on drift run context_update.";
+
 #[tool_handler(router = Self::tool_router())]
 impl ServerHandler for ContextInitServer {
     fn get_info(&self) -> rmcp::model::ServerConfig {
@@ -714,6 +724,7 @@ impl ServerHandler for ContextInitServer {
                 .build(),
         );
         info.server_info.version = format!("{}+{}", ci_core::VERSION, ci_core::BUILD);
+        info.instructions = Some(SERVER_INSTRUCTIONS.to_string());
         info
     }
 

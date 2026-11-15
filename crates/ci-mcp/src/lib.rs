@@ -471,6 +471,26 @@ mod tests {
     }
 
     #[test]
+    fn server_get_info_provides_instructions() {
+        use rmcp::ServerHandler;
+        let server = ContextInitServer::new(None);
+        let text = server
+            .get_info()
+            .instructions
+            .expect("server instructions are set");
+        for needle in [
+            "context_get_subsystems",
+            "context_pack",
+            "\"path\"",
+            "cursor",
+            "toc",
+            "files",
+        ] {
+            assert!(text.contains(needle), "missing {needle}: {text}");
+        }
+    }
+
+    #[test]
     fn stale_binary_footer_follows_real_file_replacement() {
         let tmp = TempDirGuard::new("stale_real");
         let exe = tmp.path().join("fake-exe");
