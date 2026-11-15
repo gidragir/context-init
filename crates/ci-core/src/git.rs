@@ -6,6 +6,7 @@ use anyhow::{bail, Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -30,13 +31,145 @@ impl GitStatusEntry {
     }
 }
 
+/// Single entry of `git ls-tree -r -t -z HEAD` (`<mode> <type> <sha>\t<path>`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GitTreeEntry {
+    /// Octal mode (`100644`, `040000`, `160000`, ...).
+    pub mode: String,
+    /// Object type: `blob`, `tree` or `commit` (submodule gitlink).
+    pub object_type: String,
+    /// Object id.
+    pub sha: String,
+}
+
+/// Cache of `git diff --name-only <recorded>..HEAD` results keyed by the recorded commit, so
+/// cards sharing a `commit_sha` cost one `git diff` per run. `None` records a failed lookup.
+pub type DiffNameCache = BTreeMap<String, Option<Vec<String>>>;
+
 /// Batched snapshot of repository Git state for efficient multi-card staleness checking.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RepoGitSnapshot {
     /// Current `HEAD` commit SHA.
     pub head_commit: String,
     /// Working-tree and index status entries.
     pub status_entries: Vec<GitStatusEntry>,
+    /// `rel_path -> entry` from one `git ls-tree -r -t -z HEAD` (empty when not batched).
+    #[serde(default, skip)]
+    #[schemars(skip)]
+    pub tree_entries: BTreeMap<String, GitTreeEntry>,
+    /// `HEAD^{tree}` (for `directory == "."`); `None` on an unborn `HEAD` or when not batched.
+    #[serde(default, skip)]
+    #[schemars(skip)]
+    pub root_tree_sha: Option<String>,
+    /// Repository without commits (unborn `HEAD`).
+    #[serde(default, skip)]
+    #[schemars(skip)]
+    pub unborn_head: bool,
+}
+
+impl RepoGitSnapshot {
+    /// Whether the snapshot carries the batched tree (`SystemGitBackend::repo_snapshot`), so
+    /// [`Self::blob_sha_for`] can answer without one `git` process per path.
+    pub fn is_batched(&self) -> bool {
+        self.unborn_head || self.root_tree_sha.is_some()
+    }
+
+    fn status_touches(&self, norm_rel: &str) -> bool {
+        self.status_entries
+            .iter()
+            .any(|e| e.path == norm_rel || e.orig_path.as_deref() == Some(norm_rel))
+    }
+
+    /// Same result as [`GitBackend::blob_sha`] of `SystemGitBackend`, served from the batched
+    /// tree: `"."` from `root_tree_sha`, directories (and submodules) from `tree_entries`, clean
+    /// tracked files from `tree_entries`; dirty/untracked/ignored files, symlinks and files on
+    /// an unborn `HEAD` are hashed from the working tree (`git hash-object`).
+    pub fn blob_sha_for(&self, repo_root: &Path, relative_path: &Path) -> Result<Option<String>> {
+        let stripped_rel = relative_path
+            .strip_prefix(repo_root)
+            .unwrap_or(relative_path);
+        let norm_rel = normalize_path(stripped_rel);
+        let is_root = norm_rel.is_empty() || norm_rel == ".";
+        let full_path = if is_root {
+            repo_root.to_path_buf()
+        } else {
+            repo_root.join(&norm_rel)
+        };
+
+        if !full_path.exists() {
+            return Ok(None);
+        }
+
+        if full_path.is_file() {
+            let is_symlink = std::fs::symlink_metadata(&full_path)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(true);
+            let clean_tracked =
+                (!self.unborn_head && !is_symlink && !self.status_touches(&norm_rel))
+                    .then(|| self.tree_entries.get(&norm_rel))
+                    .flatten()
+                    .filter(|e| e.object_type == "blob");
+            if let Some(entry) = clean_tracked {
+                return Ok(Some(entry.sha.clone()));
+            }
+            if let Some(sha) = SystemGitBackend::new().hash_object(repo_root, &norm_rel)? {
+                return Ok(Some(sha));
+            }
+        }
+
+        if is_root {
+            return Ok(self.root_tree_sha.clone());
+        }
+        if self.unborn_head {
+            return Ok(None);
+        }
+        Ok(self.tree_entries.get(&norm_rel).map(|e| e.sha.clone()))
+    }
+
+    /// Same result as [`GitBackend::paths_tree_sha`], computed from [`Self::blob_sha_for`].
+    pub fn paths_tree_sha(&self, repo_root: &Path, paths: &[String]) -> Result<String> {
+        paths_tree_sha_with(paths, |p| self.blob_sha_for(repo_root, p))
+    }
+}
+
+/// Shared `paths_tree_sha` algorithm: `"."` for no paths, the raw SHA for one path, else a
+/// SHA-256 of the sorted `"{path}:{sha}\n"` lines.
+fn paths_tree_sha_with(
+    paths: &[String],
+    mut blob_sha: impl FnMut(&Path) -> Result<Option<String>>,
+) -> Result<String> {
+    if paths.is_empty() {
+        return blob_sha(Path::new(".")).map(|s| s.unwrap_or_default());
+    }
+    if paths.len() == 1 {
+        return blob_sha(Path::new(&paths[0])).map(|s| s.unwrap_or_default());
+    }
+    let mut parts = Vec::new();
+    for p in paths {
+        let sha = blob_sha(Path::new(p))?.unwrap_or_default();
+        parts.push(format!("{p}:{sha}"));
+    }
+    parts.sort();
+    let mut hasher = Sha256::new();
+    for item in parts {
+        hasher.update(item.as_bytes());
+        hasher.update(b"\n");
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// `paths_tree_sha` from the batched snapshot when available, else from `backend`.
+pub fn snapshot_paths_tree_sha(
+    backend: &dyn GitBackend,
+    repo_root: &Path,
+    snapshot: &RepoGitSnapshot,
+    paths: &[String],
+) -> Result<String> {
+    if snapshot.is_batched() {
+        snapshot.paths_tree_sha(repo_root, paths)
+    } else {
+        backend.paths_tree_sha(repo_root, paths)
+    }
 }
 
 /// Result of checking an OKF card's staleness against the current Git state (D2).
@@ -98,33 +231,13 @@ pub trait GitBackend: Send + Sync {
         Ok(RepoGitSnapshot {
             head_commit,
             status_entries,
+            ..RepoGitSnapshot::default()
         })
     }
 
     /// Computes the blob or tree SHA for the given subsystem paths.
     fn paths_tree_sha(&self, repo_root: &Path, paths: &[String]) -> Result<String> {
-        if paths.is_empty() {
-            return self
-                .blob_sha(repo_root, Path::new("."))
-                .map(|s| s.unwrap_or_default());
-        }
-        if paths.len() == 1 {
-            return self
-                .blob_sha(repo_root, Path::new(&paths[0]))
-                .map(|s| s.unwrap_or_default());
-        }
-        let mut parts = Vec::new();
-        for p in paths {
-            let sha = self.blob_sha(repo_root, Path::new(p))?.unwrap_or_default();
-            parts.push(format!("{p}:{sha}"));
-        }
-        parts.sort();
-        let mut hasher = Sha256::new();
-        for item in parts {
-            hasher.update(item.as_bytes());
-            hasher.update(b"\n");
-        }
-        Ok(format!("{:x}", hasher.finalize()))
+        paths_tree_sha_with(paths, |p| self.blob_sha(repo_root, p))
     }
 
     /// Current branch name (`HEAD` when detached).
@@ -348,6 +461,18 @@ impl SystemGitBackend {
                 )
             })
     }
+
+    /// `git hash-object -- <norm_rel>` of the working-tree file; `None` when git fails.
+    fn hash_object(&self, repo_root: &Path, norm_rel: &str) -> Result<Option<String>> {
+        let out = self.run_git(repo_root, &["hash-object", "--", norm_rel])?;
+        if out.status.success() {
+            let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !sha.is_empty() {
+                return Ok(Some(sha));
+            }
+        }
+        Ok(None)
+    }
 }
 
 impl GitBackend for SystemGitBackend {
@@ -427,12 +552,8 @@ impl GitBackend for SystemGitBackend {
         }
 
         if full_path.is_file() {
-            let out = self.run_git(repo_root, &["hash-object", "--", &norm_rel])?;
-            if out.status.success() {
-                let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !sha.is_empty() {
-                    return Ok(Some(sha));
-                }
+            if let Some(sha) = self.hash_object(repo_root, &norm_rel)? {
+                return Ok(Some(sha));
             }
         }
 
@@ -464,6 +585,43 @@ impl GitBackend for SystemGitBackend {
             );
         }
         Ok(parse_porcelain_z(&output.stdout))
+    }
+
+    /// One `git status`, one `git rev-parse --verify HEAD^{tree}` and one
+    /// `git ls-tree -r -t -z HEAD`; an unborn `HEAD` yields `unborn_head = true` instead of
+    /// an error (outside a repository `git status` still fails).
+    fn repo_snapshot(&self, repo_root: &Path) -> Result<RepoGitSnapshot> {
+        let status_entries = self.status_porcelain_z(repo_root)?;
+        let tree_out = self.run_git(repo_root, &["rev-parse", "--verify", "-q", "HEAD^{tree}"])?;
+        let root_tree_sha = tree_out
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&tree_out.stdout).trim().to_string())
+            .filter(|s| !s.is_empty());
+        let Some(root_tree_sha) = root_tree_sha else {
+            return Ok(RepoGitSnapshot {
+                head_commit: self.head_commit(repo_root).unwrap_or_default(),
+                status_entries,
+                unborn_head: true,
+                ..RepoGitSnapshot::default()
+            });
+        };
+        let head_commit = self.head_commit(repo_root)?;
+        let ls_out = self.run_git(repo_root, &["ls-tree", "-r", "-t", "-z", "HEAD"])?;
+        if !ls_out.status.success() {
+            bail!(
+                "git ls-tree -r -t -z HEAD failed in {:?}: {}",
+                repo_root,
+                String::from_utf8_lossy(&ls_out.stderr).trim()
+            );
+        }
+        Ok(RepoGitSnapshot {
+            head_commit,
+            status_entries,
+            tree_entries: parse_ls_tree_z(&ls_out.stdout),
+            root_tree_sha: Some(root_tree_sha),
+            unborn_head: false,
+        })
     }
 
     fn diff_name_only(
@@ -680,6 +838,42 @@ pub fn parse_nul_paths(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// Parses NUL-delimited `git ls-tree -r -t -z` records (`<mode> <type> <sha>\t<path>`) into a
+/// map keyed by the normalized path. The header is split from the path at the first `\t`
+/// only (paths may contain tabs and spaces); malformed records are skipped. Submodules come
+/// through as `commit` entries.
+pub fn parse_ls_tree_z(bytes: &[u8]) -> BTreeMap<String, GitTreeEntry> {
+    let mut entries = BTreeMap::new();
+    for record in bytes.split(|&b| b == 0).filter(|s| !s.is_empty()) {
+        let Some(tab) = record.iter().position(|&b| b == b'\t') else {
+            continue;
+        };
+        let header = String::from_utf8_lossy(&record[..tab]);
+        let mut fields = header.split(' ');
+        let (Some(mode), Some(object_type), Some(sha), None) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if mode.is_empty() || object_type.is_empty() || !is_hex_sha(sha) {
+            continue;
+        }
+        let path = normalize_path(String::from_utf8_lossy(&record[tab + 1..]).as_ref());
+        if path.is_empty() {
+            continue;
+        }
+        entries.insert(
+            path,
+            GitTreeEntry {
+                mode: mode.to_string(),
+                object_type: object_type.to_string(),
+                sha: sha.to_string(),
+            },
+        );
+    }
+    entries
+}
+
 /// Verifies whether an `OkfCard` is stale relative to the current repository state via `GitBackend` (D2).
 pub fn check_card_staleness(
     backend: &dyn GitBackend,
@@ -703,7 +897,7 @@ pub fn check_frontmatter_staleness(
             status_lookup_failed = true;
             RepoGitSnapshot {
                 head_commit: current_commit,
-                status_entries: Vec::new(),
+                ..RepoGitSnapshot::default()
             }
         }
     };
@@ -727,10 +921,36 @@ pub fn check_subsystem_staleness_with_snapshot(
     recorded_commit_sha: &str,
     recorded_blob_sha: &str,
 ) -> Result<StalenessReport> {
+    check_subsystem_staleness_cached(
+        backend,
+        repo_root,
+        snapshot,
+        paths,
+        recorded_commit_sha,
+        recorded_blob_sha,
+        &mut DiffNameCache::new(),
+    )
+}
+
+/// [`check_subsystem_staleness_with_snapshot`] sharing `git diff --name-only` results across
+/// calls through `diffs` (one lookup per distinct recorded commit).
+pub fn check_subsystem_staleness_cached(
+    backend: &dyn GitBackend,
+    repo_root: &Path,
+    snapshot: &RepoGitSnapshot,
+    paths: &[String],
+    recorded_commit_sha: &str,
+    recorded_blob_sha: &str,
+    diffs: &mut DiffNameCache,
+) -> Result<StalenessReport> {
+    if snapshot.unborn_head {
+        // Same as the per-card path, where `head_commit` fails on a repository without commits.
+        bail!("HEAD is unborn in {:?}", repo_root);
+    }
     let recorded_commit = recorded_commit_sha.trim().to_string();
     let recorded_blob = recorded_blob_sha.trim().to_string();
     let current_commit = snapshot.head_commit.clone();
-    let current_blob = backend.paths_tree_sha(repo_root, paths).ok();
+    let current_blob = snapshot_paths_tree_sha(backend, repo_root, snapshot, paths).ok();
 
     let mut changed_files = Vec::new();
     let mut commit_lookup_failed = false;
@@ -739,15 +959,20 @@ pub fn check_subsystem_staleness_with_snapshot(
     if !recorded_commit_ok {
         commit_lookup_failed = true;
     } else if !recorded_commit.is_empty() && recorded_commit != current_commit {
-        match backend.diff_name_only(repo_root, &recorded_commit, &current_commit) {
-            Ok(diff_files) => {
-                for f in diff_files {
-                    if paths.is_empty() || paths.iter().any(|dir| path_matches_directory(&f, dir)) {
-                        changed_files.push(f);
+        let diff = diffs.entry(recorded_commit.clone()).or_insert_with(|| {
+            backend
+                .diff_name_only(repo_root, &recorded_commit, &current_commit)
+                .ok()
+        });
+        match diff {
+            Some(diff_files) => {
+                for f in diff_files.iter() {
+                    if paths.is_empty() || paths.iter().any(|dir| path_matches_directory(f, dir)) {
+                        changed_files.push(f.clone());
                     }
                 }
             }
-            Err(_) => {
+            None => {
                 commit_lookup_failed = true;
             }
         }
@@ -844,19 +1069,38 @@ pub fn check_frontmatter_staleness_with_snapshot(
     snapshot: &RepoGitSnapshot,
     frontmatter: &CardFrontmatter,
 ) -> Result<StalenessReport> {
+    check_frontmatter_staleness_cached(
+        backend,
+        repo_root,
+        snapshot,
+        frontmatter,
+        &mut DiffNameCache::new(),
+    )
+}
+
+/// [`check_frontmatter_staleness_with_snapshot`] sharing `git diff --name-only` results
+/// across cards through `diffs`.
+pub fn check_frontmatter_staleness_cached(
+    backend: &dyn GitBackend,
+    repo_root: &Path,
+    snapshot: &RepoGitSnapshot,
+    frontmatter: &CardFrontmatter,
+    diffs: &mut DiffNameCache,
+) -> Result<StalenessReport> {
     let dir = normalize_path(&frontmatter.directory);
     let paths = if dir.is_empty() || dir == "." {
         Vec::new()
     } else {
         vec![dir]
     };
-    check_subsystem_staleness_with_snapshot(
+    check_subsystem_staleness_cached(
         backend,
         repo_root,
         snapshot,
         &paths,
         &frontmatter.source.commit_sha,
         &frontmatter.source.blob_sha,
+        diffs,
     )
 }
 
@@ -934,5 +1178,150 @@ mod tests {
             check_subsystem_staleness_with_snapshot(&git, root, &snap, &paths, &head, &sha)
                 .unwrap();
         assert!(!report.stale);
+    }
+
+    /// `git` isolated from the user's global/system config.
+    fn git_q(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn assert_parity(git: &SystemGitBackend, snap: &RepoGitSnapshot, root: &Path, rels: &[&str]) {
+        for rel in rels {
+            assert_eq!(
+                snap.blob_sha_for(root, Path::new(rel)).unwrap(),
+                git.blob_sha(root, Path::new(rel)).unwrap(),
+                "blob_sha parity for {rel:?}"
+            );
+        }
+        let path_sets: [&[&str]; 4] = [
+            &[],
+            &["src/a.rs"],
+            &["src/a.rs", "src/sub/b.rs"],
+            &["src", "src/new.rs"],
+        ];
+        for set in path_sets {
+            let paths: Vec<String> = set.iter().map(|s| s.to_string()).collect();
+            assert_eq!(
+                snap.paths_tree_sha(root, &paths).unwrap(),
+                git.paths_tree_sha(root, &paths).unwrap(),
+                "paths_tree_sha parity for {paths:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_tree_shas_match_blob_sha_on_dirs_root_dirty_files_and_unborn_head() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let rels = [
+            ".",
+            "src",
+            "src/sub",
+            "src/a.rs",
+            "src/sub/b.rs",
+            "src/new.rs",
+            "missing",
+            "src/missing.rs",
+        ];
+        git_q(root, &["init", "-q"]);
+        std::fs::create_dir_all(root.join("src/sub")).unwrap();
+        std::fs::write(root.join("src/a.rs"), "pub fn a() {}\n").unwrap();
+        std::fs::write(root.join("src/sub/b.rs"), "pub fn b() {}\n").unwrap();
+        let git = SystemGitBackend::new();
+
+        // Unborn HEAD: the snapshot is still built.
+        let snap = git.repo_snapshot(root).unwrap();
+        assert!(snap.unborn_head);
+        assert!(snap.root_tree_sha.is_none());
+        assert!(snap.tree_entries.is_empty());
+        assert_parity(&git, &snap, root, &rels);
+
+        git_q(root, &["add", "-A"]);
+        git_q(root, &["commit", "-q", "-m", "init"]);
+        let snap = git.repo_snapshot(root).unwrap();
+        assert!(!snap.unborn_head);
+        assert!(snap.root_tree_sha.is_some());
+        assert_eq!(
+            snap.tree_entries.get("src").map(|e| e.object_type.as_str()),
+            Some("tree")
+        );
+        assert_eq!(
+            snap.tree_entries
+                .get("src/sub/b.rs")
+                .map(|e| e.object_type.as_str()),
+            Some("blob")
+        );
+        assert_parity(&git, &snap, root, &rels);
+
+        // Unstaged edit + untracked file: single files are hashed from the working tree.
+        let committed_a = snap.tree_entries["src/a.rs"].sha.clone();
+        std::fs::write(root.join("src/a.rs"), "pub fn a() { /* dirty */ }\n").unwrap();
+        std::fs::write(root.join("src/new.rs"), "pub fn new() {}\n").unwrap();
+        let snap = git.repo_snapshot(root).unwrap();
+        let dirty_a = snap
+            .blob_sha_for(root, Path::new("src/a.rs"))
+            .unwrap()
+            .unwrap();
+        assert_ne!(dirty_a, committed_a);
+        assert_parity(&git, &snap, root, &rels);
+
+        // Deleted tracked file: gone for both.
+        std::fs::remove_file(root.join("src/sub/b.rs")).unwrap();
+        let snap = git.repo_snapshot(root).unwrap();
+        assert_parity(&git, &snap, root, &rels);
+    }
+
+    #[test]
+    fn snapshot_parses_ls_tree_with_submodules_and_tabs_safely() {
+        let s1 = "1".repeat(40);
+        let s2 = "2".repeat(40);
+        let s3 = "3".repeat(40);
+        let s4 = "4".repeat(40);
+        let s5 = "5".repeat(40);
+        let raw = format!(
+            "040000 tree {s1}\tsrc\0\
+             100644 blob {s2}\tsrc/a b.rs\0\
+             160000 commit {s3}\tvendor/sub\0\
+             100755 blob {s4}\tдок/файл с пробелом.md\0\
+             100644 blob {s5}\tweird\tname.rs\0\
+             garbage-without-tab\0\
+             100644 blob\tno-sha\0"
+        );
+        let entries = parse_ls_tree_z(raw.as_bytes());
+        assert_eq!(entries.len(), 5, "{entries:?}");
+        assert_eq!(entries["src"].object_type, "tree");
+        assert_eq!(entries["src"].sha, s1);
+        assert_eq!(entries["src/a b.rs"].sha, s2);
+        let sub = &entries["vendor/sub"];
+        assert_eq!(
+            (
+                sub.mode.as_str(),
+                sub.object_type.as_str(),
+                sub.sha.as_str()
+            ),
+            ("160000", "commit", s3.as_str())
+        );
+        assert_eq!(entries["док/файл с пробелом.md"].mode, "100755");
+        assert_eq!(entries["weird\tname.rs"].sha, s5);
     }
 }
