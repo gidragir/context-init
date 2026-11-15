@@ -42,24 +42,131 @@ pub fn compute_query_hash(parts: &[&str], full_text: &str) -> u64 {
     u64::from_be_bytes(b)
 }
 
-/// Extracts section names from `## File: \`x\`` and `=== file x ===` header lines.
+fn strip_compact_line_count(inner: &str) -> Option<&str> {
+    let without_l = inner.strip_suffix(')')?.strip_suffix('L')?;
+    let (path, digits) = without_l.rsplit_once(" (")?;
+    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn xml_unescape(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let after = &rest[amp..];
+        if let Some(tail) = after.strip_prefix("&amp;") {
+            out.push('&');
+            rest = tail;
+        } else if let Some(tail) = after.strip_prefix("&lt;") {
+            out.push('<');
+            rest = tail;
+        } else if let Some(tail) = after.strip_prefix("&gt;") {
+            out.push('>');
+            rest = tail;
+        } else if let Some(tail) = after.strip_prefix("&quot;") {
+            out.push('"');
+            rest = tail;
+        } else if let Some(tail) = after.strip_prefix("&apos;") {
+            out.push('\'');
+            rest = tail;
+        } else if let Some(tail) = after.strip_prefix("&#39;") {
+            out.push('\'');
+            rest = tail;
+        } else {
+            out.push('&');
+            rest = &after[1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn xml_escape_attr(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Extracts section names from `## File: \`x\``, `=== x (<N>L) ===`, `=== file x ===`,
+/// and XML `<file path="x">` header lines.
 pub fn extract_section_names(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|l| {
+            let trimmed = l.trim();
             if let Some(r) = l.strip_prefix("## File:") {
                 Some(r.trim().trim_matches('`').to_string())
-            } else {
-                l.strip_prefix("=== file").map(|r| {
+            } else if let Some(inner) = l.strip_prefix("=== ").and_then(|r| r.strip_suffix(" ==="))
+            {
+                let path = if let Some(p) = strip_compact_line_count(inner) {
+                    p
+                } else if let Some(r) = inner.strip_prefix("file ") {
+                    r.trim().trim_matches('`')
+                } else {
+                    inner.trim()
+                };
+                Some(path.to_string())
+            } else if let Some(r) = l.strip_prefix("=== file") {
+                Some(
                     r.trim()
                         .trim_end_matches('=')
                         .trim()
                         .trim_matches('`')
-                        .to_string()
-                })
+                        .to_string(),
+                )
+            } else {
+                trimmed
+                    .strip_prefix("<file path=\"")
+                    .and_then(|r| r.strip_suffix("\">"))
+                    .map(xml_unescape)
             }
         })
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+fn section_starts_in(tail: &str, name: &str) -> bool {
+    let compact = format!("=== {name} (");
+    let compact_plain = format!("=== {name} ===");
+    let legacy = format!("=== file {name}");
+    let md_tick = format!("## File: `{name}`");
+    let md_plain = format!("## File: {name}");
+    let xml_raw = format!("<file path=\"{name}\">");
+    let xml_esc = format!("<file path=\"{}\">", xml_escape_attr(name));
+    let toc = format!("{name} (");
+
+    tail.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with(&compact)
+            || trimmed == compact_plain
+            || trimmed
+                .strip_prefix(&legacy)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '=']))
+            || trimmed
+                .strip_prefix(&md_tick)
+                .is_some_and(|rest| rest.trim().is_empty())
+            || trimmed
+                .strip_prefix(&md_plain)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+            || trimmed.starts_with(&xml_raw)
+            || trimmed.starts_with(&xml_esc)
+            || line.starts_with(&toc)
+    })
 }
 
 const BASE64_ALPHABET: &[u8; 64] =
@@ -448,12 +555,23 @@ pub fn paginate_content_with(
     } else {
         meta.remaining_sections.to_vec()
     };
+    let section_headers: Vec<(&str, bool)> = all_sections
+        .iter()
+        .map(|n| (n.as_str(), section_starts_in(full_text, n)))
+        .collect();
     let remaining_after = |offset: usize| -> Vec<String> {
         let tail_start = find_valid_char_boundary(full_text, offset);
-        all_sections
+        let tail = &full_text[tail_start..];
+        section_headers
             .iter()
-            .filter(|n| full_text.rfind(n.as_str()).is_some_and(|p| p >= tail_start))
-            .cloned()
+            .filter(|(n, has_header)| {
+                if *has_header {
+                    section_starts_in(tail, n)
+                } else {
+                    tail.contains(*n)
+                }
+            })
+            .map(|(n, _)| (*n).to_string())
             .collect()
     };
     let make_cursor = |offset: usize| {
@@ -911,5 +1029,102 @@ mod tests {
         assert!(out.rendered.contains("page: 1/"), "{}", out.rendered);
         assert!(out.rendered.contains("remaining:"));
         assert!(out.rendered.contains("next:"));
+    }
+
+    #[test]
+    fn compact_sections_and_remaining_ignore_body_mentions() {
+        let f0_body = "let alpha = 1;\n".repeat(40);
+        let f1_body = format!(
+            "// see src/f0.rs for details\n{}",
+            "let beta = 2;\n".repeat(39)
+        );
+        let text =
+            format!("=== src/f0.rs (40L) ===\n{f0_body}\n=== src/f1.rs (40L) ===\n{f1_body}\n");
+        assert_eq!(
+            extract_section_names(&text),
+            vec!["src/f0.rs".to_string(), "src/f1.rs".to_string()]
+        );
+
+        let out = paginate_content_with(&text, None, 300, false, &PaginationMeta::default())
+            .expect("paginates");
+        assert!(out.truncated);
+        assert!(out.body.contains("=== src/f0.rs (40L) ==="), "{}", out.body);
+        assert!(
+            !out.body.contains("=== src/f1.rs (40L) ==="),
+            "{}",
+            out.body
+        );
+        let footer = &out.rendered[out.body.len()..];
+        assert!(footer.contains("remaining: src/f1.rs"), "{footer}");
+        assert!(!footer.contains("src/f0.rs"), "{footer}");
+    }
+
+    #[test]
+    fn xml_toc_and_synthetic_remaining_sections() {
+        let xml = concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+            "<context_pack generated_by=\"context-init\">\n",
+            "  <files>\n",
+            "    <file path=\"src/a&amp;b.rs\">\n<![CDATA[\n",
+        )
+        .to_string()
+            + &"let x = 1;\n".repeat(40)
+            + "\n]]>\n    </file>\n    <file path=\"src/c.rs\">\n<![CDATA[\n// see src/a&b.rs\n"
+            + &"let y = 2;\n".repeat(40)
+            + "\n]]>\n    </file>\n  </files>\n</context_pack>\n";
+        assert_eq!(
+            extract_section_names(&xml),
+            vec!["src/a&b.rs".to_string(), "src/c.rs".to_string()]
+        );
+        let out = paginate_content_with(&xml, None, 300, false, &PaginationMeta::default())
+            .expect("xml paginates");
+        let footer = &out.rendered[out.body.len()..];
+        assert!(footer.contains("remaining: src/c.rs"), "{footer}");
+        assert!(!footer.contains("src/a&b.rs"), "{footer}");
+
+        let toc = format!(
+            "[TOC] sub (2 files)\nsrc/f0.rs (40L)\n{}\nsrc/f1.rs (40L)\n  [L1-L2] // src/f0.rs\n{}",
+            "  [L1-L5] fn f0()\n".repeat(25),
+            "  [L3-L10] fn f1()\n".repeat(25),
+        );
+        let toc_sections = vec!["src/f0.rs".to_string(), "src/f1.rs".to_string()];
+        let out_toc = paginate_content_with(
+            &toc,
+            None,
+            300,
+            false,
+            &PaginationMeta {
+                query_hash: None,
+                remaining_sections: &toc_sections,
+            },
+        )
+        .expect("toc paginates");
+        let toc_footer = &out_toc.rendered[out_toc.body.len()..];
+        assert!(toc_footer.contains("remaining: src/f1.rs"), "{toc_footer}");
+        assert!(!toc_footer.contains("src/f0.rs"), "{toc_footer}");
+
+        // Synthetic payload without standard headers keeps tail.contains(n) fallback.
+        let synth = format!(
+            "{}\n{}",
+            "alpha line\n".repeat(60),
+            "beta line\n".repeat(100)
+        );
+        let synth_sections = vec!["alpha".to_string(), "beta".to_string()];
+        let out_synth = paginate_content_with(
+            &synth,
+            None,
+            300,
+            false,
+            &PaginationMeta {
+                query_hash: None,
+                remaining_sections: &synth_sections,
+            },
+        )
+        .expect("synth paginates");
+        assert!(out_synth.truncated);
+        assert!(out_synth.body.contains("alpha line"));
+        let synth_footer = &out_synth.rendered[out_synth.body.len()..];
+        assert!(synth_footer.contains("remaining: beta"), "{synth_footer}");
+        assert!(!synth_footer.contains("alpha"), "{synth_footer}");
     }
 }

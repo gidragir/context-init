@@ -4,15 +4,17 @@ use anyhow::{bail, Context, Result};
 use clap::Args;
 use colored::Colorize;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use ci_core::analysis::detector::count_tokens;
 use ci_core::analysis::pack::{
-    pack_subsystem_with, CompressOptions, PackMode, PackRequest, PackStyle,
+    pack_files_with, pack_subsystem_with, CompressOptions, PackMode, PackRequest, PackStyle,
+    PackedSubsystems,
 };
 use ci_core::analysis::subsystems::subsystem_tokens_cached;
 use ci_core::config::is_binary_available;
+use ci_core::storage::{L0Index, SubsystemInfo};
 use ci_mcp::pagination::{compute_query_hash, decode_cursor, encode_cursor, CursorData};
 
 use super::{telemetry_scope, GlobalArgs};
@@ -90,11 +92,7 @@ fn repomix_style(style: PackStyle) -> &'static str {
 
 /// Compression options for a style/mode pair, adjusted by the user flags.
 fn compress_options(style: PackStyle, mode: PackMode, args: &PackArgs) -> CompressOptions {
-    let mut opts = if style == PackStyle::Compact && mode == PackMode::Compressed {
-        CompressOptions::compact()
-    } else {
-        CompressOptions::legacy()
-    };
+    let mut opts = CompressOptions::for_style_and_mode(style, mode);
     if args.public_only {
         opts.public_only = true;
     }
@@ -341,11 +339,14 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
             if let Some(text) = first.take() {
                 return Ok(text);
             }
-            let mut r = req;
-            r.style = level.style;
-            r.mode = level.mode;
-            r.options = level.options;
-            Ok(pack_subsystem_with(&project.root, &project.knowledge_dir, &index, &r)?.content)
+            render_budget_level(
+                &project.root,
+                &project.knowledge_dir,
+                &index,
+                &req,
+                &packed,
+                level,
+            )
         })?
     } else {
         packed.content.clone()
@@ -370,6 +371,31 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
         None => std::io::stdout().write_all(content.as_bytes())?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Renders a degraded budget level reusing `packed.files` and `packed.subsystems`,
+/// falling back to `pack_subsystem_with` only when an L1 card without file lists was used.
+fn render_budget_level(
+    root: &Path,
+    knowledge_dir: &Path,
+    index: &L0Index,
+    req: &PackRequest<'_>,
+    packed: &PackedSubsystems,
+    level: &BudgetLevel,
+) -> Result<String> {
+    let mut r = *req;
+    r.style = level.style;
+    r.mode = level.mode;
+    r.options = level.options;
+    let uses_l1_fallback = packed
+        .subsystems
+        .iter()
+        .any(|s| s.files.is_empty() && s.key_files.is_empty());
+    if uses_l1_fallback || packed.files.is_empty() || packed.subsystems.is_empty() {
+        return Ok(pack_subsystem_with(root, knowledge_dir, index, &r)?.content);
+    }
+    let sub_refs: Vec<&SubsystemInfo> = packed.subsystems.iter().collect();
+    Ok(pack_files_with(root, &sub_refs, &packed.files, &r))
 }
 
 /// Ladder rungs for the requested style/mode.
@@ -526,5 +552,126 @@ mod tests {
         let err = apply_cli_budget(&[level(None)], &foreign, &["b"], &mut |_| Ok(doc.clone()))
             .unwrap_err();
         assert!(err.to_string().contains("cursor"), "{err}");
+    }
+
+    #[test]
+    fn render_budget_level_matches_pack_subsystem_with() {
+        use ci_core::storage::{SubsystemFile, SummarySource};
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp =
+            std::env::temp_dir().join(format!("ci_cli_pack_test_{}_{nanos}", std::process::id()));
+        let root = tmp.join("repo");
+        let central_kb = tmp.join("central_kb");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(central_kb.join("subsystems")).unwrap();
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn alpha() -> usize {\n    1\n}\n\npub fn beta() -> usize {\n    2\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn gamma() -> usize {\n    3\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            central_kb.join("subsystems/legacy.md"),
+            "# Legacy card\n\n## Overview\nDetails.\n",
+        )
+        .unwrap();
+
+        let index = L0Index {
+            subsystems: vec![
+                SubsystemInfo {
+                    id: "core".to_string(),
+                    name: "Core".to_string(),
+                    summary: "s".to_string(),
+                    l1_path: "subsystems/core.md".to_string(),
+                    tags: vec![],
+                    entrypoints: vec![],
+                    key_files: vec![],
+                    files: vec![
+                        SubsystemFile {
+                            path: "src/a.rs".to_string(),
+                            is_entrypoint: true,
+                            lines: 7,
+                        },
+                        SubsystemFile {
+                            path: "src/b.rs".to_string(),
+                            is_entrypoint: false,
+                            lines: 3,
+                        },
+                    ],
+                    key_symbols: vec![],
+                    test_command: None,
+                    tokens: 0,
+                    parent: None,
+                    summary_source: SummarySource::Heuristic,
+                    summary_model: None,
+                    needs_review: false,
+                },
+                SubsystemInfo {
+                    id: "legacy".to_string(),
+                    name: "Legacy".to_string(),
+                    summary: "l".to_string(),
+                    l1_path: "subsystems/legacy.md".to_string(),
+                    tags: vec![],
+                    entrypoints: vec![],
+                    key_files: vec![],
+                    files: vec![],
+                    key_symbols: vec![],
+                    test_command: None,
+                    tokens: 0,
+                    parent: None,
+                    summary_source: SummarySource::Heuristic,
+                    summary_model: None,
+                    needs_review: false,
+                },
+            ],
+            ..L0Index::default()
+        };
+
+        let files_filter = ["a.rs".to_string()];
+        let symbols_filter = ["alpha".to_string()];
+        for (sub_id, files, symbols) in [
+            ("core", &[][..], &[][..]),
+            ("core", &files_filter[..], &symbols_filter[..]),
+            ("legacy", &[][..], &[][..]),
+        ] {
+            let mut req = PackRequest::new(&root, sub_id);
+            req.files = files;
+            req.symbols = symbols;
+            req.style = PackStyle::Markdown;
+            req.mode = PackMode::Compressed;
+            req.options = CompressOptions::for_style_and_mode(req.style, req.mode);
+            let packed = pack_subsystem_with(&root, &central_kb, &index, &req).unwrap();
+
+            for (style, mode) in [
+                (PackStyle::Compact, PackMode::Compressed),
+                (PackStyle::Compact, PackMode::Toc),
+            ] {
+                let lvl = BudgetLevel {
+                    style,
+                    mode,
+                    options: CompressOptions::for_style_and_mode(style, mode),
+                    prefix: None,
+                };
+                let got =
+                    render_budget_level(&root, &central_kb, &index, &req, &packed, &lvl).unwrap();
+                let mut ref_req = req;
+                ref_req.style = lvl.style;
+                ref_req.mode = lvl.mode;
+                ref_req.options = lvl.options;
+                let expected = pack_subsystem_with(&root, &central_kb, &index, &ref_req)
+                    .unwrap()
+                    .content;
+                assert_eq!(got, expected, "sub={sub_id} style={style:?} mode={mode:?}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

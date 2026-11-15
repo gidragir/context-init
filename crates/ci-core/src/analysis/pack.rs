@@ -75,6 +75,15 @@ impl CompressOptions {
             inline_elide: true,
         }
     }
+
+    /// Default compression options for a `(PackStyle, PackMode)` pair.
+    pub fn for_style_and_mode(style: PackStyle, mode: PackMode) -> Self {
+        if style == PackStyle::Compact && mode == PackMode::Compressed {
+            Self::compact()
+        } else {
+            Self::legacy()
+        }
+    }
 }
 
 impl Default for CompressOptions {
@@ -1955,5 +1964,23 @@ mod compress_with_tests {
         let msg = format!("{err:#}");
         assert!(msg.contains("handle") && msg.contains("load"), "{msg}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn compress_options_for_style_and_mode_matches_compact_compressed_only() {
+        for style in [PackStyle::Compact, PackStyle::Markdown, PackStyle::Xml] {
+            for mode in [PackMode::Full, PackMode::Compressed, PackMode::Toc] {
+                let expected = if style == PackStyle::Compact && mode == PackMode::Compressed {
+                    CompressOptions::compact()
+                } else {
+                    CompressOptions::legacy()
+                };
+                assert_eq!(
+                    CompressOptions::for_style_and_mode(style, mode),
+                    expected,
+                    "{style:?} / {mode:?}"
+                );
+            }
+        }
     }
 }

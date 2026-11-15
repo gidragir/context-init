@@ -202,9 +202,35 @@ pub fn scan_project_with(
     }
 
     let mut scanned_files: Vec<ScannedFile> = Vec::new();
+    let cache = crate::analysis::cache::AnalyzedFileCache::new(root);
+    let file_sizes: Vec<usize> = filter
+        .files()
+        .iter()
+        .map(|rel| {
+            fs::metadata(root.join(rel))
+                .map_or(0, |m| usize::try_from(m.len()).unwrap_or(usize::MAX))
+        })
+        .collect();
+    let small_files: Vec<&str> = filter
+        .files()
+        .iter()
+        .zip(file_sizes.iter())
+        .filter(|(rel, &size)| size <= TOKENIZE_MAX_BYTES && !has_binary_extension(Path::new(rel)))
+        .map(|(rel, _)| rel.as_str())
+        .collect();
+    crate::analysis::subsystems::prefetch_bpe_tokens(&cache, &small_files);
 
-    for rel in filter.files() {
-        let (lines, tokens) = scan_file_metrics(&root.join(rel));
+    for (rel, &size) in filter.files().iter().zip(file_sizes.iter()) {
+        let (lines, tokens) = if size > TOKENIZE_MAX_BYTES {
+            scan_file_metrics(&root.join(rel))
+        } else {
+            let m = cache.metrics(rel);
+            if m.binary {
+                (0, 0)
+            } else {
+                (m.lines, cache.bpe_tokens(rel))
+            }
+        };
 
         let ext = canonical_file_ext(rel).unwrap_or_else(|| "none".to_string());
         let top_dir = rel.split_once('/').map_or(".", |(d, _)| d).to_string();
@@ -244,6 +270,7 @@ pub fn scan_project_with(
             ext,
         });
     }
+    cache.release_contents();
 
     // Identify outliers (Context Bombs)
     // Criteria: tokens >= 10_000 && (tokens >= 25_000 || (total_files >= 8 && share_percent >= 15.0))
@@ -693,5 +720,42 @@ mod tests {
         let json = serde_json::to_string(&report)
             .expect("report must serialize to valid JSON without NaN/Inf");
         assert!(!json.contains("NaN") && !json.contains("null"));
+    }
+
+    #[test]
+    fn scan_project_populates_process_memo_for_bpe_tokens() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let lib_src = "pub fn alpha() -> usize {\n    42\n}\n";
+        let util_src = "pub fn beta(x: &str) -> usize {\n    x.len()\n}\n";
+        write(root, "src/lib.rs", lib_src);
+        write(root, "src/util.rs", util_src);
+
+        // Age files past RACY_WINDOW_NANOS (2s) so memo hits are trusted without disk reads.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+        for rel in ["src/lib.rs", "src/util.rs"] {
+            fs::File::options()
+                .write(true)
+                .open(root.join(rel))
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        }
+
+        let report = scan_project(root, &ScopeConfig::default()).unwrap();
+        let expected_tokens = count_tokens(lib_src) + count_tokens(util_src);
+        assert_eq!(report.total_files, 2);
+        assert_eq!(report.total_lines, 6);
+        assert_eq!(report.total_tokens, expected_tokens);
+
+        let cache = crate::analysis::cache::AnalyzedFileCache::new(root);
+        assert_eq!(cache.lines("src/lib.rs"), 3);
+        assert_eq!(cache.bpe_tokens("src/lib.rs"), count_tokens(lib_src));
+        assert_eq!(cache.bpe_tokens("src/util.rs"), count_tokens(util_src));
+        assert!(
+            cache.read_counts().is_empty(),
+            "expected 0 disk reads after scan_project, got {:?}",
+            cache.read_counts()
+        );
     }
 }

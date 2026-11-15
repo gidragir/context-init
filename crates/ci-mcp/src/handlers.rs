@@ -628,11 +628,7 @@ impl ContextHandler {
         pack_req.symbols = req.symbols;
         pack_req.mode = mode;
         pack_req.style = style;
-        pack_req.options = if style == PackStyle::Compact && mode == PackMode::Compressed {
-            CompressOptions::compact()
-        } else {
-            CompressOptions::legacy()
-        };
+        pack_req.options = CompressOptions::for_style_and_mode(style, mode);
         // Filtering happens inside `pack_subsystem_with`, i.e. before the PACK_ALL_MAX_PAGES check.
         let PackedSubsystems {
             content: packed_content,
