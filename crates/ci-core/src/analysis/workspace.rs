@@ -503,6 +503,8 @@ mod tests {
         );
         #[cfg(unix)]
         std::os::unix::fs::symlink(&external, ws.join("repo-symlink")).unwrap();
+        #[cfg(not(unix))]
+        let _ = &external;
 
         // 3. Dot directory with repo (should be ignored)
         let dot_dir = ws.join(".hidden");
