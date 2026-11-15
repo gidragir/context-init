@@ -1,6 +1,7 @@
 //! Deterministic project analysis pipeline: detect → (optional LLM enrichment in
 //! `ci-llm`) → generate/update the L0–L2 knowledge base. Free of any LLM dependency.
 
+pub mod cache;
 pub mod detector;
 pub mod file_kind;
 pub mod generator;
@@ -61,6 +62,8 @@ mod tests {
             commands: ProjectCommands::default(),
             workspace_members: Vec::new(),
             rules: Vec::new(),
+            detected_token_map: Default::default(),
+            file_cache: None,
         }
     }
 

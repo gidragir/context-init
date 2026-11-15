@@ -2,8 +2,11 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use crate::analysis::cache::AnalyzedFileCache;
 use crate::storage::{ProjectCommands, ProjectType, SubsystemFile};
 
 /// A source module (directory) discovered by the detector.
@@ -33,6 +36,12 @@ pub struct ProjectAnalysis {
     pub commands: ProjectCommands,
     pub workspace_members: Vec<String>,
     pub rules: Vec<String>,
+    /// BPE tokens already counted during detection, by project-relative path. In-memory
+    /// only (never serialized into `L0_index.json`); consumers count missing files themselves.
+    pub detected_token_map: BTreeMap<String, usize>,
+    /// The per-run metrics cache of the detection (token/line/symbol reuse downstream,
+    /// with the disk cache when one was configured). In-memory only.
+    pub file_cache: Option<Arc<AnalyzedFileCache>>,
 }
 
 /// Result of a knowledge base drift check (`check` / `context_check`).

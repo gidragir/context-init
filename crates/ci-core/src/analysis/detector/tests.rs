@@ -1,5 +1,24 @@
 use super::*;
 
+/// [`discover_subsystems`] over the default scope of `root`.
+fn discover_in(
+    root: &Path,
+    workspace_members: &[String],
+    pt: &ProjectType,
+    deep: bool,
+    with_rtk: bool,
+    split_threshold: usize,
+) -> Vec<DiscoveredModule> {
+    let scope = ScopeFilter::build(root, &ScopeConfig::default()).unwrap();
+    let cache = AnalyzedFileCache::new(root);
+    let ctx = Ctx {
+        root,
+        scope: &scope,
+        cache: &cache,
+    };
+    discover_subsystems(&ctx, workspace_members, pt, deep, with_rtk, split_threshold)
+}
+
 #[test]
 fn test_parse_cargo_workspace() {
     let toml_sample = r#"
@@ -1332,7 +1351,7 @@ include(":features:auth", ":features:billing")
     assert!(ws_members.contains(&"features/auth".to_string()));
     assert!(ws_members.contains(&"features/billing".to_string()));
 
-    let modules = super::discover_subsystems(dir.path(), &ws_members, &ptype, false, false, 15000);
+    let modules = discover_in(dir.path(), &ws_members, &ptype, false, false, 15000);
 
     let module_dirs: Vec<String> = modules.iter().map(|m| m.dir_path.clone()).collect();
 
@@ -1442,7 +1461,7 @@ fn test_discover_subsystems_disambiguates_colliding_paths() {
     fs::write(dir.path().join("a/b_c/src/lib.rs"), "pub fn b() {}\n").unwrap();
 
     let ws_members = vec!["a/b_c".to_string(), "a_b/c".to_string()];
-    let modules = super::discover_subsystems(
+    let modules = discover_in(
         dir.path(),
         &ws_members,
         &ProjectType::Generic,
@@ -1484,7 +1503,7 @@ fn test_flat_scripts_collection_never_splits_into_single_files() {
     );
     fs::write(root.join("scripts/ci/build.sh"), ci_content).unwrap();
 
-    let modules = super::discover_subsystems(root, &[], &ProjectType::Generic, false, false, 15000);
+    let modules = discover_in(root, &[], &ProjectType::Generic, false, false, 15000);
     let ids: Vec<String> = modules.iter().map(|m| m.id.clone()).collect();
     assert!(
         ids.contains(&"scripts".to_string()),
@@ -1517,7 +1536,7 @@ fn test_root_tests_dir_does_not_promote_single_test_files() {
         );
         fs::write(root.join(format!("tests/e2e_{i}.rs")), content).unwrap();
     }
-    let modules = super::discover_subsystems(root, &[], &ProjectType::Generic, false, false, 15000);
+    let modules = discover_in(root, &[], &ProjectType::Generic, false, false, 15000);
     let ids: Vec<String> = modules.iter().map(|m| m.id.clone()).collect();
     assert_eq!(
         modules.len(),
@@ -1544,7 +1563,7 @@ fn test_container_keeps_direct_files_without_duplicating_child_modules() {
     )
     .unwrap();
 
-    let modules = super::discover_subsystems(root, &[], &ProjectType::Generic, false, false, 15000);
+    let modules = discover_in(root, &[], &ProjectType::Generic, false, false, 15000);
     let ids: Vec<String> = modules.iter().map(|m| m.id.clone()).collect();
     assert!(
         ids.contains(&"packages".to_string()),
@@ -1565,4 +1584,99 @@ fn test_container_keeps_direct_files_without_duplicating_child_modules() {
         "Container must not duplicate child files: {:?}",
         pkg_files
     );
+}
+
+#[test]
+fn detector_respects_scope_without_thread_local_across_threads() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    for krate in ["a", "b"] {
+        let src = root.join("crates").join(krate).join("src");
+        fs::create_dir_all(src.join("inner")).unwrap();
+        fs::write(src.join("lib.rs"), rust_source(krate, 60)).unwrap();
+        fs::write(src.join("extra.rs"), rust_source("extra", 60)).unwrap();
+        fs::write(src.join("inner/mod.rs"), rust_source("inner", 60)).unwrap();
+    }
+    let opts_for = |krate: &str| AnalyzeOptions {
+        deep: false,
+        with_rtk: false,
+        split_threshold_tokens: 1,
+        scope: ScopeConfig {
+            include: vec![format!("crates/{krate}/**")],
+            ..Default::default()
+        },
+    };
+    let barrier = std::sync::Barrier::new(2);
+    let (a, b) = std::thread::scope(|s| {
+        let run = |krate: &'static str| {
+            let opts = opts_for(krate);
+            let barrier = &barrier;
+            s.spawn(move || {
+                barrier.wait();
+                let mut last = analyze_project_with(root, &opts).unwrap();
+                for _ in 0..2 {
+                    last = analyze_project_with(root, &opts).unwrap();
+                }
+                last
+            })
+        };
+        let (ha, hb) = (run("a"), run("b"));
+        (ha.join().unwrap(), hb.join().unwrap())
+    });
+    for (analysis, krate) in [(&a, "a"), (&b, "b")] {
+        let prefix = format!("crates/{krate}/");
+        let files: Vec<&str> = analysis
+            .detected_modules
+            .iter()
+            .flat_map(|m| m.files.iter().map(|f| f.path.as_str()))
+            .collect();
+        assert!(!files.is_empty(), "{krate}: no files");
+        assert!(
+            files.iter().all(|f| f.starts_with(&prefix)),
+            "{krate} leaked another scope: {files:?}"
+        );
+        assert!(
+            !analysis.detected_token_map.is_empty(),
+            "{krate}: no tokens"
+        );
+        assert!(
+            analysis
+                .detected_token_map
+                .keys()
+                .all(|f| f.starts_with(&prefix)),
+            "{krate}: {:?}",
+            analysis.detected_token_map
+        );
+        for (path, tokens) in &analysis.detected_token_map {
+            let text = fs::read_to_string(root.join(path)).unwrap();
+            assert_eq!(*tokens, count_tokens(&text), "{path}");
+        }
+    }
+}
+
+#[test]
+fn analyze_with_disk_cache_matches_uncached_and_stays_outside_repo() {
+    let root = split_fixture("disk_cache");
+    let cache_dir = tempfile::tempdir().unwrap();
+    let opts = AnalyzeOptions {
+        deep: true,
+        with_rtk: false,
+        split_threshold_tokens: 500,
+        scope: Default::default(),
+    };
+    let plain = analyze_project_with(&root, &opts).unwrap();
+    let cold = analyze_project_with_cache(&root, &opts, Some(cache_dir.path())).unwrap();
+    let warm = analyze_project_with_cache(&root, &opts, Some(cache_dir.path())).unwrap();
+    let render = |a: &ProjectAnalysis| format!("{:?}", a.detected_modules);
+    assert_eq!(render(&plain), render(&cold));
+    assert_eq!(render(&cold), render(&warm));
+    assert_eq!(plain.detected_token_map, warm.detected_token_map);
+    assert!(!warm.detected_token_map.is_empty());
+    let cache_file = cache_dir
+        .path()
+        .join(crate::analysis::cache::project_hash(&root))
+        .join(crate::analysis::cache::METRICS_CACHE_FILE);
+    assert!(cache_file.is_file());
+    assert!(!root.join(".context-init").exists());
+    let _ = fs::remove_dir_all(&root);
 }

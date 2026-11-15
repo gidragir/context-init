@@ -1,16 +1,15 @@
+use crate::analysis::cache::{AnalyzedFileCache, DiskMetricsCache};
 use crate::analysis::generator::sanitize_id;
 use crate::analysis::lang::mdo;
-use crate::analysis::scan::is_likely_binary;
 use crate::analysis::scope::{is_ignored_filename, ScopeFilter};
 use crate::analysis::types::{DiscoveredModule, ProjectAnalysis};
 use crate::config::{ScopeConfig, DEFAULT_SPLIT_THRESHOLD_TOKENS};
 use crate::storage::{ProjectCommands, ProjectType, SubsystemFile};
 use anyhow::{Context, Result};
-use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub(crate) const IGNORED_DIRS: &[&str] = &[
     ".git",
@@ -85,32 +84,23 @@ pub fn estimate_tokens_fast(text: &str) -> usize {
     ascii / 3 + non_ascii / 3 + 1
 }
 
-thread_local! {
-    /// Scope of the analysis running on this thread (`.gitignore` + `[scope]`, D9).
-    static SCOPE: RefCell<Option<Rc<ScopeFilter>>> = const { RefCell::new(None) };
+/// State shared by the discovery functions of one analysis: the project root, its file
+/// scope (`.gitignore` + `[scope]`, D9) and the per-run file metrics. Passed explicitly, so
+/// concurrent analyses (and worker threads) never share scope through globals.
+struct Ctx<'a> {
+    root: &'a Path,
+    scope: &'a ScopeFilter,
+    cache: &'a AnalyzedFileCache,
 }
 
-/// Installs a [`ScopeFilter`] for the current thread and restores the previous one on drop.
-struct ScopeGuard(Option<Rc<ScopeFilter>>);
-
-impl ScopeGuard {
-    fn install(filter: ScopeFilter) -> Self {
-        ScopeGuard(SCOPE.with(|s| s.borrow_mut().replace(Rc::new(filter))))
+impl Ctx<'_> {
+    /// Project-relative `/`-separated form of `path`.
+    fn rel(&self, path: &Path) -> String {
+        path.strip_prefix(self.root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
     }
-}
-
-impl Drop for ScopeGuard {
-    fn drop(&mut self) {
-        SCOPE.with(|s| *s.borrow_mut() = self.0.take());
-    }
-}
-
-fn scope_allows_file(path: &Path) -> bool {
-    SCOPE.with(|s| s.borrow().as_ref().is_none_or(|f| f.allows_file(path)))
-}
-
-fn scope_allows_dir(path: &Path) -> bool {
-    SCOPE.with(|s| s.borrow().as_ref().is_none_or(|f| f.allows_dir(path)))
 }
 
 /// Knobs for [`analyze_project_with`].
@@ -152,6 +142,18 @@ pub fn analyze_project(root: &Path, deep: bool, with_rtk: bool) -> Result<Projec
 }
 
 pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<ProjectAnalysis> {
+    analyze_project_with_cache(root, opts, None)
+}
+
+/// [`analyze_project_with`] backed by the persistent metrics cache in `metrics_cache_dir`
+/// (normally `StoragePaths::cache_dir`; `None` keeps the cache in memory only). The cache
+/// file lives at `<metrics_cache_dir>/<project_hash>/metrics_v1.json`, outside the project;
+/// failing to write it never fails the analysis.
+pub fn analyze_project_with_cache(
+    root: &Path,
+    opts: &AnalyzeOptions,
+    metrics_cache_dir: Option<&Path>,
+) -> Result<ProjectAnalysis> {
     let AnalyzeOptions {
         deep,
         with_rtk,
@@ -161,8 +163,17 @@ pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<Projec
     let canonical = fs::canonicalize(root)
         .with_context(|| format!("Не удалось получить канонический путь для {:?}", root))?;
     let scope_filter = ScopeFilter::build(&canonical, &scope)?;
-    let scoped_files: Vec<String> = scope_filter.files().to_vec();
-    let _scope_guard = ScopeGuard::install(scope_filter);
+    let file_cache = match metrics_cache_dir {
+        Some(dir) => {
+            AnalyzedFileCache::with_disk(&canonical, DiskMetricsCache::load(dir, &canonical))
+        }
+        None => AnalyzedFileCache::new(&canonical),
+    };
+    let ctx = Ctx {
+        root: &canonical,
+        scope: &scope_filter,
+        cache: &file_cache,
+    };
 
     let default_name = canonical
         .file_name()
@@ -176,7 +187,7 @@ pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<Projec
     let commands = detect_commands(&canonical, &project_type, with_rtk);
     let root_entrypoints = detect_root_entrypoints(&canonical);
     let mut detected_modules = discover_subsystems(
-        &canonical,
+        &ctx,
         &workspace_members,
         &project_type,
         deep,
@@ -185,7 +196,7 @@ pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<Projec
     );
     // Metadata projects (`.mdo`): configuration subsystems replace the directory modules
     // whose files they fully cover (D8).
-    let (mdo_modules, covered) = mdo::discover_mdo_subsystems(&canonical, &scoped_files);
+    let (mdo_modules, covered) = mdo::discover_mdo_subsystems(&canonical, scope_filter.files());
     if !mdo_modules.is_empty() {
         detected_modules
             .retain(|m| m.files.is_empty() || !m.files.iter().all(|f| covered.contains(&f.path)));
@@ -193,8 +204,13 @@ pub fn analyze_project_with(root: &Path, opts: &AnalyzeOptions) -> Result<Projec
         detected_modules.sort_by(|a, b| a.dir_path.cmp(&b.dir_path).then_with(|| a.id.cmp(&b.id)));
     }
     let rules = generate_default_rules(&project_type, with_rtk);
+    // Best effort: an unwritable cache dir only costs the next run its warm start.
+    let _ = file_cache.save();
+    let detected_token_map = file_cache.token_map();
 
     Ok(ProjectAnalysis {
+        detected_token_map,
+        file_cache: Some(Arc::new(file_cache)),
         name,
         root_dir: canonical,
         project_type,
@@ -820,13 +836,14 @@ pub fn is_ignored_path(path: &Path, root: &Path) -> bool {
 }
 
 fn discover_subsystems(
-    root: &Path,
+    ctx: &Ctx,
     workspace_members: &[String],
     pt: &ProjectType,
     deep: bool,
     with_rtk: bool,
     split_threshold: usize,
 ) -> Vec<DiscoveredModule> {
+    let root = ctx.root;
     let mut dirs_to_inspect: Vec<PathBuf> = Vec::new();
 
     // 1. Проверяем explicit workspace members (crates/*, packages/*, apps/*, etc.)
@@ -891,7 +908,7 @@ fn discover_subsystems(
                         if !name.starts_with('.')
                             && !IGNORED_DIRS.contains(&name.as_str())
                             && !is_ignored_path(&path, root)
-                            && contains_relevant_files(&path)
+                            && contains_relevant_files(ctx, &path)
                         {
                             has_subdirs = true;
                             if !dirs_to_inspect.contains(&path) {
@@ -909,7 +926,7 @@ fn discover_subsystems(
                     }
                 }
             }
-            if (has_direct_files || (!has_subdirs && contains_relevant_files(&parent_dir)))
+            if (has_direct_files || (!has_subdirs && contains_relevant_files(ctx, &parent_dir)))
                 && !dirs_to_inspect.contains(&parent_dir)
             {
                 dirs_to_inspect.push(parent_dir);
@@ -944,7 +961,7 @@ fn discover_subsystems(
                 let path = entry.path();
                 if path.is_file() {
                     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                    if CODE_EXTENSIONS.contains(&ext) && scope_allows_file(&path) {
+                    if CODE_EXTENSIONS.contains(&ext) && ctx.scope.allows_file(&path) {
                         code_files.push(path);
                     }
                 }
@@ -952,6 +969,7 @@ fn discover_subsystems(
             code_files.sort();
 
             if code_files.len() > 2 {
+                let mut seen_symbols: HashMap<String, BTreeSet<String>> = HashMap::new();
                 for file_path in code_files {
                     let stem = file_path
                         .file_stem()
@@ -963,18 +981,15 @@ fn discover_subsystems(
                         stem.clone()
                     };
                     let target_dir_path = format!("src/{}", mod_id);
-                    let rel = file_path
-                        .strip_prefix(root)
-                        .unwrap_or(&file_path)
-                        .to_string_lossy()
-                        .replace('\\', "/");
+                    let rel = ctx.rel(&file_path);
                     let is_ep = is_file_entrypoint(&format!(
                         "{}.{}",
                         stem,
                         file_path.extension().and_then(|e| e.to_str()).unwrap_or("")
                     ));
-                    let lines = count_lines(&file_path);
-                    let symbols = extract_symbols_from_single_file(&file_path, deep);
+                    let lines = ctx.cache.lines(&rel);
+                    let symbols = ctx.cache.symbols(&rel, deep);
+                    let seen = seen_symbols.entry(target_dir_path.clone()).or_default();
                     let sub_file = SubsystemFile {
                         path: rel.clone(),
                         is_entrypoint: is_ep,
@@ -991,11 +1006,12 @@ fn discover_subsystems(
                             existing.entrypoints.push(rel);
                         }
                         for sym in symbols {
-                            if !existing.symbols.contains(&sym) {
+                            if seen.insert(sym.clone()) {
                                 existing.symbols.push(sym);
                             }
                         }
                     } else {
+                        seen.extend(symbols.iter().cloned());
                         flat_src_modules.push(DiscoveredModule {
                             id: sanitize_id(&target_dir_path),
                             parent: None,
@@ -1033,7 +1049,7 @@ fn discover_subsystems(
                         .any(|d| d.starts_with(&path) && d != &path)
                 {
                     // Проверяем, есть ли там хотя бы один полезный файл с кодом/конфигом
-                    if contains_relevant_files(&path) {
+                    if contains_relevant_files(ctx, &path) {
                         dirs_to_inspect.push(path);
                     }
                 }
@@ -1046,7 +1062,7 @@ fn discover_subsystems(
 
     let mut result = Vec::new();
     for dir in &dirs_to_inspect {
-        if is_ignored_path(dir, root) || !scope_allows_dir(dir) {
+        if is_ignored_path(dir, root) || !ctx.scope.allows_dir(dir) {
             continue;
         }
         let rel_path = dir
@@ -1066,7 +1082,7 @@ fn discover_subsystems(
             .collect();
 
         let mut all_files = Vec::new();
-        collect_files_recursive_excluding(dir, root, &mut all_files, 0, 12, &child_inspected_dirs);
+        collect_files_recursive_excluding(ctx, dir, &mut all_files, 0, 12, &child_inspected_dirs);
         if all_files.is_empty() {
             continue;
         }
@@ -1096,12 +1112,12 @@ fn discover_subsystems(
 
         let id = sanitize_id(&rel_path);
         let counts = (split_threshold > 0)
-            .then(|| tokens_if_over(root, &all_files, split_threshold))
+            .then(|| tokens_if_over(ctx, &all_files, split_threshold))
             .flatten();
         if let Some(counts) = counts {
-            let entries = module_entries(root, dir, 0, true, &counts);
+            let entries = module_entries(ctx, dir, 0, true, &counts);
             let split = SplitContext {
-                root,
+                ctx,
                 counts: &counts,
                 threshold: split_threshold,
                 deep,
@@ -1117,7 +1133,7 @@ fn discover_subsystems(
             .filter(|f| f.is_entrypoint)
             .map(|f| f.path.clone())
             .collect();
-        let symbols = extract_symbols_from_files(dir, &files, deep);
+        let symbols = extract_symbols_from_files(ctx, dir, &files, deep);
 
         result.push(DiscoveredModule {
             id,
@@ -1148,43 +1164,48 @@ fn discover_subsystems(
     result
 }
 
-fn contains_relevant_files(dir: &Path) -> bool {
-    contains_relevant_files_depth(dir, 0, 8)
+fn contains_relevant_files(ctx: &Ctx, dir: &Path) -> bool {
+    contains_relevant_files_depth(ctx, dir, 0, 8)
 }
 
-fn contains_relevant_files_depth(dir: &Path, current_depth: usize, max_depth: usize) -> bool {
+/// Whether a code or markdown file in scope lies under `dir` (at `current_depth`) within
+/// `max_depth` levels, skipping dot- and ignored directories. Answered from the sorted
+/// scope index instead of walking the file system.
+fn contains_relevant_files_depth(
+    ctx: &Ctx,
+    dir: &Path,
+    current_depth: usize,
+    max_depth: usize,
+) -> bool {
     if current_depth >= max_depth {
         return false;
     }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
+    let rel_dir = ctx.rel(dir);
+    let prefix_len = if rel_dir.is_empty() {
+        0
+    } else {
+        rel_dir.len() + 1
     };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        let path = entry.path();
-        if path.is_file() {
-            if is_ignored_filename(&name_str) {
-                continue;
-            }
-            if scope_allows_file(&path) {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    let ext_lower = ext.to_ascii_lowercase();
-                    if CODE_EXTENSIONS.contains(&ext_lower.as_str()) || ext_lower == "md" {
-                        return true;
-                    }
-                }
-            }
-        } else if path.is_dir() {
-            if name_str.starts_with('.') || IGNORED_DIRS.contains(&name_str.as_ref()) {
-                continue;
-            }
-            if contains_relevant_files_depth(&path, current_depth + 1, max_depth) {
-                return true;
-            }
+    ctx.scope.files_under(&rel_dir).iter().any(|file| {
+        let rest = &file[prefix_len..];
+        let mut segments: Vec<&str> = rest.split('/').collect();
+        let Some(name) = segments.pop() else {
+            return false;
+        };
+        if current_depth + segments.len() >= max_depth
+            || segments
+                .iter()
+                .any(|d| d.starts_with('.') || IGNORED_DIRS.contains(d))
+            || is_ignored_filename(name)
+        {
+            return false;
         }
-    }
-    false
+        Path::new(name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .is_some_and(|ext| CODE_EXTENSIONS.contains(&ext.as_str()) || ext == "md")
+    })
 }
 
 /// Keeps the 15 most representative files (entrypoints first, then larger, then by path)
@@ -1211,10 +1232,10 @@ type TokenCounts = HashMap<String, usize>;
 
 /// Token counts of `files` (relative to `root`) when their BPE size is above `threshold`.
 /// Skips tokenizing when the byte size already fits: a token spans at least one byte.
-fn tokens_if_over(root: &Path, files: &[SubsystemFile], threshold: usize) -> Option<TokenCounts> {
+fn tokens_if_over(ctx: &Ctx, files: &[SubsystemFile], threshold: usize) -> Option<TokenCounts> {
     let bytes: u64 = files
         .iter()
-        .filter_map(|f| fs::metadata(root.join(&f.path)).ok())
+        .filter_map(|f| fs::metadata(ctx.root.join(&f.path)).ok())
         .map(|m| m.len())
         .sum();
     if bytes <= threshold as u64 {
@@ -1222,17 +1243,7 @@ fn tokens_if_over(root: &Path, files: &[SubsystemFile], threshold: usize) -> Opt
     }
 
     // Fast heuristic pre-check to avoid tiktoken BPE initialization on cold start
-    let fast_estimated_tokens: usize = files
-        .iter()
-        .filter_map(|f| {
-            let full_path = root.join(&f.path);
-            if is_likely_binary(&full_path) {
-                return None;
-            }
-            fs::read_to_string(&full_path).ok()
-        })
-        .map(|text| estimate_tokens_fast(&text))
-        .sum();
+    let fast_estimated_tokens: usize = files.iter().map(|f| ctx.cache.fast_tokens(&f.path)).sum();
 
     if fast_estimated_tokens <= threshold {
         return None;
@@ -1240,10 +1251,11 @@ fn tokens_if_over(root: &Path, files: &[SubsystemFile], threshold: usize) -> Opt
 
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
     let chunk = files.len().div_ceil(workers).max(1);
+    let cache = ctx.cache;
     let counts: TokenCounts = std::thread::scope(|scope| {
         let handles: Vec<_> = files
             .chunks(chunk)
-            .map(|part| scope.spawn(move || tokenize_files(root, part)))
+            .map(|part| scope.spawn(move || tokenize_files(cache, part)))
             .collect();
         handles
             .into_iter()
@@ -1253,20 +1265,11 @@ fn tokens_if_over(root: &Path, files: &[SubsystemFile], threshold: usize) -> Opt
     (counts.values().sum::<usize>() > threshold).then_some(counts)
 }
 
-fn tokenize_files(root: &Path, files: &[SubsystemFile]) -> Vec<(String, usize)> {
+/// BPE tokens of `files` (`0` for binaries), shared through the run's metrics cache.
+fn tokenize_files(cache: &AnalyzedFileCache, files: &[SubsystemFile]) -> Vec<(String, usize)> {
     files
         .iter()
-        .map(|f| {
-            let full_path = root.join(&f.path);
-            if is_likely_binary(&full_path) {
-                return (f.path.clone(), 0);
-            }
-            static MEMO: FileMemo<usize> = FileMemo::new();
-            let tokens = MEMO
-                .get_or_compute(&full_path, false, count_tokens)
-                .unwrap_or(0);
-            (f.path.clone(), tokens)
-        })
+        .map(|f| (f.path.clone(), cache.bpe_tokens(&f.path)))
         .collect()
 }
 
@@ -1301,7 +1304,7 @@ struct ModuleEntry {
 /// `depth` is the depth of `dir` below the module root, matching the limit of
 /// `collect_files_recursive`, so a split covers the same files as the whole module.
 fn module_entries(
-    root: &Path,
+    ctx: &Ctx,
     dir: &Path,
     depth: usize,
     top: bool,
@@ -1331,12 +1334,12 @@ fn module_entries(
             let mut files = Vec::new();
             let is_dir = path.is_dir();
             if is_dir {
-                if IGNORED_DIRS.contains(&name.as_str()) || !scope_allows_dir(&path) {
+                if IGNORED_DIRS.contains(&name.as_str()) || !ctx.scope.allows_dir(&path) {
                     continue;
                 }
-                collect_files_recursive(&path, root, &mut files, depth, 12);
+                collect_files_recursive(ctx, &path, &mut files, depth, 12);
             } else if path.is_file() {
-                files.extend(subsystem_file(&path, &name, root));
+                files.extend(subsystem_file(ctx, &ctx.rel(&path), &name));
             }
             if files.is_empty() {
                 continue;
@@ -1439,7 +1442,7 @@ fn is_flat_file_collection(dir: &Path) -> bool {
 
 /// Splits an oversized module into subsystems that each fit `threshold` tokens.
 struct SplitContext<'a> {
-    root: &'a Path,
+    ctx: &'a Ctx<'a>,
     counts: &'a TokenCounts,
     threshold: usize,
     deep: bool,
@@ -1549,14 +1552,10 @@ impl SplitContext<'_> {
             match (&child.dir, child.tokens > self.threshold) {
                 (Some(child_dir), true) => {
                     let mut child_entries =
-                        module_entries(self.root, child_dir, child.dir_depth, false, self.counts);
+                        module_entries(self.ctx, child_dir, child.dir_depth, false, self.counts);
                     if let Some(file) = &child.file {
                         // `foo.rs` declares the `foo/` module: it stays with its children.
-                        let rel = file
-                            .strip_prefix(self.root)
-                            .unwrap_or(file)
-                            .to_string_lossy()
-                            .replace('\\', "/");
+                        let rel = self.ctx.rel(file);
                         let files: Vec<SubsystemFile> = child
                             .files
                             .iter()
@@ -1616,15 +1615,11 @@ impl SplitContext<'_> {
             .filter(|f| f.is_entrypoint)
             .map(|f| f.path.clone())
             .collect();
-        let symbols = extract_symbols_from_files(dir, &files, self.deep);
+        let symbols = extract_symbols_from_files(self.ctx, dir, &files, self.deep);
         DiscoveredModule {
             id: id.to_string(),
             parent: parent.map(str::to_string),
-            dir_path: path
-                .strip_prefix(self.root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/"),
+            dir_path: self.ctx.rel(path),
             name: name.to_string(),
             files,
             entrypoints,
@@ -1634,9 +1629,12 @@ impl SplitContext<'_> {
     }
 }
 
+/// Subsystem files under `current` (at `depth`, descending to `max_depth`), skipping
+/// [`IGNORED_DIRS`] and the subtrees of `excluded_dirs`. Selected from the sorted scope
+/// index, so the file system is not walked again.
 fn collect_files_recursive_excluding(
+    ctx: &Ctx,
     current: &Path,
-    root: &Path,
     acc: &mut Vec<SubsystemFile>,
     depth: usize,
     max_depth: usize,
@@ -1645,67 +1643,61 @@ fn collect_files_recursive_excluding(
     if depth > max_depth {
         return;
     }
-
-    let entries = match fs::read_dir(current) {
-        Ok(e) => e,
-        Err(_) => return,
+    let rel_dir = ctx.rel(current);
+    let prefix_len = if rel_dir.is_empty() {
+        0
+    } else {
+        rel_dir.len() + 1
     };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        if path.is_dir() {
-            if excluded_dirs.iter().any(|ex| ex == &path) {
-                continue;
-            }
-            if !IGNORED_DIRS.contains(&name.as_str()) && scope_allows_dir(&path) {
-                collect_files_recursive_excluding(
-                    &path,
-                    root,
-                    acc,
-                    depth + 1,
-                    max_depth,
-                    excluded_dirs,
-                );
-            }
-        } else if path.is_file() {
-            acc.extend(subsystem_file(&path, &name, root));
+    let excluded: Vec<String> = excluded_dirs
+        .iter()
+        .map(|ex| format!("{}/", ctx.rel(ex)))
+        .collect();
+    for file in ctx.scope.files_under(&rel_dir) {
+        let mut segments: Vec<&str> = file[prefix_len..].split('/').collect();
+        let Some(name) = segments.pop() else {
+            continue;
+        };
+        if depth + segments.len() > max_depth
+            || segments.iter().any(|d| IGNORED_DIRS.contains(d))
+            || excluded.iter().any(|ex| file.starts_with(ex.as_str()))
+        {
+            continue;
         }
+        acc.extend(subsystem_file(ctx, file, name));
     }
 }
 
 fn collect_files_recursive(
+    ctx: &Ctx,
     current: &Path,
-    root: &Path,
     acc: &mut Vec<SubsystemFile>,
     depth: usize,
     max_depth: usize,
 ) {
-    collect_files_recursive_excluding(current, root, acc, depth, max_depth, &[]);
+    collect_files_recursive_excluding(ctx, current, acc, depth, max_depth, &[]);
 }
 
-/// A code or markdown file (named `name`) as a subsystem file; `None` for other files.
-fn subsystem_file(path: &Path, name: &str, root: &Path) -> Option<SubsystemFile> {
+/// A code or markdown file in scope (project-relative `rel`, named `name`) as a subsystem
+/// file; `None` for other files.
+fn subsystem_file(ctx: &Ctx, rel: &str, name: &str) -> Option<SubsystemFile> {
     if is_ignored_filename(name) {
         return None;
     }
-    let ext = path
+    let ext = Path::new(rel)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    if !(CODE_EXTENSIONS.contains(&ext.as_str()) || ext == "md") || !scope_allows_file(path) {
+    if !(CODE_EXTENSIONS.contains(&ext.as_str()) || ext == "md")
+        || !ctx.scope.allows_file(Path::new(rel))
+    {
         return None;
     }
     Some(SubsystemFile {
-        path: path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/"),
+        path: rel.to_string(),
         is_entrypoint: is_file_entrypoint(name),
-        lines: count_lines(path),
+        lines: ctx.cache.lines(rel),
     })
 }
 
@@ -1734,20 +1726,16 @@ fn is_file_entrypoint(name: &str) -> bool {
     )
 }
 
-fn count_lines(path: &Path) -> usize {
-    fs::read_to_string(path)
-        .map(|content| content.lines().count())
-        .unwrap_or(0)
-}
-
 pub use tests_classifier::is_test_path;
 
 fn extract_symbols_from_files(
+    ctx: &Ctx,
     subsystem_dir: &Path,
     files: &[SubsystemFile],
     deep: bool,
 ) -> Vec<String> {
     let mut symbols = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     let max_files = if deep {
         files.len().min(15)
     } else {
@@ -1765,24 +1753,16 @@ fn extract_symbols_from_files(
                 .file_name()
                 .unwrap_or_else(|| std::ffi::OsStr::new("")),
         );
-        let target_path = if full_path.exists() {
-            full_path
+        // A same-named file directly in the subsystem dir wins (historical resolution);
+        // otherwise `f.path` is already project-relative.
+        let target_rel = if full_path.exists() {
+            ctx.rel(&full_path)
         } else {
-            subsystem_dir
-                .ancestors()
-                .find_map(|p| {
-                    let candidate = p.join(&f.path);
-                    if candidate.exists() {
-                        Some(candidate)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| subsystem_dir.to_path_buf())
+            f.path.clone()
         };
 
-        for s in extract_symbols_from_single_file(&target_path, deep) {
-            if !symbols.contains(&s) {
+        for s in ctx.cache.symbols(&target_rel, deep) {
+            if seen.insert(s.clone()) {
                 symbols.push(s);
             }
             if symbols.len() >= max_symbols {
@@ -1798,85 +1778,27 @@ fn extract_symbols_from_files(
     symbols
 }
 
-fn extract_symbols_from_single_file(path: &Path, deep: bool) -> Vec<String> {
-    static MEMO: FileMemo<Vec<String>> = FileMemo::new();
-    MEMO.get_or_compute(path, deep, |content| {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        if ext == "rs" {
-            let syms = extract_rust_symbols(content, deep);
-            if !syms.is_empty() {
-                return syms;
-            }
-        }
-        if let Some(adapter) = crate::analysis::lang::adapter_for_ext(&ext) {
-            let syms = adapter.extract_symbols(content);
-            if !syms.is_empty() {
-                return syms;
-            }
-        }
-        extract_multiline_symbols(content, &ext, deep)
-    })
-    .unwrap_or_default()
-}
-
-/// Per-process memo of a pure function of a file's content, keyed by path and a flag and
-/// invalidated by size or mtime changes. Keeps repeated audits (MCP `context_check`)
-/// from re-parsing and re-tokenizing an unchanged tree.
-struct FileMemo<T> {
-    entries: std::sync::OnceLock<std::sync::Mutex<FileMemoMap<T>>>,
-}
-
-type FileMemoMap<T> = HashMap<(PathBuf, bool), FileMemoEntry<T>>;
-
-struct FileMemoEntry<T> {
-    len: u64,
-    modified: Option<std::time::SystemTime>,
-    value: T,
-}
-
-impl<T: Clone> FileMemo<T> {
-    const fn new() -> Self {
-        Self {
-            entries: std::sync::OnceLock::new(),
+/// Symbols of a file at `path` (any form: only its extension matters) with `content`.
+/// Memoized per file by [`AnalyzedFileCache`].
+pub(crate) fn compute_symbols(path: &str, content: &str, deep: bool) -> Vec<String> {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if ext == "rs" {
+        let syms = extract_rust_symbols(content, deep);
+        if !syms.is_empty() {
+            return syms;
         }
     }
-
-    /// `compute(content)` for `path`, or the memoized value; `None` when unreadable.
-    fn get_or_compute(
-        &self,
-        path: &Path,
-        flag: bool,
-        compute: impl FnOnce(&str) -> T,
-    ) -> Option<T> {
-        let meta = fs::metadata(path).ok()?;
-        let (len, modified) = (meta.len(), meta.modified().ok());
-        let key = (path.to_path_buf(), flag);
-        let entries = self.entries.get_or_init(Default::default);
-        if let Ok(map) = entries.lock() {
-            if let Some(e) = map.get(&key) {
-                if e.len == len && e.modified == modified {
-                    return Some(e.value.clone());
-                }
-            }
+    if let Some(adapter) = crate::analysis::lang::adapter_for_ext(&ext) {
+        let syms = adapter.extract_symbols(content);
+        if !syms.is_empty() {
+            return syms;
         }
-        let content = fs::read_to_string(path).ok()?;
-        let value = compute(&content);
-        if let Ok(mut map) = entries.lock() {
-            map.insert(
-                key,
-                FileMemoEntry {
-                    len,
-                    modified,
-                    value: value.clone(),
-                },
-            );
-        }
-        Some(value)
     }
+    extract_multiline_symbols(content, &ext, deep)
 }
 
 pub fn extract_rust_symbols(content: &str, deep: bool) -> Vec<String> {

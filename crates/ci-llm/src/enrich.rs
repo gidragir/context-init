@@ -202,6 +202,8 @@ mod tests {
             commands: ProjectCommands::default(),
             workspace_members: Vec::new(),
             rules: Vec::new(),
+            detected_token_map: Default::default(),
+            file_cache: None,
         }
     }
 
