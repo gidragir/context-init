@@ -61,7 +61,7 @@ rtk cargo run
 | **Ci Mcp Pipeline** | Модуль-файл `crates/ci-mcp/src/pipeline.rs` | `-` | [subsystems/crates_ci-mcp_pipeline.md](subsystems/crates_ci-mcp_pipeline.md) |
 | **Ci Mcp Server** | Модуль-файл `crates/ci-mcp/src/server.rs` | `-` | [subsystems/crates_ci-mcp_server.md](subsystems/crates_ci-mcp_server.md) |
 | **Ci Mcp Tools** | Модуль-файл `crates/ci-mcp/src/tools.rs` | `-` | [subsystems/crates_ci-mcp_tools.md](subsystems/crates_ci-mcp_tools.md) |
-| **Docs** | Модуль и компоненты директории `docs` (13 файлов) | `-` | [subsystems/docs.md](subsystems/docs.md) |
+| **Docs** | Модуль и компоненты директории `docs` (15 файлов) | `-` | [subsystems/docs.md](subsystems/docs.md) |
 | **References** | Модуль и компоненты директории `references` (1 файлов) | `-` | [subsystems/references.md](subsystems/references.md) |
 | **Reports** | Модуль и компоненты директории `reports` (15 файлов) | `-` | [subsystems/reports.md](subsystems/reports.md) |
 | **Scripts** | Модуль и компоненты директории `scripts` (9 файлов) | `-` | [subsystems/scripts.md](subsystems/scripts.md) |

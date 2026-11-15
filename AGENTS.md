@@ -54,7 +54,7 @@
 - `crates_ci-mcp_pipeline` (Ci Mcp Pipeline) — Модуль-файл `crates/ci-mcp/src/pipeline.rs`
 - `crates_ci-mcp_server` (Ci Mcp Server) — Модуль-файл `crates/ci-mcp/src/server.rs`
 - `crates_ci-mcp_tools` (Ci Mcp Tools) — Модуль-файл `crates/ci-mcp/src/tools.rs`
-- `docs` (Docs) — Модуль и компоненты директории `docs` (13 файлов)
+- `docs` (Docs) — Модуль и компоненты директории `docs` (15 файлов)
 - `references` (References) — Модуль и компоненты директории `references` (1 файлов)
 - `reports` (Reports) — Модуль и компоненты директории `reports` (15 файлов)
 - `scripts` (Scripts) — Модуль и компоненты директории `scripts` (9 файлов)

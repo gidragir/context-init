@@ -3,21 +3,21 @@ directory: docs/superpowers
 source:
   kind: git
   blob_sha: 5d903f66f76d6ac5ed9f6846294c0b011903172b
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  commit_sha: a19a2bff5a5f2cd044dc83a8f9c945a4281031de
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
-  total_entries: 13
-  sampled_entries: 13
+  total_entries: 15
+  sampled_entries: 15
   unsampled_entries: 0
   pending_child_changes: 0
 ---
 
 # Подсистема: Docs (L1)
 
-Модуль и компоненты директории `docs` (13 файлов)
+Модуль и компоненты директории `docs` (15 файлов)
 
 > **Идентификатор:** `docs`
 > **Теги:** Rust (Cargo), docs
@@ -33,12 +33,14 @@ freshness:
 | `docs/superpowers/plans/2026-11-01-data-projects-production.md` | Исходный код |
 | `docs/superpowers/plans/2026-11-02-detector-robustness-and-kmp-support.md` | Исходный код |
 | `docs/superpowers/plans/2026-11-07-core-l0-compactness-splitter-and-scan-hardening.md` | Исходный код |
+| `docs/superpowers/plans/2026-11-15-context-init-pack-and-sync-improvements.md` | Исходный код |
 | `docs/superpowers/specs/2026-10-23-v0.3-step5-cli-design.md` | Исходный код |
 | `docs/superpowers/specs/2026-10-24-repo-storage-design.md` | Исходный код |
 | `docs/superpowers/specs/2026-10-29-context-init-adoption-and-integrity-design.md` | Исходный код |
 | `docs/superpowers/specs/2026-11-01-data-projects-production-design.md` | Исходный код |
 | `docs/superpowers/specs/2026-11-02-detector-robustness-and-kmp-support-design.md` | Исходный код |
 | `docs/superpowers/specs/2026-11-07-core-l0-compactness-splitter-and-scan-hardening-design.md` | Исходный код |
+| `docs/superpowers/specs/2026-11-15-context-init-pack-and-sync-improvements-design.md` | Исходный код |
 
 ## 🔑 Ключевой контракт и экспорты
 ```text

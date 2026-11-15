@@ -18,11 +18,11 @@
     "run": "rtk cargo run",
     "custom": {
       "install": "rtk mise run install",
-      "check": "rtk mise run check",
-      "audit": "rtk mise run audit",
-      "dist": "rtk mise run dist",
       "audit-sessions": "rtk mise run audit-sessions",
-      "probe-adoption": "rtk mise run probe-adoption"
+      "probe-adoption": "rtk mise run probe-adoption",
+      "dist": "rtk mise run dist",
+      "audit": "rtk mise run audit",
+      "check": "rtk mise run check"
     }
   },
   "subsystems": [
@@ -1155,7 +1155,7 @@
     {
       "id": "docs",
       "name": "Docs",
-      "summary": "Модуль и компоненты директории `docs` (13 файлов)",
+      "summary": "Модуль и компоненты директории `docs` (15 файлов)",
       "l1_path": "subsystems/docs.md",
       "tags": [
         "Rust (Cargo)",
@@ -1169,12 +1169,14 @@
         "docs/superpowers/plans/2026-11-01-data-projects-production.md",
         "docs/superpowers/plans/2026-11-02-detector-robustness-and-kmp-support.md",
         "docs/superpowers/plans/2026-11-07-core-l0-compactness-splitter-and-scan-hardening.md",
+        "docs/superpowers/plans/2026-11-15-context-init-pack-and-sync-improvements.md",
         "docs/superpowers/specs/2026-10-23-v0.3-step5-cli-design.md",
         "docs/superpowers/specs/2026-10-24-repo-storage-design.md",
         "docs/superpowers/specs/2026-10-29-context-init-adoption-and-integrity-design.md",
         "docs/superpowers/specs/2026-11-01-data-projects-production-design.md",
         "docs/superpowers/specs/2026-11-02-detector-robustness-and-kmp-support-design.md",
-        "docs/superpowers/specs/2026-11-07-core-l0-compactness-splitter-and-scan-hardening-design.md"
+        "docs/superpowers/specs/2026-11-07-core-l0-compactness-splitter-and-scan-hardening-design.md",
+        "docs/superpowers/specs/2026-11-15-context-init-pack-and-sync-improvements-design.md"
       ],
       "files": [
         {
@@ -1206,6 +1208,10 @@
           "is_entrypoint": false
         },
         {
+          "path": "docs/superpowers/plans/2026-11-15-context-init-pack-and-sync-improvements.md",
+          "is_entrypoint": false
+        },
+        {
           "path": "docs/superpowers/specs/2026-10-23-v0.3-step5-cli-design.md",
           "is_entrypoint": false
         },
@@ -1227,6 +1233,10 @@
         },
         {
           "path": "docs/superpowers/specs/2026-11-07-core-l0-compactness-splitter-and-scan-hardening-design.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "docs/superpowers/specs/2026-11-15-context-init-pack-and-sync-improvements-design.md",
           "is_entrypoint": false
         }
       ],
@@ -1274,13 +1284,13 @@
         "reports/BENCHMARK_REPORT.md",
         "reports/adoption_probe_2026-10.md",
         "reports/benchmark_latest.json",
-        "reports/subagents/ci-core_summary.md",
+        "reports/subagents/2026-11-15-context-init-improvements-research.md",
+        "reports/subagents/2026-11-15-context-init-improvements-review.md",
         "reports/subagents/ci-core_verification.md",
         "reports/subagents/ci-llm_summary.md",
         "reports/subagents/ci-llm_verification.md",
         "reports/subagents/ci-mcp_summary.md",
         "reports/subagents/ci-mcp_verification.md",
-        "reports/subagents/context-init_summary.md",
         "reports/subagents/context-init_verification.md",
         "reports/subagents/crate_split_summary.md",
         "reports/subagents/step1_workspace_summary.md",
@@ -1301,7 +1311,11 @@
           "is_entrypoint": false
         },
         {
-          "path": "reports/subagents/ci-core_summary.md",
+          "path": "reports/subagents/2026-11-15-context-init-improvements-research.md",
+          "is_entrypoint": false
+        },
+        {
+          "path": "reports/subagents/2026-11-15-context-init-improvements-review.md",
           "is_entrypoint": false
         },
         {
@@ -1325,10 +1339,6 @@
           "is_entrypoint": false
         },
         {
-          "path": "reports/subagents/context-init_summary.md",
-          "is_entrypoint": false
-        },
-        {
           "path": "reports/subagents/context-init_verification.md",
           "is_entrypoint": false
         },
@@ -1348,6 +1358,18 @@
           "path": "reports/subagents/v0.3_handoff.md",
           "is_entrypoint": false
         }
+      ],
+      "key_symbols": [
+        "pub enum PackStyle",
+        "pub enum PackMode",
+        "pub struct CompressOptions",
+        "pub strip_imports: bool, // Схлопывать import/use/package в `// [N imports omitted]` pub public_only: bool, // Оставлять только pub/export/public API pub exclude_tests: bool, // Вырезать #[cfg(...)] и test-модули/файлы (кроме ...",
+        "pub fn for_style(style: PackStyle) -> Self",
+        "pub trait LanguageAdapter: Send + Sync",
+        "pub fn pack_subsystem(...) -> Result<PackedSubsystems>",
+        "pub struct PackRequest<'a>",
+        "pub subsystem_id: &'a str, pub mode: PackMode, pub style: PackStyle, pub compress_opts: CompressOptions, /// Список относительных путей или glob-масок(...). pub files: &'a [String], /// Фильтр имён символов/методов дл...",
+        "pub files: Option<Vec<String>>, #[serde(...)] pub symbols: Option<Vec<String>>, #[serde(default)] pub mode: Option<String>, // \"full\" | \"compressed\" | \"toc\" ``` В `PackArgs` (`src/cli/pack.rs:18`): - `--files <GLOB_OR_PATH>` (repeatable / comma-separated) и алиас `--fil..."
       ],
       "summary_source": "heuristic"
     },
@@ -1634,7 +1656,7 @@
     "Публичные структуры и функции должны сопровождаться docstring (`///`)."
   ],
   "generator": {
-    "version": "0.4.0",
-    "build": "d2f0867-dirty"
+    "version": "0.5.0",
+    "build": "a19a2bf-dirty"
   }
 }

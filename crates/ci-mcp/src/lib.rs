@@ -134,10 +134,10 @@ mod tests {
 
     #[test]
     fn smoke_version_and_workspace_links() {
-        assert_eq!(VERSION, "0.4.0");
+        assert_eq!(VERSION, "0.5.0");
         assert_eq!(VERSION, ci_core::VERSION);
         assert_eq!(VERSION, ci_llm::VERSION);
-        assert!(crate_info().contains("ci-mcp/0.4.0"));
+        assert!(crate_info().contains("ci-mcp/0.5.0"));
     }
 
     #[test]
