@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// File name of the disk cache inside `<cache_dir>/<project_hash>/`.
@@ -291,7 +291,8 @@ impl DiskMetricsCache {
         };
         let json = serde_json::to_vec(&file);
         self.entries = file.entries;
-        let json = json?;
+        let mut json = json?;
+        json.push(b'\n');
         let tmp = dir.join(format!(
             ".{METRICS_CACHE_FILE}.tmp-{}-{}",
             std::process::id(),
@@ -314,11 +315,23 @@ fn process_memo() -> &'static Mutex<HashMap<PathBuf, CachedFileEntry>> {
     MEMO.get_or_init(Default::default)
 }
 
+/// Content of a file read during a run, with its SHA-256.
+#[derive(Clone)]
+struct Content {
+    bytes: Arc<[u8]>,
+    sha256_hex: Arc<str>,
+}
+
 /// Metrics of the files of one analysis run, keyed by project-relative path. `Sync`, so the
 /// parallel tokenizer threads share it.
+///
+/// File contents read during the run are kept until [`AnalyzedFileCache::release_contents`],
+/// so lines, BPE tokens and symbols requested at different stages come from one disk read.
 pub struct AnalyzedFileCache {
     root: PathBuf,
     run: Mutex<HashMap<String, CachedFileEntry>>,
+    contents: Mutex<HashMap<String, Content>>,
+    read_counts: Mutex<BTreeMap<String, usize>>,
     disk: Option<Mutex<DiskMetricsCache>>,
 }
 
@@ -344,8 +357,47 @@ impl AnalyzedFileCache {
         Self {
             root: root.to_path_buf(),
             run: Mutex::new(HashMap::new()),
+            contents: Mutex::new(HashMap::new()),
+            read_counts: Mutex::new(BTreeMap::new()),
             disk: None,
         }
+    }
+
+    /// Drops the file contents held for the run (the metrics stay).
+    pub fn release_contents(&self) {
+        if let Ok(mut contents) = self.contents.lock() {
+            contents.clear();
+            contents.shrink_to_fit();
+        }
+    }
+
+    /// How many times each file was read from disk by this cache.
+    pub fn read_counts(&self) -> BTreeMap<String, usize> {
+        self.read_counts
+            .lock()
+            .map_or_else(|_| BTreeMap::new(), |c| c.clone())
+    }
+
+    /// The run's content of `rel` (`slot` memoizes it for one `get`), reading it at most once.
+    fn content(&self, slot: &mut Option<Content>, rel: &str, abs: &Path) -> Option<Content> {
+        if slot.is_none() {
+            *slot = self.contents.lock().ok().and_then(|c| c.get(rel).cloned());
+        }
+        if slot.is_none() {
+            let bytes: Arc<[u8]> = fs::read(abs).ok()?.into();
+            if let Ok(mut counts) = self.read_counts.lock() {
+                *counts.entry(rel.to_string()).or_default() += 1;
+            }
+            let content = Content {
+                sha256_hex: sha256_hex(&bytes).into(),
+                bytes,
+            };
+            if let Ok(mut contents) = self.contents.lock() {
+                contents.insert(rel.to_string(), content.clone());
+            }
+            *slot = Some(content);
+        }
+        slot.clone()
     }
 
     /// Cache backed by a persistent [`DiskMetricsCache`]; call [`AnalyzedFileCache::save`].
@@ -437,66 +489,61 @@ impl AnalyzedFileCache {
         };
         let len = meta.len();
         let modified = meta.modified().map_or(0, nanos_since_epoch);
-        let mut bytes: Option<Vec<u8>> = None;
+        let mut content: Option<Content> = None;
         let mut entry = run_entry;
         let mut changed = false;
 
-        if entry.is_none() {
-            let memo = process_memo()
-                .lock()
-                .ok()
-                .and_then(|m| m.get(&abs).cloned());
-            let disk = self
-                .disk
-                .as_ref()
-                .and_then(|d| d.lock().ok().and_then(|mut d| d.get(rel)));
-            let mut current_sha: Option<String> = None;
-            // A disk cache missing (or holding a stale) entry is refreshed below.
-            changed |= self.disk.is_some()
-                && !disk.as_ref().is_some_and(|d| d.matches_stat(len, modified));
-            for cand in [memo, disk].into_iter().flatten() {
-                if !cand.matches_stat(len, modified) {
+        // Memo and disk may already hold the missing metrics, also for a file this run has
+        // seen: merge every candidate that is valid for the current content.
+        let memo = process_memo()
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&abs).cloned());
+        let disk = self
+            .disk
+            .as_ref()
+            .and_then(|d| d.lock().ok().and_then(|mut d| d.get(rel)));
+        // A disk cache missing (or holding a stale) entry is refreshed below.
+        changed |=
+            self.disk.is_some() && !disk.as_ref().is_some_and(|d| d.matches_stat(len, modified));
+        for cand in [memo, disk].into_iter().flatten() {
+            if !cand.matches_stat(len, modified) {
+                continue;
+            }
+            if !cand.trusted_without_read() {
+                let Some(c) = self.content(&mut content, rel, &abs) else {
+                    continue;
+                };
+                if *c.sha256_hex != cand.sha256_hex {
                     continue;
                 }
-                if !cand.trusted_without_read() {
-                    if bytes.is_none() {
-                        bytes = fs::read(&abs).ok();
-                    }
-                    let Some(b) = &bytes else { continue };
-                    let sha = current_sha.get_or_insert_with(|| sha256_hex(b));
-                    if *sha != cand.sha256_hex {
-                        continue;
-                    }
-                    changed = true;
-                }
-                match &mut entry {
-                    None => entry = Some(cand),
-                    Some(e) => e.metrics.merge_missing(cand.metrics),
-                }
+                changed = true;
+            }
+            match &mut entry {
+                None => entry = Some(cand),
+                Some(e) if e.sha256_hex == cand.sha256_hex => e.metrics.merge_missing(cand.metrics),
+                Some(_) => {}
             }
         }
 
         let satisfied = entry.as_ref().is_some_and(|e| e.metrics.satisfies(need));
         if !satisfied {
-            if bytes.is_none() {
-                bytes = fs::read(&abs).ok();
-            }
-            let Some(b) = &bytes else {
+            let Some(c) = self.content(&mut content, rel, &abs) else {
                 return FileMetrics::unreadable(rel);
             };
-            let sha = sha256_hex(b);
             let mut e = match entry.take() {
-                Some(e) if e.sha256_hex == sha => e,
+                Some(e) if e.sha256_hex == *c.sha256_hex => e,
                 _ => CachedFileEntry {
                     len,
                     modified_nanos: modified,
-                    sha256_hex: sha,
+                    sha256_hex: c.sha256_hex.to_string(),
                     ci_core_version: crate::VERSION.to_string(),
                     recorded_nanos: 0,
-                    metrics: FileMetrics::from_bytes(rel, b),
+                    metrics: FileMetrics::from_bytes(rel, &c.bytes),
                 },
             };
-            e.metrics.fill(rel, std::str::from_utf8(b).ok(), need);
+            e.metrics
+                .fill(rel, std::str::from_utf8(&c.bytes).ok(), need);
             entry = Some(e);
             changed = true;
         }
@@ -558,6 +605,7 @@ mod tests {
         );
         cache.save().unwrap();
         assert!(expected.is_file(), "cache file must be written");
+        assert!(fs::read(&expected).unwrap().ends_with(b"\n"));
         let repo_entries: Vec<_> = walkdir_files(root);
         assert_eq!(repo_entries, vec!["src/lib.rs".to_string()]);
 
@@ -616,6 +664,49 @@ mod tests {
             vec!["metrics_v1.json".to_string()],
             "atomic write leaves no tmp"
         );
+    }
+
+    #[test]
+    fn analyzed_file_cache_reads_each_file_once_per_run() {
+        let repo = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        let text = "pub fn one() {}\npub fn two() -> u8 { 2 }\n";
+        fs::write(root.join("a.rs"), text).unwrap();
+        fs::write(root.join("b.rs"), text).unwrap();
+
+        let cache =
+            AnalyzedFileCache::with_disk(root, DiskMetricsCache::load(cache_dir.path(), root));
+        for rel in ["a.rs", "b.rs"] {
+            assert_eq!(cache.lines(rel), 2);
+            assert!(cache.fast_tokens(rel) > 0);
+            assert_eq!(cache.bpe_tokens(rel), count_tokens(text));
+            assert!(!cache.symbols(rel, false).is_empty());
+            assert!(!cache.symbols(rel, true).is_empty());
+        }
+        let expected: BTreeMap<String, usize> =
+            [("a.rs".to_string(), 1), ("b.rs".to_string(), 1)].into();
+        assert_eq!(
+            cache.read_counts(),
+            expected,
+            "one disk read per file per run"
+        );
+
+        // Metrics survive releasing the contents; nothing is read again for them.
+        cache.release_contents();
+        assert_eq!(cache.bpe_tokens("a.rs"), count_tokens(text));
+        assert_eq!(cache.lines("b.rs"), 2);
+        assert_eq!(cache.read_counts(), expected);
+        cache.save().unwrap();
+
+        // A new run whose run map lacks a metric merges it from memo/disk (M-6) and, for a
+        // fresh file, verifies the hash with a single read.
+        let next =
+            AnalyzedFileCache::with_disk(root, DiskMetricsCache::load(cache_dir.path(), root));
+        assert_eq!(next.lines("a.rs"), 2);
+        assert_eq!(next.bpe_tokens("a.rs"), count_tokens(text));
+        assert!(!next.symbols("a.rs", true).is_empty());
+        assert_eq!(next.read_counts().get("a.rs"), Some(&1));
     }
 
     fn walkdir_files(root: &Path) -> Vec<String> {

@@ -1671,6 +1671,12 @@ fn analyze_with_disk_cache_matches_uncached_and_stays_outside_repo() {
     assert_eq!(render(&plain), render(&cold));
     assert_eq!(render(&cold), render(&warm));
     assert_eq!(plain.detected_token_map, warm.detected_token_map);
+    // Lines, BPE tokens and symbols of a file all come from a single read per run.
+    for analysis in [&plain, &cold, &warm] {
+        let reads = analysis.file_cache.as_ref().unwrap().read_counts();
+        assert!(!reads.is_empty());
+        assert!(reads.values().all(|&n| n == 1), "{reads:?}");
+    }
     assert!(!warm.detected_token_map.is_empty());
     let cache_file = cache_dir
         .path()

@@ -206,6 +206,7 @@ pub fn analyze_project_with_cache(
     let rules = generate_default_rules(&project_type, with_rtk);
     // Best effort: an unwritable cache dir only costs the next run its warm start.
     let _ = file_cache.save();
+    file_cache.release_contents();
     let detected_token_map = file_cache.token_map();
 
     Ok(ProjectAnalysis {
