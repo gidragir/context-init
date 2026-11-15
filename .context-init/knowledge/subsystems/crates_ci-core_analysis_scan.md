@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/analysis/scan.rs
 source:
   kind: git
-  blob_sha: 5b8c65bfa868dde1225162ff2143473b9892fd4e
-  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
+  blob_sha: d01ad46e535aad6db3b79927aa5e068941fc97fe
+  commit_sha: 3dd948d5e6098dc9ab728abc589a8352d670968f
 generated_by:
   component: context-init
   role: update

@@ -17,12 +17,12 @@
     "fmt": "rtk mise run fmt",
     "run": "rtk cargo run",
     "custom": {
-      "probe-adoption": "rtk mise run probe-adoption",
-      "audit": "rtk mise run audit",
-      "audit-sessions": "rtk mise run audit-sessions",
-      "check": "rtk mise run check",
       "install": "rtk mise run install",
-      "dist": "rtk mise run dist"
+      "check": "rtk mise run check",
+      "audit": "rtk mise run audit",
+      "dist": "rtk mise run dist",
+      "audit-sessions": "rtk mise run audit-sessions",
+      "probe-adoption": "rtk mise run probe-adoption"
     }
   },
   "subsystems": [
@@ -1635,6 +1635,6 @@
   ],
   "generator": {
     "version": "0.4.0",
-    "build": "4100258-dirty"
+    "build": "d2f0867-dirty"
   }
 }

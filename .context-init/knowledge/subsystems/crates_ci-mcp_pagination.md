@@ -2,8 +2,8 @@
 directory: crates/ci-mcp/src/pagination.rs
 source:
   kind: git
-  blob_sha: 0ae54052aed6ebaf40520faacf3a89fa67247960
-  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
+  blob_sha: 910bfdb701c2f488146c0de6bb0dd61aff0a88d8
+  commit_sha: 3dd948d5e6098dc9ab728abc589a8352d670968f
 generated_by:
   component: context-init
   role: update

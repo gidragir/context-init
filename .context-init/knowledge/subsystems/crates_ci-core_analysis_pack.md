@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/analysis/pack.rs
 source:
   kind: git
-  blob_sha: 76c992caaa2ccfafe41ac9ea9f9c283b48d1cd96
-  commit_sha: b040800534c30a22a394125140a07068cb5d9d25
+  blob_sha: f809f245c56ada00bf27c0ea4a1f827e78972427
+  commit_sha: 3dd948d5e6098dc9ab728abc589a8352d670968f
 generated_by:
   component: context-init
   role: update

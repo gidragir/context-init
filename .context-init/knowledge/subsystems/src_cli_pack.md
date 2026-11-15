@@ -2,8 +2,8 @@
 directory: src/cli/pack.rs
 source:
   kind: git
-  blob_sha: 497fc9bde36b4ddcaa9bb0ade8c213c42f7c701c
-  commit_sha: b040800534c30a22a394125140a07068cb5d9d25
+  blob_sha: b15ee7af6f96b5a3866b3584b4199faebc5de2a2
+  commit_sha: 3dd948d5e6098dc9ab728abc589a8352d670968f
 generated_by:
   component: context-init
   role: update
