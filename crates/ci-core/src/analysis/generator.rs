@@ -715,30 +715,7 @@ pub fn update_with_options(
                     pristine_ids.push(existing.id.clone());
                 }
             }
-            if existing.summary_source == SummarySource::Heuristic {
-                let generated = GENERATED_SUMMARY_PREFIXES
-                    .iter()
-                    .any(|p| existing.summary.starts_with(p));
-                if generated {
-                    existing.summary = new_sub.summary.clone();
-                } else {
-                    // Edited by hand without touching provenance: never overwrite it.
-                    existing.summary_source = SummarySource::Manual;
-                }
-            }
-            if existing.summary_source != SummarySource::Heuristic
-                && file_paths(existing) != file_paths(new_sub)
-            {
-                existing.needs_review = true;
-            }
-            // Technical fields always follow the detector.
-            existing.files = new_sub.files.clone();
-            existing.entrypoints = new_sub.entrypoints.clone();
-            existing.key_files = new_sub.key_files.clone();
-            existing.key_symbols = new_sub.key_symbols.clone();
-            existing.test_command = new_sub.test_command.clone();
-            existing.tokens = new_sub.tokens;
-            existing.parent = new_sub.parent.clone();
+            merge_detected(existing, new_sub);
             updated_count += 1;
         } else {
             new_ids.push(new_sub.id.clone());
@@ -823,6 +800,103 @@ pub fn update_with_options(
         updated: updated_count,
         pruned: pruned_count,
     })
+}
+
+/// Merges a freshly detected subsystem into its index entry: a generated heuristic summary
+/// follows the detector (a hand-edited one turns `Manual`), a non-heuristic summary is
+/// flagged `needs_review` when the file set changed, technical fields always follow the
+/// detector.
+fn merge_detected(existing: &mut SubsystemInfo, new_sub: &SubsystemInfo) {
+    if existing.summary_source == SummarySource::Heuristic {
+        let generated = GENERATED_SUMMARY_PREFIXES
+            .iter()
+            .any(|p| existing.summary.starts_with(p));
+        if generated {
+            existing.summary = new_sub.summary.clone();
+        } else {
+            // Edited by hand without touching provenance: never overwrite it.
+            existing.summary_source = SummarySource::Manual;
+        }
+    }
+    if existing.summary_source != SummarySource::Heuristic
+        && file_paths(existing) != file_paths(new_sub)
+    {
+        existing.needs_review = true;
+    }
+    existing.files = new_sub.files.clone();
+    existing.entrypoints = new_sub.entrypoints.clone();
+    existing.key_files = new_sub.key_files.clone();
+    existing.key_symbols = new_sub.key_symbols.clone();
+    existing.test_command = new_sub.test_command.clone();
+    existing.tokens = new_sub.tokens;
+    existing.parent = new_sub.parent.clone();
+}
+
+/// [`update`] restricted to one subsystem: merges `fresh` into the index entry with the same
+/// id exactly like `update` does, re-renders its L1 card when it is untouched generator
+/// output, and refreshes the project-level fields (commands, entrypoints, rules) with
+/// `cli/commands.md`, `L0_index.json` and `L0_index.md`. Other subsystems and their cards
+/// are left alone. Returns `Ok(false)`, writing nothing, when the index has no such entry
+/// (or is missing): the caller must run a full `update` instead.
+pub fn update_subsystem(
+    analysis: &ProjectAnalysis,
+    fresh: &SubsystemInfo,
+    knowledge_dir: &Path,
+) -> Result<bool> {
+    let l0_path = knowledge_dir.join("L0_index.json");
+    if !l0_path.is_file() {
+        return Ok(false);
+    }
+    let mut index = L0Index::load_from_file(&l0_path)?;
+    let Some(pos) = index.subsystems.iter().position(|s| s.id == fresh.id) else {
+        return Ok(false);
+    };
+    let old_analysis = ProjectAnalysis {
+        commands: index.commands.clone(),
+        ..analysis.clone()
+    };
+    let mut cards = CardCache::new();
+    let card = safe_join(knowledge_dir, &index.subsystems[pos].l1_path);
+    let pristine = card
+        .as_deref()
+        .is_some_and(|c| card_is_pristine(c, &index.subsystems[pos], &old_analysis, &mut cards));
+    index.commands = analysis.commands.clone();
+    index.entrypoints = analysis.root_entrypoints.clone();
+    index.core_rules = analysis.rules.clone();
+    merge_detected(&mut index.subsystems[pos], fresh);
+    normalize_index(&mut index);
+
+    let mut rendered: Vec<(std::path::PathBuf, String)> = Vec::new();
+    if let (true, Some(card)) = (pristine, card) {
+        let sub = index
+            .subsystems
+            .iter()
+            .find(|s| s.id == fresh.id)
+            .context("subsystem vanished from the index")?;
+        let mut git = GitCtx::new(&analysis.root_dir);
+        let content = card_content(&card, sub, analysis, "update", &mut git, &mut cards);
+        rendered.push((card, content));
+    }
+    rendered.push((
+        knowledge_dir.join("cli/commands.md"),
+        render_commands_markdown(analysis),
+    ));
+    let differs =
+        |path: &Path, content: &str| fs::read(path).ok().as_deref() != Some(content.as_bytes());
+    let l0_md_path = knowledge_dir.join("L0_index.md");
+    let changed = differs(&l0_path, &render_l0_json(&index)?)
+        || differs(&l0_md_path, &render_l0_markdown(&index, &index.updated_at))
+        || rendered.iter().any(|(p, c)| differs(p, c));
+    if changed {
+        index.updated_at = chrono_like_date();
+        index.generator = Some(GeneratorStamp::current());
+        for (path, content) in &rendered {
+            write_if_changed(path, content)?;
+        }
+        write_if_changed(&l0_path, &render_l0_json(&index)?)?;
+        write_if_changed(&l0_md_path, &render_l0_markdown(&index, &index.updated_at))?;
+    }
+    Ok(true)
 }
 
 /// New summary for one subsystem, merged by [`apply_summaries`].

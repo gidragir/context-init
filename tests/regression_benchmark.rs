@@ -109,6 +109,7 @@ async fn test_regression_benchmark_and_generate_report() {
         .as_nanos();
     let sandbox = std::env::temp_dir().join(format!("bench_{}_{}", std::process::id(), nanos));
     std::env::set_var("XDG_DATA_HOME", sandbox.join("xdg-data"));
+    std::env::set_var("XDG_CACHE_HOME", sandbox.join("xdg-cache"));
     println!("\n=======================================================");
     println!("RUNNING CONTEXT-INIT REGRESSION BENCHMARK SUITE");
     println!("=======================================================");

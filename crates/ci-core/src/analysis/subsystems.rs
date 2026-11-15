@@ -1,7 +1,9 @@
 //! Deterministic subsystem extraction from a [`ProjectAnalysis`] (no LLM).
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::analysis::cache::AnalyzedFileCache;
 use crate::analysis::detector;
 use crate::analysis::ProjectAnalysis;
 use crate::storage::SubsystemInfo;
@@ -93,10 +95,66 @@ pub fn build_deterministic(analysis: &ProjectAnalysis) -> Vec<SubsystemInfo> {
         }
     }
 
-    for sub in &mut subsystems {
-        sub.tokens = subsystem_tokens(&analysis.root_dir, sub);
+    match analysis.file_cache.as_deref() {
+        // Tokens counted during detection are reused; the rest is counted (in parallel)
+        // through the same cache, which also persists them for the next run.
+        Some(cache) => {
+            let paths: BTreeSet<&str> = subsystems.iter().flat_map(|s| token_paths(s)).collect();
+            prefetch_bpe_tokens(cache, &paths.into_iter().collect::<Vec<_>>());
+            for sub in &mut subsystems {
+                sub.tokens = subsystem_tokens_cached(cache, sub);
+            }
+            let _ = cache.save();
+            cache.release_contents();
+        }
+        None => {
+            for sub in &mut subsystems {
+                sub.tokens = subsystem_tokens(&analysis.root_dir, sub);
+            }
+        }
     }
     subsystems
+}
+
+/// Files whose tokens make up a subsystem's size: `files`, else `key_files`.
+fn token_paths(sub: &SubsystemInfo) -> Vec<&str> {
+    if sub.files.is_empty() {
+        sub.key_files.iter().map(String::as_str).collect()
+    } else {
+        sub.files.iter().map(|f| f.path.as_str()).collect()
+    }
+}
+
+/// Counts the BPE tokens of `paths` not yet known to `cache` on all cores.
+pub fn prefetch_bpe_tokens(cache: &AnalyzedFileCache, paths: &[&str]) {
+    let missing: Vec<&str> = paths
+        .iter()
+        .copied()
+        .filter(|p| cache.cached_bpe_tokens(p).is_none())
+        .collect();
+    if missing.len() < 2 {
+        return;
+    }
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let chunk = missing.len().div_ceil(workers).max(1);
+    std::thread::scope(|scope| {
+        for part in missing.chunks(chunk) {
+            scope.spawn(move || {
+                for p in part {
+                    cache.bpe_tokens(p);
+                }
+            });
+        }
+    });
+}
+
+/// BPE token count of the subsystem's current sources through `cache` (memory, then the
+/// disk metrics cache when it is valid for the file, else the file itself).
+pub fn subsystem_tokens_cached(cache: &AnalyzedFileCache, sub: &SubsystemInfo) -> usize {
+    token_paths(sub)
+        .into_iter()
+        .map(|p| cache.bpe_tokens(p))
+        .sum()
 }
 
 /// Prefixes of the deterministic summaries in this module (the flat-project fallback
@@ -128,12 +186,7 @@ fn module_summary(dir_path: &str, entrypoints: &[String], files: usize, is_file:
 
 /// BPE token count of the subsystem's current sources, read from disk.
 pub fn subsystem_tokens(root_dir: &Path, sub: &SubsystemInfo) -> usize {
-    let paths: Vec<&str> = if sub.files.is_empty() {
-        sub.key_files.iter().map(String::as_str).collect()
-    } else {
-        sub.files.iter().map(|f| f.path.as_str()).collect()
-    };
-    paths
+    token_paths(sub)
         .into_iter()
         .filter_map(|p| std::fs::read_to_string(root_dir.join(p)).ok())
         .map(|content| detector::count_tokens(&content))

@@ -224,6 +224,112 @@ pub fn analyze_project_with_cache(
     })
 }
 
+/// Re-detects the single top-level module at `rel_dir` (project-relative) without discovering
+/// the rest of the project: same file selection, split check, symbols and test command as
+/// [`analyze_project_with_cache`] for that directory. `child_dirs` are the project-relative
+/// directories of the other top-level modules nested in `rel_dir`; `known_files` are the
+/// module's files as last recorded.
+///
+/// Returns `Ok(None)` whenever a full detection is required instead: the project holds `.mdo`
+/// metadata (cross-directory subsystems), `rel_dir` is not an inspectable directory in scope,
+/// a build manifest outside `known_files` appeared in a subdirectory (a new nested module),
+/// or the module now crosses the split threshold. The returned analysis carries the project
+/// metadata and exactly this module in `detected_modules`.
+pub fn analyze_module_in_place(
+    root: &Path,
+    opts: &AnalyzeOptions,
+    rel_dir: &str,
+    child_dirs: &[String],
+    known_files: &[String],
+    metrics_cache_dir: Option<&Path>,
+) -> Result<Option<ProjectAnalysis>> {
+    let canonical = fs::canonicalize(root)
+        .with_context(|| format!("Не удалось получить канонический путь для {:?}", root))?;
+    let rel_dir = rel_dir.trim_matches('/');
+    let dir = canonical.join(rel_dir);
+    if rel_dir.is_empty() || rel_dir == "." || !dir.is_dir() || is_ignored_path(&dir, &canonical) {
+        return Ok(None);
+    }
+    let scope_filter = ScopeFilter::build(&canonical, &opts.scope)?;
+    if !scope_filter.allows_dir(&dir)
+        || scope_filter.files().iter().any(|f| {
+            Path::new(f)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("mdo"))
+        })
+    {
+        return Ok(None);
+    }
+    let children: Vec<String> = child_dirs
+        .iter()
+        .map(|c| format!("{}/", c.trim_matches('/')))
+        .collect();
+    let new_manifest = scope_filter
+        .files_under(rel_dir)
+        .iter()
+        .filter(|f| !children.iter().any(|c| f.starts_with(c.as_str())))
+        .filter(|f| !known_files.iter().any(|k| k == *f))
+        .any(|f| {
+            let rest = &f[rel_dir.len() + 1..];
+            rest.contains('/')
+                && rest
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| MODULE_MANIFESTS.contains(&name))
+        });
+    if new_manifest {
+        return Ok(None);
+    }
+
+    let file_cache = match metrics_cache_dir {
+        Some(cache_dir) => {
+            AnalyzedFileCache::with_disk(&canonical, DiskMetricsCache::load(cache_dir, &canonical))
+        }
+        None => AnalyzedFileCache::new(&canonical),
+    };
+    let ctx = Ctx {
+        root: &canonical,
+        scope: &scope_filter,
+        cache: &file_cache,
+    };
+    let (project_type, detected_name, workspace_members) = detect_type_and_name(&canonical);
+    let name = detected_name.unwrap_or_else(|| {
+        canonical
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("my-project")
+            .to_string()
+    });
+    let child_paths: Vec<PathBuf> = child_dirs
+        .iter()
+        .map(|c| canonical.join(c.trim_matches('/')))
+        .collect();
+    let knobs = DirKnobs {
+        pt: &project_type,
+        deep: opts.deep,
+        with_rtk: opts.with_rtk,
+        split_threshold: opts.split_threshold_tokens,
+    };
+    let DirModules::Single(module) = inspect_dir(&ctx, &dir, &child_paths, &knobs) else {
+        return Ok(None);
+    };
+    let _ = file_cache.save();
+    file_cache.release_contents();
+    Ok(Some(ProjectAnalysis {
+        detected_token_map: file_cache.token_map(),
+        file_cache: Some(Arc::new(file_cache)),
+        description: extract_description(&canonical, &name),
+        commands: detect_commands(&canonical, &project_type, opts.with_rtk),
+        root_entrypoints: detect_root_entrypoints(&canonical),
+        rules: generate_default_rules(&project_type, opts.with_rtk),
+        name,
+        root_dir: canonical,
+        project_type,
+        detected_modules: vec![module],
+        workspace_members,
+    }))
+}
+
 fn detect_type_and_name(root: &Path) -> (ProjectType, Option<String>, Vec<String>) {
     // 1. Rust
     if root.join("Cargo.toml").exists() {
@@ -1066,86 +1172,22 @@ fn discover_subsystems(
         if is_ignored_path(dir, root) || !ctx.scope.allows_dir(dir) {
             continue;
         }
-        let rel_path = dir
-            .strip_prefix(root)
-            .unwrap_or(dir)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let module_name = dir
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| rel_path.clone());
-
         let child_inspected_dirs: Vec<PathBuf> = dirs_to_inspect
             .iter()
             .filter(|other| other != &dir && other.starts_with(dir))
             .cloned()
             .collect();
-
-        let mut all_files = Vec::new();
-        collect_files_recursive_excluding(ctx, dir, &mut all_files, 0, 12, &child_inspected_dirs);
-        if all_files.is_empty() {
-            continue;
-        }
-
-        let test_cmd = match pt {
-            ProjectType::Rust => {
-                if dir.join("Cargo.toml").exists() {
-                    let pkg_name = parse_cargo_toml(&dir.join("Cargo.toml"))
-                        .0
-                        .unwrap_or_else(|| module_name.clone());
-                    let cmd = format!("cargo test -p {}", pkg_name);
-                    Some(if with_rtk { prefix_with_rtk(&cmd) } else { cmd })
-                } else {
-                    None
-                }
-            }
-            ProjectType::TypeScript => {
-                if dir.join("package.json").exists() {
-                    let cmd = format!("pnpm --filter {} test", module_name);
-                    Some(if with_rtk { prefix_with_rtk(&cmd) } else { cmd })
-                } else {
-                    None
-                }
-            }
-            _ => None,
+        let knobs = DirKnobs {
+            pt,
+            deep,
+            with_rtk,
+            split_threshold,
         };
-
-        let id = sanitize_id(&rel_path);
-        let counts = (split_threshold > 0)
-            .then(|| tokens_if_over(ctx, &all_files, split_threshold))
-            .flatten();
-        if let Some(counts) = counts {
-            let entries = module_entries(ctx, dir, 0, true, &counts);
-            let split = SplitContext {
-                ctx,
-                counts: &counts,
-                threshold: split_threshold,
-                deep,
-                test_cmd: &test_cmd,
-            };
-            split.split(dir, &id, &module_name, None, entries, &mut result);
-            continue;
+        match inspect_dir(ctx, dir, &child_inspected_dirs, &knobs) {
+            DirModules::Empty => {}
+            DirModules::Single(m) => result.push(m),
+            DirModules::Split(ms) => result.extend(ms),
         }
-
-        let files = representative_files(all_files);
-        let entrypoints: Vec<String> = files
-            .iter()
-            .filter(|f| f.is_entrypoint)
-            .map(|f| f.path.clone())
-            .collect();
-        let symbols = extract_symbols_from_files(ctx, dir, &files, deep);
-
-        result.push(DiscoveredModule {
-            id,
-            parent: None,
-            dir_path: rel_path,
-            name: module_name,
-            files,
-            entrypoints,
-            symbols,
-            test_cmd,
-        });
     }
 
     result.extend(flat_src_modules);
@@ -1163,6 +1205,111 @@ fn discover_subsystems(
     }
 
     result
+}
+
+/// Detection settings shared by every inspected directory.
+struct DirKnobs<'a> {
+    pt: &'a ProjectType,
+    deep: bool,
+    with_rtk: bool,
+    split_threshold: usize,
+}
+
+/// Modules produced by one inspected directory.
+enum DirModules {
+    /// No subsystem file in the directory.
+    Empty,
+    /// One module (the directory stays below the split threshold).
+    Single(DiscoveredModule),
+    /// The directory was split into a parent and per-module subsystems.
+    Split(Vec<DiscoveredModule>),
+}
+
+/// Builds the module(s) of one top-level inspected `dir` (absolute), skipping the subtrees of
+/// `child_inspected_dirs` (inspected on their own).
+fn inspect_dir(
+    ctx: &Ctx,
+    dir: &Path,
+    child_inspected_dirs: &[PathBuf],
+    knobs: &DirKnobs,
+) -> DirModules {
+    let DirKnobs {
+        pt,
+        deep,
+        with_rtk,
+        split_threshold,
+    } = *knobs;
+    let rel_path = ctx.rel(dir);
+    let module_name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| rel_path.clone());
+
+    let mut all_files = Vec::new();
+    collect_files_recursive_excluding(ctx, dir, &mut all_files, 0, 12, child_inspected_dirs);
+    if all_files.is_empty() {
+        return DirModules::Empty;
+    }
+
+    let test_cmd = match pt {
+        ProjectType::Rust => {
+            if dir.join("Cargo.toml").exists() {
+                let pkg_name = parse_cargo_toml(&dir.join("Cargo.toml"))
+                    .0
+                    .unwrap_or_else(|| module_name.clone());
+                let cmd = format!("cargo test -p {}", pkg_name);
+                Some(if with_rtk { prefix_with_rtk(&cmd) } else { cmd })
+            } else {
+                None
+            }
+        }
+        ProjectType::TypeScript => {
+            if dir.join("package.json").exists() {
+                let cmd = format!("pnpm --filter {} test", module_name);
+                Some(if with_rtk { prefix_with_rtk(&cmd) } else { cmd })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    let id = sanitize_id(&rel_path);
+    let counts = (split_threshold > 0)
+        .then(|| tokens_if_over(ctx, &all_files, split_threshold))
+        .flatten();
+    if let Some(counts) = counts {
+        let entries = module_entries(ctx, dir, 0, true, &counts);
+        let split = SplitContext {
+            ctx,
+            counts: &counts,
+            threshold: split_threshold,
+            deep,
+            test_cmd: &test_cmd,
+        };
+        let mut out = Vec::new();
+        split.split(dir, &id, &module_name, None, entries, &mut out);
+        return DirModules::Split(out);
+    }
+
+    let files = representative_files(all_files);
+    let entrypoints: Vec<String> = files
+        .iter()
+        .filter(|f| f.is_entrypoint)
+        .map(|f| f.path.clone())
+        .collect();
+    let symbols = extract_symbols_from_files(ctx, dir, &files, deep);
+
+    DirModules::Single(DiscoveredModule {
+        id,
+        parent: None,
+        dir_path: rel_path,
+        name: module_name,
+        files,
+        entrypoints,
+        symbols,
+        test_cmd,
+    })
 }
 
 fn contains_relevant_files(ctx: &Ctx, dir: &Path) -> bool {
@@ -1397,18 +1544,20 @@ fn module_entries(
     by_stem.into_values().collect()
 }
 
+/// Build manifests that make a directory a module of its own.
+const MODULE_MANIFESTS: &[&str] = &[
+    "Cargo.toml",
+    "package.json",
+    "pyproject.toml",
+    "go.mod",
+    "build.gradle",
+    "build.gradle.kts",
+    "pom.xml",
+    "CMakeLists.txt",
+];
+
 fn is_flat_file_collection(dir: &Path) -> bool {
-    const MANIFESTS: &[&str] = &[
-        "Cargo.toml",
-        "package.json",
-        "pyproject.toml",
-        "go.mod",
-        "build.gradle",
-        "build.gradle.kts",
-        "pom.xml",
-        "CMakeLists.txt",
-    ];
-    for m in MANIFESTS {
+    for m in MODULE_MANIFESTS {
         if dir.join(m).is_file() {
             return false;
         }

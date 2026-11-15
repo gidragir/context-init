@@ -67,6 +67,7 @@ mod tests {
             fs::create_dir_all(&path).expect("create temp test dir");
             // Keep central storage (`$XDG_DATA_HOME/context-init`) out of the real home.
             std::env::set_var("XDG_DATA_HOME", path.join(".xdg-data"));
+            std::env::set_var("XDG_CACHE_HOME", path.join(".xdg-cache"));
             Self { path }
         }
 
@@ -2604,6 +2605,178 @@ mod tests {
         assert_eq!(effs.len(), 1, "{effs:?}");
         assert!(effs[0].empty_search);
         assert_eq!(effs[0].source_tokens, 0);
+    }
+
+    #[tokio::test]
+    async fn get_subsystems_telemetry_reuses_computed_tokens_without_double_scan() {
+        let tmp = TempDirGuard::new("eff_subsystems");
+        let (server, sink) = telemetry_server(&tmp, true);
+        write_fixture(tmp.path());
+        let path = initialized_project(&server, &tmp).await;
+        let resolved = server.resolve_context(path.as_deref(), None).await;
+
+        let out = server
+            .get_subsystems(Parameters(McpGetSubsystemsParams {
+                path,
+                ..Default::default()
+            }))
+            .await
+            .expect("get_subsystems succeeds");
+        let listed: Vec<L0SubsystemSummary> = out
+            .lines()
+            .filter_map(|l| l.trim().trim_end_matches(',').strip_prefix('{').map(|_| l))
+            .map(|l| serde_json::from_str(l.trim().trim_end_matches(',')).unwrap())
+            .collect();
+        assert!(listed.len() > 1, "{out}");
+        let listed_sum: usize = listed.iter().map(|s| s.tokens).sum();
+        assert!(listed_sum > 0, "{out}");
+
+        let effs = efficiency(&sink, "context_get_subsystems");
+        assert_eq!(effs.len(), 1, "{effs:?}");
+        assert_eq!(effs[0].source_tokens, listed_sum);
+        // Same numbers as counting every source from disk.
+        let index = resolved.load_l0_index().unwrap();
+        let from_disk: usize = index
+            .subsystems
+            .iter()
+            .map(|s| ci_core::analysis::subsystems::subsystem_tokens(&resolved.root, s))
+            .sum();
+        assert_eq!(listed_sum, from_disk);
+        // Tokens persist in the metrics cache outside the repository (called on `resolved`
+        // directly: parallel tests rewrite `XDG_CACHE_HOME`).
+        ContextHandler::get_subsystems(&resolved, None, &TelemetryScope::disabled()).unwrap();
+        let cache = ci_core::analysis::cache::DiskMetricsCache::for_storage(
+            &resolved.storage_paths,
+            &resolved.root,
+        );
+        assert!(!cache.path().starts_with(&resolved.root));
+        let first = &index.subsystems[0].files[0].path;
+        assert!(
+            cache
+                .entry(first)
+                .and_then(|e| e.metrics.bpe_tokens)
+                .is_some(),
+            "{first} missing in {}",
+            cache.path().display()
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_stale_card_handles_single_crate_and_falls_back_for_split_or_mdo() {
+        use crate::handlers::ResolvedProject;
+        use crate::pipeline::{refresh_stale_card, RefreshKind};
+        use ci_core::openviking::OkfCard;
+
+        let tmp = TempDirGuard::new("refresh_local");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        git(tmp.path(), &["init", "-q"]);
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "base"]);
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "kb"]);
+
+        let project = ResolvedProject::load(tmp.path().to_path_buf()).unwrap();
+        let index = project.load_l0_index().unwrap();
+        let sub = index
+            .subsystems
+            .iter()
+            .find(|s| s.id == "src_api")
+            .cloned()
+            .expect("src_api subsystem");
+        assert!(sub.parent.is_none());
+        let card_path = project.card_file(&sub).unwrap();
+        let blob = |p: &Path| {
+            OkfCard::parse(&fs::read_to_string(p).unwrap())
+                .unwrap()
+                .frontmatter
+                .source
+                .blob_sha
+        };
+        let blob_before = blob(&card_path);
+        let engine = index
+            .subsystems
+            .iter()
+            .find(|s| s.id == "src_engine")
+            .unwrap();
+        let engine_card = project.card_file(engine).unwrap();
+        let engine_before = fs::read(&engine_card).unwrap();
+
+        fs::write(
+            tmp.path().join("src/api/mod.rs"),
+            "pub struct apiThing;\npub fn run_api() -> u32 { 1 }\npub fn run_api_v2() -> u32 { 2 }\n",
+        )
+        .unwrap();
+        git(tmp.path(), &["commit", "-q", "-am", "change api"]);
+        assert!(project.check_subsystem_staleness(&sub).0);
+
+        // Plain top-level module: refreshed in place.
+        assert_eq!(
+            refresh_stale_card(&project, &sub).unwrap(),
+            RefreshKind::Local
+        );
+        assert!(!project.check_subsystem_staleness(&sub).0);
+        assert_ne!(blob(&card_path), blob_before);
+        let card = fs::read_to_string(&card_path).unwrap();
+        assert!(card.contains("run_api_v2"), "{card}");
+        assert_eq!(fs::read(&engine_card).unwrap(), engine_before);
+        let refreshed = project.load_l0_index().unwrap();
+        let entry = refreshed
+            .subsystems
+            .iter()
+            .find(|s| s.id == "src_api")
+            .unwrap();
+        assert!(entry.key_symbols.iter().any(|s| s.contains("run_api_v2")));
+
+        // A full re-detection agrees with the point refresh byte for byte.
+        let kd = project.knowledge_dir.clone();
+        let index_after_local = fs::read(kd.join("L0_index.json")).unwrap();
+        let card_after_local = fs::read(&card_path).unwrap();
+        let analysis = crate::pipeline::detect(&project, false).unwrap();
+        let subsystems = ci_core::analysis::subsystems::build_deterministic(&analysis);
+        ci_core::analysis::generator::update(&analysis, &subsystems, &kd, None).unwrap();
+        assert_eq!(
+            fs::read(kd.join("L0_index.json")).unwrap(),
+            index_after_local
+        );
+        assert_eq!(fs::read(&card_path).unwrap(), card_after_local);
+
+        // Split-off subsystem: full update.
+        let mut child = sub.clone();
+        child.parent = Some("src_engine".to_string());
+        assert_eq!(
+            refresh_stale_card(&project, &child).unwrap(),
+            RefreshKind::Full
+        );
+
+        // `.mdo` metadata anywhere in the project: full update.
+        let mdo = tmp.path().join("src/Catalogs/Items/Items.mdo");
+        fs::create_dir_all(mdo.parent().unwrap()).unwrap();
+        fs::write(
+            &mdo,
+            "<mdclass:Catalog xmlns:mdclass=\"urn:example:mdclass\"><name>Items</name></mdclass:Catalog>",
+        )
+        .unwrap();
+        assert_eq!(
+            refresh_stale_card(&project, &sub).unwrap(),
+            RefreshKind::Full
+        );
+        fs::remove_dir_all(tmp.path().join("src/Catalogs")).unwrap();
+
+        // The module now crosses the split threshold: full update.
+        fs::write(
+            tmp.path().join(".context-init.toml"),
+            "split_threshold_tokens = 1\n",
+        )
+        .unwrap();
+        let tiny = ResolvedProject::load(tmp.path().to_path_buf()).unwrap();
+        assert_eq!(tiny.config.split_threshold_tokens, 1);
+        assert_eq!(refresh_stale_card(&tiny, &sub).unwrap(), RefreshKind::Full);
     }
 
     #[tokio::test]

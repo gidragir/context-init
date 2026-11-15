@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ci_core::analysis::cache::{AnalyzedFileCache, DiskMetricsCache};
 use ci_core::analysis::detector;
 use ci_core::analysis::generator::{self, SummaryUpdate};
 use ci_core::analysis::pack::{
@@ -216,9 +217,22 @@ impl ResolvedProject {
     }
 }
 
+impl ResolvedProject {
+    /// Token/line metrics of the project's files backed by the persistent metrics cache in
+    /// `StoragePaths::cache_dir` (outside the repository): unchanged files are not re-read.
+    /// Call [`AnalyzedFileCache::save`] once done.
+    pub fn metrics_cache(&self) -> AnalyzedFileCache {
+        AnalyzedFileCache::with_disk(
+            &self.root,
+            DiskMetricsCache::for_storage(&self.storage_paths, &self.root),
+        )
+    }
+}
+
 /// Live source tokens of the listed subsystems. `SubsystemInfo::tokens` is not persisted, so it
-/// is filled from the current sources for these ids only, then summed by the storage helper.
-fn live_source_tokens(project: &ResolvedProject, index: &L0Index, ids: &[&str]) -> usize {
+/// is filled from the current sources (through `cache`) for these ids only, then summed by the
+/// storage helper.
+fn live_source_tokens(cache: &AnalyzedFileCache, index: &L0Index, ids: &[&str]) -> usize {
     let hydrated = L0Index {
         subsystems: index
             .subsystems
@@ -226,13 +240,15 @@ fn live_source_tokens(project: &ResolvedProject, index: &L0Index, ids: &[&str]) 
             .filter(|s| ids.contains(&s.id.as_str()))
             .cloned()
             .map(|mut s| {
-                s.tokens = ci_core::analysis::subsystems::subsystem_tokens(&project.root, &s);
+                s.tokens = ci_core::analysis::subsystems::subsystem_tokens_cached(cache, &s);
                 s
             })
             .collect(),
         ..L0Index::default()
     };
-    subsystem_tokens(&hydrated, ids)
+    let total = subsystem_tokens(&hydrated, ids);
+    let _ = cache.save();
+    total
 }
 
 /// Records the efficiency signal of one paginated reply (no-op when telemetry is inactive).
@@ -379,6 +395,7 @@ impl ContextHandler {
         let index = project.load_l0_index()?;
         let git = SystemGitBackend::new();
         let snapshot = git.repo_snapshot(&project.root).ok();
+        let cache = project.metrics_cache();
         let mut any_stale = false;
         let mut summaries = Vec::with_capacity(index.subsystems.len());
         for sub in &index.subsystems {
@@ -390,7 +407,7 @@ impl ContextHandler {
             if is_stale {
                 any_stale = true;
             }
-            let tokens = ci_core::analysis::subsystems::subsystem_tokens(&project.root, sub);
+            let tokens = ci_core::analysis::subsystems::subsystem_tokens_cached(&cache, sub);
             summaries.push(L0SubsystemSummary {
                 id: sub.id.clone(),
                 name: sub.name.clone(),
@@ -403,6 +420,8 @@ impl ContextHandler {
                 needs_review: sub.needs_review,
             });
         }
+        // Best effort: an unwritable cache dir only costs the next call its warm start.
+        let _ = cache.save();
 
         let json_text = if summaries.is_empty() {
             "[]".to_string()
@@ -427,8 +446,8 @@ impl ContextHandler {
             any_stale,
         );
         if tel.is_active() {
-            let ids: Vec<&str> = index.subsystems.iter().map(|s| s.id.as_str()).collect();
-            let source = live_source_tokens(project, &index, &ids);
+            // The listing already holds every subsystem's live tokens.
+            let source: usize = summaries.iter().map(|s| s.tokens).sum();
             record_page(
                 tel,
                 "context_get_subsystems",
@@ -485,10 +504,12 @@ impl ContextHandler {
         let (mut stale, mut diff_stat) = project.check_subsystem_staleness(sub);
         if stale && project.config.auto_refresh {
             // Lazy refresh (D2): re-stamp the stale card; a failure leaves it reported as stale.
+            // A successful refresh stamps the current sources, so staleness is not re-checked.
             if pipeline::refresh_stale_card(project, sub).is_ok() {
-                (stale, diff_stat) = project.check_subsystem_staleness(sub);
+                (stale, diff_stat) = (false, None);
             }
         }
+        let cache = project.metrics_cache();
 
         // Try reading markdown card file (provenance frontmatter is for tooling, not for agents)
         let mut card_content = if let Some(card) = project.card_file(sub) {
@@ -499,7 +520,8 @@ impl ContextHandler {
             }
         } else {
             // Synthesize compact L1 card from L0 metadata
-            let tokens = ci_core::analysis::subsystems::subsystem_tokens(&project.root, sub);
+            let tokens = ci_core::analysis::subsystems::subsystem_tokens_cached(&cache, sub);
+            let _ = cache.save();
             let mut card = format!(
                 "# Subsystem: {} (L1)\n\n> **ID:** `{}`\n> **Tags:** {} | **Tokens:** ~{} BPE\n\n## Summary\n{}\n\n",
                 sub.name,
@@ -541,7 +563,7 @@ impl ContextHandler {
             stale,
         );
         if tel.is_active() {
-            let source = live_source_tokens(project, &index, &[sub.id.as_str()]);
+            let source = live_source_tokens(&cache, &index, &[sub.id.as_str()]);
             record_page(
                 tel,
                 "context_get_subsystem",
@@ -589,7 +611,7 @@ impl ContextHandler {
         let budget = project.config.max_response_tokens;
         let source_tokens = if tel.is_active() {
             let ids: Vec<&str> = matched_subs.iter().map(|s| s.id.as_str()).collect();
-            live_source_tokens(project, &index, &ids)
+            live_source_tokens(&project.metrics_cache(), &index, &ids)
         } else {
             0
         };
@@ -885,7 +907,7 @@ impl ContextHandler {
         if l0_json.is_file() {
             let index = L0Index::load_from_file(&l0_json).ok();
             let subsystems = index.as_ref().map_or(0, |i| i.subsystems.len());
-            if let Ok(analysis) = detector::analyze_project_with(
+            if let Ok(analysis) = detector::analyze_project_with_cache(
                 p,
                 &detector::AnalyzeOptions {
                     deep: false,
@@ -893,6 +915,7 @@ impl ContextHandler {
                     split_threshold_tokens: 15_000,
                     scope: Default::default(),
                 },
+                Some(&StoragePaths::resolve(Some(p)).cache_dir),
             ) {
                 if let Ok(audit_report) = generator::audit(&analysis, &kd) {
                     let has_drift = !audit_report.missing_in_fs.is_empty()
@@ -1033,7 +1056,7 @@ impl ContextHandler {
                 .map(|s| s.id.as_str())
                 .filter(|id| digest.contains(&format!("(subsystem: `{id}`)")))
                 .collect();
-            let source = live_source_tokens(project, index, &affected);
+            let source = live_source_tokens(&project.metrics_cache(), index, &affected);
             record_page(tel, "context_task", source, false, cursor, &paginated);
         }
         Ok(paginated.rendered)
@@ -1110,7 +1133,7 @@ impl ContextHandler {
         let paginated = paginate_content(&out, cursor, budget, false);
         if tel.is_active() {
             let ids: Vec<&str> = hits.iter().map(|h| h.subsystem_id.as_str()).collect();
-            let source = live_source_tokens(project, &index, &ids);
+            let source = live_source_tokens(&project.metrics_cache(), &index, &ids);
             record_page(
                 tel,
                 "context_search",

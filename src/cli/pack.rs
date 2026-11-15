@@ -11,7 +11,7 @@ use ci_core::analysis::detector::count_tokens;
 use ci_core::analysis::pack::{
     pack_subsystem_with, CompressOptions, PackMode, PackRequest, PackStyle,
 };
-use ci_core::analysis::subsystems::subsystem_tokens;
+use ci_core::analysis::subsystems::subsystem_tokens_cached;
 use ci_core::config::is_binary_available;
 use ci_mcp::pagination::{compute_query_hash, decode_cursor, encode_cursor, CursorData};
 
@@ -282,11 +282,13 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
 
     let tel = telemetry_scope(&project);
     if tel.is_active() {
+        let cache = project.metrics_cache();
         let source_tokens: usize = packed
             .subsystems
             .iter()
-            .map(|s| subsystem_tokens(&project.root, s))
+            .map(|s| subsystem_tokens_cached(&cache, s))
             .sum();
+        let _ = cache.save();
         tel.efficiency(
             "context_pack",
             source_tokens,

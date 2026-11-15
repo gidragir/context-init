@@ -45,6 +45,7 @@ impl Sandbox {
             .env("HOME", self.home())
             .env("XDG_CONFIG_HOME", self.home().join(".config"))
             .env("XDG_DATA_HOME", self.data_home())
+            .env("XDG_CACHE_HOME", self.home().join(".cache"))
             .env("NO_COLOR", "1");
         for (k, _) in std::env::vars() {
             if k.starts_with("CONTEXT_INIT_") {
@@ -192,6 +193,7 @@ fn cli_clone_at_other_path_works_without_init() {
             .env("HOME", sb.home())
             .env("XDG_CONFIG_HOME", sb.home().join(".config"))
             .env("XDG_DATA_HOME", sb.data_home())
+            .env("XDG_CACHE_HOME", sb.home().join(".cache"))
             .env("NO_COLOR", "1")
             .output()
             .unwrap()
@@ -662,6 +664,7 @@ impl Sandbox {
             .env("HOME", self.home())
             .env("XDG_CONFIG_HOME", self.home().join(".config"))
             .env("XDG_DATA_HOME", self.data_home())
+            .env("XDG_CACHE_HOME", self.home().join(".cache"))
             .env("NO_COLOR", "1")
             .env("PATH", path);
         for (k, _) in std::env::vars() {
@@ -1232,6 +1235,7 @@ impl Sandbox {
             .env("HOME", self.home())
             .env("XDG_CONFIG_HOME", self.home().join(".config"))
             .env("XDG_DATA_HOME", self.data_home())
+            .env("XDG_CACHE_HOME", self.home().join(".cache"))
             .env("NO_COLOR", "1");
         if claudecode {
             cmd.env("CLAUDECODE", "1");

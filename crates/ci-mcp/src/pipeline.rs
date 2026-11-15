@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use ci_core::analysis::generator::{self, GenerateOptions};
+use ci_core::analysis::generator::{self, sanitize_id, GenerateOptions};
 use ci_core::analysis::subsystems::build_deterministic;
 use ci_core::analysis::{detector, ProjectAnalysis};
 use ci_core::config::{Config, StorageMode, ROLE_NONE};
@@ -142,7 +142,7 @@ pub struct FullDriftReport {
 /// error (with a storage-mismatch hint), never reported as drift.
 pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport> {
     let index = project.load_l0_index()?;
-    let analysis = detector::analyze_project_with(
+    let analysis = detector::analyze_project_with_cache(
         &project.root,
         &detector::AnalyzeOptions {
             deep: false,
@@ -150,6 +150,7 @@ pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport> {
             split_threshold_tokens: project.config.split_threshold_tokens,
             scope: project.config.scope.clone(),
         },
+        Some(&project.storage_paths.cache_dir),
     )?;
     // Cards are read once (shared by `audit` and the staleness loop); one Git snapshot and one
     // `git diff --name-only` per distinct recorded commit serve every card.
@@ -234,17 +235,125 @@ pub fn validate_model_override(config: &Config, model_override: Option<&str>) ->
     Ok(())
 }
 
-/// Refreshes one Git-stale L1 card without LLM enrichment: re-detects the project, lets
-/// `generator::update` regenerate cards it owns, then re-stamps the card's provenance SHAs so
-/// that hand-edited cards stop being reported stale too.
-pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<()> {
-    let analysis = detect(project, false)?;
-    let subsystems = build_deterministic(&analysis);
-    generator::update(&analysis, &subsystems, &project.knowledge_dir, None)?;
+/// How [`refresh_stale_card`] refreshed a card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshKind {
+    /// Only the subsystem's own files were re-analyzed; one card and the index entry changed.
+    Local,
+    /// The whole project was re-detected and merged (`generator::update`).
+    Full,
+}
+
+/// Refreshes one Git-stale L1 card without LLM enrichment, then re-stamps the card's
+/// provenance SHAs so that hand-edited cards stop being reported stale too.
+///
+/// A plain top-level subsystem is re-analyzed in place (its files, symbols, tokens and SHAs
+/// only). Everything else falls back to a full re-detection: split-off subsystems
+/// (`parent`), split parents and modules now crossing the split threshold, `.mdo`
+/// metadata projects, flat projects, ambiguous ids and directories where a new build
+/// manifest appeared.
+pub fn refresh_stale_card(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<RefreshKind> {
+    let kind = if refresh_in_place(project, sub)? {
+        RefreshKind::Local
+    } else {
+        let analysis = detect(project, false)?;
+        let subsystems = build_deterministic(&analysis);
+        generator::update(&analysis, &subsystems, &project.knowledge_dir, None)?;
+        RefreshKind::Full
+    };
     if let Some(card) = project.card_file(sub) {
         generator::restamp_card_source(&card, &project.root, None)?;
     }
-    Ok(())
+    Ok(kind)
+}
+
+/// Directory of a top-level module recorded in the index: the deepest ancestor of its
+/// files' common directory whose sanitized path is the subsystem id.
+fn module_dir(root: &Path, sub: &SubsystemInfo) -> Option<String> {
+    let paths: Vec<&str> = sub.files.iter().map(|f| f.path.as_str()).collect();
+    let first = paths.first()?;
+    let mut common: Vec<&str> = first.split('/').collect();
+    common.pop();
+    for p in &paths[1..] {
+        let parts: Vec<&str> = p.split('/').collect();
+        let keep = common
+            .iter()
+            .zip(parts.iter().take(parts.len().saturating_sub(1)))
+            .take_while(|(a, b)| a == b)
+            .count();
+        common.truncate(keep);
+    }
+    (1..=common.len())
+        .rev()
+        .map(|n| common[..n].join("/"))
+        .find(|dir| sanitize_id(dir) == sub.id && root.join(dir).is_dir())
+}
+
+/// Point refresh of `sub` (see [`refresh_stale_card`]); `Ok(false)` asks for the full one.
+fn refresh_in_place(project: &ResolvedProject, sub: &SubsystemInfo) -> Result<bool> {
+    if sub.parent.is_some() || sub.files.is_empty() {
+        return Ok(false);
+    }
+    if sub.files.iter().any(|f| {
+        Path::new(&f.path)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("mdo"))
+    }) {
+        return Ok(false);
+    }
+    let index = project.load_l0_index()?;
+    if index
+        .subsystems
+        .iter()
+        .any(|s| s.parent.as_deref() == Some(sub.id.as_str()))
+    {
+        return Ok(false);
+    }
+    let Some(dir) = module_dir(&project.root, sub) else {
+        return Ok(false);
+    };
+    let prefix = format!("{dir}/");
+    let mut child_dirs = Vec::new();
+    for other in index
+        .subsystems
+        .iter()
+        .filter(|s| s.id != sub.id && s.parent.is_none())
+    {
+        let nested =
+            !other.files.is_empty() && other.files.iter().all(|f| f.path.starts_with(&prefix));
+        if !nested {
+            continue;
+        }
+        match module_dir(&project.root, other) {
+            Some(child) if child.starts_with(&prefix) => child_dirs.push(child),
+            _ => return Ok(false),
+        }
+    }
+    let known: Vec<String> = sub.files.iter().map(|f| f.path.clone()).collect();
+    let opts = detector::AnalyzeOptions {
+        deep: false,
+        with_rtk: project.config.integrations.resolve_rtk_active(),
+        split_threshold_tokens: project.config.split_threshold_tokens,
+        scope: project.config.scope.clone(),
+    };
+    let Some(analysis) = detector::analyze_module_in_place(
+        &project.root,
+        &opts,
+        &dir,
+        &child_dirs,
+        &known,
+        Some(&project.storage_paths.cache_dir),
+    )?
+    else {
+        return Ok(false);
+    };
+    let Some(fresh) = build_deterministic(&analysis)
+        .into_iter()
+        .find(|s| s.id == sub.id)
+    else {
+        return Ok(false);
+    };
+    generator::update_subsystem(&analysis, &fresh, &project.knowledge_dir)
 }
 
 /// Hint for a project whose active knowledge dir has no index while the other storage mode
@@ -351,7 +460,7 @@ fn analyze(
 
 /// Deterministic project analysis with the project's scope, split threshold and RTK setting.
 pub fn detect(project: &ResolvedProject, deep: bool) -> Result<ProjectAnalysis> {
-    detector::analyze_project_with(
+    detector::analyze_project_with_cache(
         &project.root,
         &detector::AnalyzeOptions {
             deep,
@@ -359,6 +468,7 @@ pub fn detect(project: &ResolvedProject, deep: bool) -> Result<ProjectAnalysis> 
             split_threshold_tokens: project.config.split_threshold_tokens,
             scope: project.config.scope.clone(),
         },
+        Some(&project.storage_paths.cache_dir),
     )
 }
 
