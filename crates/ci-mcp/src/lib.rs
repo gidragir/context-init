@@ -8,8 +8,9 @@ pub mod tools;
 
 pub use handlers::{ContextHandler, HandlerReply, ResolvedProject};
 pub use pagination::{
-    count_tokens, decode_cursor, encode_cursor, format_footer, paginate_content, CursorData,
-    PaginatedOutput,
+    compute_query_hash, count_tokens, decode_cursor, encode_cursor, format_footer,
+    format_footer_ex, paginate_content, paginate_content_with, CursorData, PaginatedOutput,
+    PaginationMeta,
 };
 pub use server::{find_project_root_upward, run_mcp_server, ContextInitServer};
 pub use tools::{
@@ -129,6 +130,7 @@ mod tests {
         let cur = CursorData {
             byte_offset: 1024,
             page: 2,
+            query_hash: None,
         };
         let encoded = encode_cursor(&cur);
         assert!(encoded.starts_with("cur_"));

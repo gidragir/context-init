@@ -13,6 +13,53 @@ pub struct CursorData {
     /// 0-indexed page number.
     #[serde(default)]
     pub page: usize,
+    /// 64-bit hash of the query parameters and content the cursor was issued for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_hash: Option<u64>,
+}
+
+/// Extra pagination context: cursor/query binding and the list of sections in the payload.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PaginationMeta<'a> {
+    /// Hash binding cursors to a specific query; mismatching cursors are rejected.
+    pub query_hash: Option<u64>,
+    /// Section names (e.g. file paths) of the full payload; empty means "derive from headers".
+    pub remaining_sections: &'a [String],
+}
+
+/// Computes a 64-bit query hash from parameter parts and the full payload text.
+pub fn compute_query_hash(parts: &[&str], full_text: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for p in parts {
+        h.update((p.len() as u64).to_be_bytes());
+        h.update(p.as_bytes());
+    }
+    h.update(full_text.as_bytes());
+    let d = h.finalize();
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&d[..8]);
+    u64::from_be_bytes(b)
+}
+
+/// Extracts section names from `## File: \`x\`` and `=== file x ===` header lines.
+pub fn extract_section_names(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| {
+            if let Some(r) = l.strip_prefix("## File:") {
+                Some(r.trim().trim_matches('`').to_string())
+            } else {
+                l.strip_prefix("=== file").map(|r| {
+                    r.trim()
+                        .trim_end_matches('=')
+                        .trim()
+                        .trim_matches('`')
+                        .to_string()
+                })
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 const BASE64_ALPHABET: &[u8; 64] =
@@ -100,9 +147,19 @@ pub fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
 }
 
 /// Encodes `CursorData` into an opaque string cursor with `cur_` prefix.
+///
+/// The payload is a compact binary form (flags byte, varint offset, varint page,
+/// optional 8-byte big-endian query hash) so the footer stays within the small-budget
+/// token tier. Legacy JSON payloads (starting with `{`) are still accepted on decode.
 pub fn encode_cursor(cursor: &CursorData) -> String {
-    let json = serde_json::to_string(cursor).unwrap_or_else(|_| "{}".to_string());
-    format!("cur_{}", base64_url_encode(json.as_bytes()))
+    let mut buf = Vec::with_capacity(24);
+    buf.push(u8::from(cursor.query_hash.is_some()));
+    write_varint(&mut buf, cursor.byte_offset as u64);
+    write_varint(&mut buf, cursor.page as u64);
+    if let Some(h) = cursor.query_hash {
+        buf.extend_from_slice(&h.to_be_bytes());
+    }
+    format!("cur_{}", base64_url_encode(&buf))
 }
 
 /// Decodes an opaque cursor string into `CursorData`.
@@ -110,7 +167,55 @@ pub fn decode_cursor(cursor_str: &str) -> Option<CursorData> {
     let trimmed = cursor_str.trim();
     let payload = trimmed.strip_prefix("cur_").unwrap_or(trimmed);
     let bytes = base64_url_decode(payload)?;
-    serde_json::from_slice(&bytes).ok()
+    if bytes.first() == Some(&b'{') {
+        return serde_json::from_slice(&bytes).ok();
+    }
+    let (&flags, mut rest) = bytes.split_first()?;
+    if flags > 1 {
+        return None;
+    }
+    let byte_offset = usize::try_from(read_varint(&mut rest)?).ok()?;
+    let page = usize::try_from(read_varint(&mut rest)?).ok()?;
+    let query_hash = if flags == 1 {
+        let arr: [u8; 8] = rest.get(..8)?.try_into().ok()?;
+        rest = &rest[8..];
+        Some(u64::from_be_bytes(arr))
+    } else {
+        None
+    };
+    if !rest.is_empty() {
+        return None;
+    }
+    Some(CursorData {
+        byte_offset,
+        page,
+        query_hash,
+    })
+}
+
+fn write_varint(buf: &mut Vec<u8>, mut v: u64) {
+    while v >= 0x80 {
+        buf.push((v as u8 & 0x7F) | 0x80);
+        v >>= 7;
+    }
+    buf.push(v as u8);
+}
+
+fn read_varint(input: &mut &[u8]) -> Option<u64> {
+    let mut out = 0u64;
+    for shift in (0..70).step_by(7) {
+        let (&b, rest) = input.split_first()?;
+        *input = rest;
+        let part = u64::from(b & 0x7F);
+        if shift >= 64 || (shift == 63 && part > 1) {
+            return None;
+        }
+        out |= part << shift;
+        if b & 0x80 == 0 {
+            return Some(out);
+        }
+    }
+    None
 }
 
 /// Formats the structured machine-readable footer per D19 and R1.
@@ -130,6 +235,64 @@ pub fn format_footer(
     } else {
         format!("[truncated: false | stale: {} | tokens: {}]", stale, tokens)
     }
+}
+
+/// Page position and remaining sections for the rich footer tier.
+#[derive(Debug, Clone, Copy)]
+pub struct FooterExtras<'a> {
+    /// 1-based current page.
+    pub page: usize,
+    /// Estimated total number of pages.
+    pub est_total: usize,
+    /// Section names remaining after this page.
+    pub remaining: &'a [String],
+}
+
+/// Footer with budget tiers: compact (`<= 35` tokens) below 256 tokens, rich from 256.
+pub fn format_footer_ex(
+    truncated: bool,
+    next_cursor: Option<&str>,
+    stale: bool,
+    tokens: usize,
+    effective_max_tokens: usize,
+    extras: &FooterExtras<'_>,
+) -> String {
+    if !truncated {
+        return format_footer(truncated, next_cursor, stale, tokens);
+    }
+    if effective_max_tokens < 256 {
+        // Minimal tier: the cursor alone must fit into <= 35 tokens.
+        let stale_part = if stale { " | stale: true" } else { "" };
+        return format!(
+            "[truncated: true | next_cursor: \"{}\"{} | tokens: {}]",
+            next_cursor.unwrap_or(""),
+            stale_part,
+            tokens
+        );
+    }
+    let mut out = format!(
+        "[truncated: true | next_cursor: \"{}\" | stale: {} | tokens: {} | page: {}/{}",
+        next_cursor.unwrap_or(""),
+        stale,
+        tokens,
+        extras.page,
+        extras.est_total.max(extras.page)
+    );
+    if !extras.remaining.is_empty() {
+        const SHOWN: usize = 3;
+        let shown: Vec<&str> = extras
+            .remaining
+            .iter()
+            .take(SHOWN)
+            .map(String::as_str)
+            .collect();
+        out.push_str(&format!(" | remaining: {}", shown.join(", ")));
+        if extras.remaining.len() > SHOWN {
+            out.push_str(&format!(" (+{})", extras.remaining.len() - SHOWN));
+        }
+    }
+    out.push_str(" | next: pass cursor to continue, or files=[...] to narrow]");
+    out
 }
 
 /// Output of a paginated response.
@@ -156,11 +319,43 @@ pub fn paginate_content(
     max_tokens: usize,
     stale: bool,
 ) -> PaginatedOutput {
+    paginate_content_with(
+        full_text,
+        cursor,
+        max_tokens,
+        stale,
+        &PaginationMeta::default(),
+    )
+    .expect("a cursor cannot mismatch when no query_hash is bound")
+}
+
+/// Paginates `full_text` like [`paginate_content`], binding cursors to `meta.query_hash`.
+///
+/// Returns an error when the supplied cursor was issued for a different query.
+pub fn paginate_content_with(
+    full_text: &str,
+    cursor: Option<&str>,
+    max_tokens: usize,
+    stale: bool,
+    meta: &PaginationMeta<'_>,
+) -> Result<PaginatedOutput, String> {
     let effective_max_tokens = if max_tokens == 0 {
         ci_core::config::DEFAULT_MAX_RESPONSE_TOKENS
     } else {
         max_tokens
     };
+
+    let parsed_cursor = cursor.and_then(decode_cursor);
+    if let (Some(c), Some(expected)) = (parsed_cursor.as_ref(), meta.query_hash) {
+        if let Some(got) = c.query_hash {
+            if got != expected {
+                return Err(
+                    "cursor does not match this request (query parameters or content changed); restart pagination without a cursor"
+                        .to_string(),
+                );
+            }
+        }
+    }
 
     if full_text.is_empty() {
         let footer_if_stale = if stale {
@@ -170,17 +365,16 @@ pub fn paginate_content(
         };
         let rendered = footer_if_stale.unwrap_or_default();
         let token_count = count_tokens(&rendered);
-        return PaginatedOutput {
+        return Ok(PaginatedOutput {
             body: String::new(),
             rendered,
             truncated: false,
             next_cursor: None,
             stale,
             token_count,
-        };
+        });
     }
 
-    let parsed_cursor = cursor.and_then(decode_cursor);
     let start_offset = parsed_cursor.as_ref().map(|c| c.byte_offset).unwrap_or(0);
     let page_no = parsed_cursor.as_ref().map(|c| c.page).unwrap_or(0);
 
@@ -194,14 +388,14 @@ pub fn paginate_content(
         };
         let rendered = footer_if_stale.unwrap_or_default();
         let token_count = count_tokens(&rendered);
-        return PaginatedOutput {
+        return Ok(PaginatedOutput {
             body: String::new(),
             rendered,
             truncated: false,
             next_cursor: None,
             stale,
             token_count,
-        };
+        });
     }
 
     let remaining = &full_text[start_offset..];
@@ -234,21 +428,66 @@ pub fn paginate_content(
                 remaining.to_string()
             };
             let token_count = count_tokens(&rendered);
-            return PaginatedOutput {
+            return Ok(PaginatedOutput {
                 body: remaining.to_string(),
                 rendered,
                 truncated: false,
                 next_cursor: None,
                 stale,
                 token_count,
-            };
+            });
         }
     }
 
     // Content exceeds budget: truncate and append footer with next_cursor
-    // Reserve ~35 tokens for footer
-    let footer_reserve = 35.min(effective_max_tokens / 2).max(5);
+    let rich = effective_max_tokens >= 256;
+    let all_sections: Vec<String> = if !rich {
+        Vec::new()
+    } else if meta.remaining_sections.is_empty() {
+        extract_section_names(full_text)
+    } else {
+        meta.remaining_sections.to_vec()
+    };
+    let remaining_after = |offset: usize| -> Vec<String> {
+        let tail_start = find_valid_char_boundary(full_text, offset);
+        all_sections
+            .iter()
+            .filter(|n| full_text.rfind(n.as_str()).is_some_and(|p| p >= tail_start))
+            .cloned()
+            .collect()
+    };
+    let make_cursor = |offset: usize| {
+        encode_cursor(&CursorData {
+            byte_offset: offset,
+            page: page_no.saturating_add(1),
+            query_hash: meta.query_hash,
+        })
+    };
+
+    // Reserve: compact footer ~35 tokens; rich footer measured on a sample
+    let footer_reserve = if rich {
+        let sample_cur = make_cursor(full_text.len());
+        let sample_rem = remaining_after(start_offset);
+        let sample = format_footer_ex(
+            true,
+            Some(&sample_cur),
+            stale,
+            effective_max_tokens,
+            effective_max_tokens,
+            &FooterExtras {
+                page: page_no.saturating_add(1),
+                est_total: page_no.saturating_add(1),
+                remaining: &sample_rem,
+            },
+        );
+        (count_tokens(&sample) + 8).min(effective_max_tokens / 2)
+    } else {
+        35.min(effective_max_tokens / 2).max(5)
+    };
     let target_body_tokens = effective_max_tokens.saturating_sub(footer_reserve).max(1);
+    let est_total = page_no
+        .saturating_add(remaining_tokens.div_ceil(target_body_tokens))
+        .max(page_no.saturating_add(1));
 
     // Smallest non-empty body: the first character (may span several UTF-8 bytes)
     let min_split = find_next_char_boundary(remaining, 1);
@@ -267,18 +506,35 @@ pub fn paginate_content(
     loop {
         body = &remaining[..split_len];
         next_offset = start_offset + split_len;
-        next_cur = encode_cursor(&CursorData {
-            byte_offset: next_offset,
+        next_cur = make_cursor(next_offset);
+        let rem = if rich {
+            remaining_after(next_offset)
+        } else {
+            Vec::new()
+        };
+        let extras = FooterExtras {
             page: page_no.saturating_add(1),
-        });
+            est_total,
+            remaining: &rem,
+        };
+        let footer = |tokens: usize| {
+            format_footer_ex(
+                true,
+                Some(&next_cur),
+                stale,
+                tokens,
+                effective_max_tokens,
+                &extras,
+            )
+        };
 
         // 1. Format tentative footer with effective_max_tokens as placeholder token count
-        let mut f = format_footer(true, Some(&next_cur), stale, effective_max_tokens);
+        let mut f = footer(effective_max_tokens);
         rendered = format!("{}\n\n{}", body, f);
         final_token_count = count_tokens(&rendered);
 
         // 2. Refine footer with measured tokens
-        f = format_footer(true, Some(&next_cur), stale, final_token_count);
+        f = footer(final_token_count);
         rendered = format!("{}\n\n{}", body, f);
         final_token_count = count_tokens(&rendered);
 
@@ -292,22 +548,35 @@ pub fn paginate_content(
         split_len = find_valid_char_boundary(remaining, new_len).max(min_split);
     }
 
-    PaginatedOutput {
+    Ok(PaginatedOutput {
         body: body.to_string(),
         rendered,
         truncated: true,
         next_cursor: Some(next_cur),
         stale,
         token_count: final_token_count,
-    }
+    })
 }
 
 /// Finds the split point within `text` yielding approximately `target_tokens`,
 /// preferring newline boundaries (`\n`).
-fn find_split_point(text: &str, target_tokens: usize) -> usize {
-    if text.is_empty() || target_tokens == 0 {
+fn find_split_point(full: &str, target_tokens: usize) -> usize {
+    if full.is_empty() || target_tokens == 0 {
         return 0;
     }
+
+    // Bounded byte window (~6 bytes/token, at least 512), doubled only while the
+    // window still fits into the token budget. Splitting is done on char boundaries
+    // with `count_tokens` over prefixes, never by decoding a token slice.
+    let mut win = find_valid_char_boundary(full, (target_tokens * 6).max(512).min(full.len()));
+    while win < full.len() && count_tokens(&full[..win]) <= target_tokens {
+        let next = find_valid_char_boundary(full, win.saturating_mul(2).min(full.len()));
+        if next <= win {
+            break;
+        }
+        win = next;
+    }
+    let text = if win == 0 { full } else { &full[..win] };
 
     let mut low = 0;
     let mut high = text.len();
@@ -397,6 +666,7 @@ mod tests {
         let cursor = CursorData {
             byte_offset: 4096,
             page: 3,
+            query_hash: None,
         };
         let encoded = encode_cursor(&cursor);
         assert!(encoded.starts_with("cur_"));
@@ -521,6 +791,7 @@ mod tests {
         let cursor = encode_cursor(&CursorData {
             byte_offset: 16,
             page: usize::MAX,
+            query_hash: None,
         });
         let out = paginate_content(&text, Some(&cursor), 64, false);
         assert!(out.truncated);
@@ -538,5 +809,107 @@ mod tests {
         let out_p2 = paginate_content(text, Some(&cur), 4000, false);
         assert!(!out_p2.truncated);
         assert!(out_p2.rendered.contains("[truncated: false | stale: false"));
+    }
+
+    fn collect_pages(text: &str, budget: usize, meta: &PaginationMeta<'_>) -> String {
+        let mut cursor: Option<String> = None;
+        let mut all = String::new();
+        for _ in 0..text.len() {
+            let out = paginate_content_with(text, cursor.as_deref(), budget, false, meta)
+                .expect("pagination");
+            assert!(
+                out.token_count <= budget,
+                "{} > {}: {}",
+                out.token_count,
+                budget,
+                out.rendered
+            );
+            all.push_str(&out.body);
+            match out.next_cursor {
+                Some(c) if out.truncated => cursor = Some(c),
+                _ => break,
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn test_paginate_multibyte_utf8_boundary_and_query_hash_mismatch() {
+        let text = "// Комментарий: ОбработатьДанные()\n// 🦀 Обработка\n".repeat(150);
+        let hash_a = compute_query_hash(&["sub", "full"], &text);
+        let meta_a = PaginationMeta {
+            query_hash: Some(hash_a),
+            remaining_sections: &[],
+        };
+        for budget in [64, 300] {
+            assert_eq!(
+                collect_pages(&text, budget, &meta_a),
+                text,
+                "budget {budget}"
+            );
+        }
+
+        let first = paginate_content_with(&text, None, 64, false, &meta_a).unwrap();
+        let cur = first.next_cursor.expect("cursor");
+        let meta_b = PaginationMeta {
+            query_hash: Some(compute_query_hash(&["sub", "full"], "другой текст")),
+            remaining_sections: &[],
+        };
+        let err = paginate_content_with(&text, Some(&cur), 64, false, &meta_b)
+            .expect_err("mismatch must fail");
+        assert!(err.contains("cursor"), "{err}");
+        assert!(paginate_content_with(&text, Some(&cur), 64, false, &meta_a).is_ok());
+    }
+
+    #[test]
+    fn cursor_binary_roundtrip_with_hash_and_legacy_json() {
+        let c = CursorData {
+            byte_offset: 123_456,
+            page: 7,
+            query_hash: Some(u64::MAX - 3),
+        };
+        assert_eq!(decode_cursor(&encode_cursor(&c)), Some(c));
+        let legacy = format!(
+            "cur_{}",
+            base64_url_encode(br#"{"byte_offset":9,"page":2}"#)
+        );
+        let d = decode_cursor(&legacy).expect("legacy json cursor");
+        assert_eq!((d.byte_offset, d.page, d.query_hash), (9, 2, None));
+    }
+
+    #[test]
+    fn test_format_footer_respects_budget_tiers() {
+        let text = "// 🦀 Обработка данных\nfn f() {}\n".repeat(200);
+        let out =
+            paginate_content_with(&text, None, 64, false, &PaginationMeta::default()).unwrap();
+        assert!(out.truncated);
+        assert!(out
+            .rendered
+            .contains("[truncated: true | next_cursor: \"cur_"));
+        let footer = &out.rendered[out.body.len()..];
+        assert!(
+            count_tokens(footer) <= 35,
+            "{} {footer}",
+            count_tokens(footer)
+        );
+
+        let mut big = String::new();
+        for i in 0..80 {
+            big.push_str(&format!(
+                "## File: `src/f{i}.rs`\n{}\n",
+                "let x = 1;\n".repeat(40)
+            ));
+        }
+        let sections: Vec<String> = (0..80).map(|i| format!("src/f{i}.rs")).collect();
+        let meta = PaginationMeta {
+            query_hash: None,
+            remaining_sections: &sections,
+        };
+        let out = paginate_content_with(&big, None, 1000, false, &meta).unwrap();
+        assert!(out.truncated);
+        assert!(out.token_count <= 1000);
+        assert!(out.rendered.contains("page: 1/"), "{}", out.rendered);
+        assert!(out.rendered.contains("remaining:"));
+        assert!(out.rendered.contains("next:"));
     }
 }

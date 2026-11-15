@@ -38,7 +38,10 @@ use ci_llm::{AgentWorkPackage, LlmRequest, RoleName, RoleRouter};
 
 use crate::pipeline::{self, PipelineOptions};
 
-use crate::pagination::{count_tokens, decode_cursor, paginate_content, PaginatedOutput};
+use crate::pagination::{
+    compute_query_hash, count_tokens, decode_cursor, paginate_content, paginate_content_with,
+    PaginatedOutput, PaginationMeta,
+};
 use crate::tools::*;
 
 /// `pack all` is refused when the packed project exceeds this many response pages (D19).
@@ -574,8 +577,8 @@ impl ContextHandler {
         // Filtering happens inside `pack_subsystem_with`, i.e. before the PACK_ALL_MAX_PAGES check.
         let PackedSubsystems {
             content: packed_content,
+            files: packed_files,
             subsystems: matched_subs,
-            ..
         } = pack_subsystem_with(&project.root, &project.knowledge_dir, &index, &pack_req)?;
 
         let budget = project.config.max_response_tokens;
@@ -616,12 +619,27 @@ impl ContextHandler {
             }
         });
 
-        let paginated = paginate_content(
+        let sections = packed_files;
+        let hash_parts = [
+            subsystem_id,
+            &format!("{mode:?}"),
+            &format!("{style:?}"),
+            &req.files.join("\u{1f}"),
+            &req.symbols.join("\u{1f}"),
+        ];
+        let query_hash = compute_query_hash(&hash_parts, &packed_content);
+        let meta = PaginationMeta {
+            query_hash: Some(query_hash),
+            remaining_sections: &sections,
+        };
+        let paginated = paginate_content_with(
             &packed_content,
             cursor,
             project.config.max_response_tokens,
             any_stale,
-        );
+            &meta,
+        )
+        .map_err(|e| anyhow::Error::new(rmcp::ErrorData::invalid_params(e, None)))?;
         record_page(
             tel,
             "context_pack",
