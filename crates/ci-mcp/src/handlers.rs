@@ -8,7 +8,7 @@ use std::sync::Arc;
 use ci_core::analysis::detector;
 use ci_core::analysis::generator::{self, SummaryUpdate};
 use ci_core::analysis::pack::{
-    pack_subsystem_with, PackMode, PackRequest, PackStyle, PackedSubsystems,
+    pack_subsystem_with, CompressOptions, PackMode, PackRequest, PackStyle, PackedSubsystems,
 };
 use ci_core::analysis::resolve_knowledge_dir;
 use ci_core::analysis::scan::{render_scan_markdown, scan_project_with, ScanOptions};
@@ -574,6 +574,11 @@ impl ContextHandler {
         pack_req.symbols = req.symbols;
         pack_req.mode = mode;
         pack_req.style = style;
+        pack_req.options = if style == PackStyle::Compact && mode == PackMode::Compressed {
+            CompressOptions::compact()
+        } else {
+            CompressOptions::legacy()
+        };
         // Filtering happens inside `pack_subsystem_with`, i.e. before the PACK_ALL_MAX_PAGES check.
         let PackedSubsystems {
             content: packed_content,

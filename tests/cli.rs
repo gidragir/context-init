@@ -283,6 +283,165 @@ fn cli_pack_files_filter_and_validation() {
     assert!(ok.status.success(), "{}{}", stdout(&ok), stderr(&ok));
 }
 
+/// Fixture with large struct bodies (`models`) and doc/import-heavy code (`notes`).
+fn write_budget_fixture(sb: &Sandbox) {
+    sb.write_fixture();
+    let root = sb.project();
+    let main = "mod api;\nmod engine;\nmod models;\nmod notes;\nmod store;\nfn main() {}\n";
+    fs::write(root.join("src/main.rs"), main).unwrap();
+    let mut models = String::new();
+    for i in 0..25 {
+        models.push_str(&format!("pub struct Model{i} {{\n"));
+        for j in 0..4 {
+            models.push_str(&format!("    pub m{i}_f{j}: u32,\n"));
+        }
+        models.push_str("}\n\n");
+    }
+    fs::create_dir_all(root.join("src/models")).unwrap();
+    fs::write(root.join("src/models/mod.rs"), models).unwrap();
+    let mut notes = String::new();
+    for i in 0..30 {
+        notes.push_str(&format!("use std::collections::HashMap as Map{i};\n"));
+    }
+    for i in 0..30 {
+        notes.push_str(&format!("/// Note line {i}.\n"));
+    }
+    notes.push_str("pub fn noted() -> u32 {\n    1\n}\n");
+    fs::create_dir_all(root.join("src/notes")).unwrap();
+    fs::write(root.join("src/notes/mod.rs"), notes).unwrap();
+}
+
+/// Extracts the `cur_...` value from a `--cursor "cur_..."` hint.
+fn extract_cursor(text: &str) -> Option<String> {
+    let start = text.find("--cursor \"")? + "--cursor \"".len();
+    let end = text[start..].find('"')?;
+    Some(text[start..start + end].to_string())
+}
+
+fn fence_count(text: &str) -> usize {
+    text.lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count()
+}
+
+#[test]
+fn cli_pack_max_lines_closes_code_fence_within_budget() {
+    let sb = Sandbox::new("pack_max_lines");
+    write_budget_fixture(&sb);
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let base = [
+        "pack",
+        "all",
+        ".",
+        "--style",
+        "markdown",
+        "--no-compress",
+        "--max-lines",
+        "25",
+    ];
+    let mut cursor: Option<String> = None;
+    let mut pages = Vec::new();
+    loop {
+        let mut args: Vec<&str> = base.to_vec();
+        if let Some(c) = &cursor {
+            args.push("--cursor");
+            args.push(c);
+        }
+        let out = sb.run(&args);
+        assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+        let text = stdout(&out);
+        assert!(
+            text.lines().count() <= 25,
+            "{} lines:\n{text}",
+            text.lines().count()
+        );
+        assert_eq!(fence_count(&text) % 2, 0, "unbalanced fences:\n{text}");
+        pages.push(text.clone());
+        cursor = extract_cursor(&text);
+        if cursor.is_none() {
+            break;
+        }
+        assert!(pages.len() < 60, "pagination does not terminate");
+    }
+    assert!(pages.len() >= 2, "expected several pages");
+    assert!(pages[0].contains("--cursor \"cur_"), "{}", pages[0]);
+    let all = pages.concat();
+    for field in ["m0_f0", "m12_f2", "m24_f3", "Note line 29"] {
+        assert!(all.contains(field), "missing {field}");
+    }
+
+    // A cursor issued for another query is rejected.
+    let first = extract_cursor(&pages[0]).unwrap();
+    let other = sb.run(&[
+        "pack",
+        "all",
+        ".",
+        "--style",
+        "compact",
+        "--no-compress",
+        "--max-lines",
+        "25",
+        "--cursor",
+        &first,
+    ]);
+    assert!(!other.status.success(), "{}", stdout(&other));
+    assert!(stderr(&other).contains("cursor"), "{}", stderr(&other));
+}
+
+#[test]
+fn cli_pack_max_lines_degrades_full_to_compact_and_toc() {
+    let sb = Sandbox::new("pack_ladder");
+    write_budget_fixture(&sb);
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+
+    let unbounded = sb.run(&["pack", "all", ".", "--style", "markdown"]);
+    assert!(unbounded.status.success());
+    assert!(stdout(&unbounded).lines().count() > 40);
+
+    // Markdown is too long, compact strips docs/imports and fits.
+    let compact = sb.run(&[
+        "pack",
+        "all",
+        ".",
+        "--style",
+        "markdown",
+        "--files",
+        "src/notes/mod.rs",
+        "--max-lines",
+        "40",
+    ]);
+    assert!(compact.status.success(), "{}", stderr(&compact));
+    let text = stdout(&compact);
+    assert!(text.lines().count() <= 40, "{text}");
+    assert!(text.contains("[auto-compressed"), "{text}");
+    assert!(!text.contains("[auto-toc"), "{text}");
+    assert!(text.contains("noted"), "{text}");
+
+    // Many structs keep compact output too long: fall back to the TOC.
+    let toc = sb.run(&[
+        "pack",
+        "all",
+        ".",
+        "--style",
+        "markdown",
+        "--files",
+        "src/models/mod.rs",
+        "--max-lines",
+        "40",
+    ]);
+    assert!(toc.status.success(), "{}", stderr(&toc));
+    let text = stdout(&toc);
+    assert!(text.lines().count() <= 40, "{text}");
+    assert!(text.contains("[auto-toc"), "{text}");
+    assert!(text.contains("Model24"), "{text}");
+    assert!(!text.contains("m24_f3"), "{text}");
+
+    // Without a budget, `-o` / stdout output is not degraded.
+    let full = sb.run(&["pack", "all", ".", "--style", "markdown", "--no-compress"]);
+    assert!(stdout(&full).contains("m24_f3"));
+    assert!(!stdout(&full).contains("[auto-"));
+}
+
 #[test]
 fn cli_check_exit_code_tracks_drift() {
     let sb = Sandbox::new("drift");
