@@ -84,6 +84,16 @@ mod tests {
         }
         assert!(RULE_TEMPLATE.contains("Subagents and scripts"));
         assert!(RULE_TEMPLATE.contains("context-init pack <subsystem_id> --compress"));
+        for hint in [
+            "compact",
+            "toc",
+            "files",
+            "cursor",
+            "--max-lines",
+            "\"path\"",
+        ] {
+            assert!(RULE_TEMPLATE.contains(hint), "missing {hint}");
+        }
     }
 
     #[test]

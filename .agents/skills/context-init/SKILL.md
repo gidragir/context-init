@@ -17,7 +17,7 @@ description: >-
 > **ZERO-VIOLATION INVARIANT (MCP-FIRST PROTOCOL):** Если в среде зарегистрирован MCP-сервер `context-init`, агент **ОБЯЗАН** использовать native MCP-инструменты вместо вызова команд через bash-терминал.
 > Терминальные команды `context-init` используются только как fallback при отсутствии прямого MCP-подключения и строго с префиксом `rtk`.
 >
-> **NEGATIVE CONSTRAINT (ZERO DIRECT FILE ACCESS):** Категорически **ЗАПРЕЩЕНО** читать файлы `.agents/knowledge/**` напрямую через инструменты файлового доступа (`view_file`, `cat`, `headroom_compress` и др.). Вся навигация, чтение ментальной карты и карточек подсистем выполняются **ИСКЛЮЧИТЕЛЬНО** через вызовы MCP-инструментов `context_get_subsystems` и `context_get_subsystem`.
+> **NEGATIVE CONSTRAINT (ZERO DIRECT FILE ACCESS):** Категорически **ЗАПРЕЩЕНО** читать файлы `.context-init/knowledge/**` напрямую через инструменты файлового доступа (`view_file`, `cat`, `headroom_compress` и др.). Вся навигация, чтение ментальной карты и карточек подсистем выполняются **ИСКЛЮЧИТЕЛЬНО** через вызовы MCP-инструментов `context_get_subsystems` и `context_get_subsystem`.
 
 ---
 
@@ -37,7 +37,7 @@ description: >-
 | MCP Tool | Назначение | Параметры | Результат |
 | :--- | :--- | :--- | :--- |
 | `context_check` | Быстрая проверка дрейфа базы знаний относительно диска | `path` (опционально) | Structured JSON: `{ has_drift: bool, missing_in_fs: [...], untracked_in_knowledge: [...], up_to_date_count: usize, message: str }` |
-| `context_pack` | Получение AST-сжатого контекста подсистемы (вырезание тел функций до `⋮----`) | `subsystem_id`, `path`, `compress` (true), `style` ("xml" \| "markdown") | Текст со сжатым исходным кодом интерфейсов и заголовком со статистикой токенов |
+| `context_pack` | AST-сжатый код подсистемы, оглавление символов или точный код файлов | `subsystem_id`, `path` (обязателен), `compress` (true), `style` ("compact" по умолчанию \| "markdown" \| "xml"), `mode` ("full" \| "compressed" \| "toc"), `files` ([glob/имя]), `symbols`, `cursor` | Текст пакета; при `truncated: true` футер содержит `next_cursor` |
 | `context_get_subsystems` | Список всех подсистем проекта и их метрик | `path` (опционально) | Массив объектов `SubsystemInfo` из `L0_index.json` (точки входа, ключевые файлы, BPE токены) |
 | `context_get_subsystem` | Получение компактной L1-карточки подсистемы (описание, точки входа, ключевые файлы) | `subsystem_id`, `path` (опционально) | Текст L1-карточки в формате Markdown без раздувания контекста |
 | `context_update` | Инкрементальное обновление базы знаний при обнаружении новых файлов/модулей | `path`, `deep` (false), `model` (алиас из `[models]`), `prune` (false) | Текстовый статус синхронизации добавленных/обновленных/удалённых модулей |
@@ -51,10 +51,13 @@ description: >-
    - **Шаг 1 (L0):** Вызов `context_get_subsystems` для получения структурированного списка всех модулей, их границ и назначения.
    - **Шаг 2 (L1):** Вызов `context_get_subsystem(subsystem_id="...")` для получения точечной L1-карточки подсистемы (точки входа, ключевые файлы, тестовые команды). Прямое чтение файлов через `view_file` категорически запрещено.
 2. **Фаза загрузки кода (Pack):**
-   - Вызов `context_pack(subsystem_id="...")` для получения AST-сжатых интерфейсов модуля (вырезание тел функций до `⋮----`) вместо ручного вычитывания сырых файлов с диска.
+   - `context_pack {"path":"<repo_root>","subsystem_id":"<id>","mode":"toc"}` — оглавление символов с диапазонами строк `[Lstart-Lend]`.
+   - `context_pack {"path":"<repo_root>","subsystem_id":"<id>"}` — AST-сжатые интерфейсы (`style:"compact"` по умолчанию, тела функций заменены на `{ ⋮ }`).
+   - `context_pack {"path":"<repo_root>","subsystem_id":"<id>","files":["<file>"],"compress":false}` — точный код выбранных файлов.
+   - Ответ с `truncated: true`: повторить тот же вызов с `"cursor":"<next_cursor>"` или сузить `files`.
 3. **Фаза исполнения и верификации (Check/L2):**
    - Перед рефакторингом, фиксацией изменений или коммитом: обязательный вызов `context_check`. При наличии `has_drift: true` вызов `context_update`.
-   - Запуск команд сборки и тестирования проекта строго по справочнику `.agents/knowledge/cli/commands.md` с префиксом `rtk`.
+   - Запуск команд сборки и тестирования проекта строго по справочнику `.context-init/knowledge/cli/commands.md` с префиксом `rtk`.
 
 ---
 
@@ -87,11 +90,18 @@ rtk context-init update . --prune --compact
 
 ### 4. Упаковка контекста подсистемы (`pack`)
 ```bash
-# Встроенный автономный AST-компрессор в stdout
-rtk context-init pack <subsystem_id> -o -
+# Компактный AST-сжатый пакет (style compact по умолчанию) с бюджетом строк:
+# лестница full -> compact -> toc -> пагинация, вывод не длиннее --max-lines
+rtk context-init pack <subsystem_id> --compress --max-lines 200
 
-# Запись в файл
-rtk context-init pack <subsystem_id> -o /tmp/context.xml
+# Оглавление символов с диапазонами строк
+rtk context-init pack <subsystem_id> --toc
+
+# Точный код выбранных файлов
+rtk context-init pack <subsystem_id> --files <file> --no-compress --max-lines 200
+
+# Следующая страница: те же аргументы + курсор из последней строки вывода
+rtk context-init pack <subsystem_id> --compress --max-lines 200 --cursor "cur_..."
 ```
 
 ### 5. Первичная инициализация (`init`)

@@ -1057,11 +1057,14 @@ fn render_root_agents_md(
     let mut map_content = format!(
         "\n\n{}\n\nПроект `{}` описан трехуровневой базой знаний context-init (L0-L2), {}\n\n\
 ### ⚡ MCP-First Protocol (context-init)\n\n\
+Во все вызовы передавайте `\"path\": \"<repo_root>\"`.\n\n\
 1. `context_get_subsystems` — карта подсистем проекта (L0).\n\
 2. `context_get_subsystem(subsystem_id)` — компактная L1-карточка подсистемы.\n\
-3. `context_pack(subsystem_id, compress=true)` — AST-сжатый код подсистемы.\n\
-4. `context_check` — проверка архитектурного дрейфа перед сдачей задачи.\n\n\
-Без доступа к MCP (субагенты, скрипты): `rtk context-init pack <subsystem_id> --compress` и `rtk context-init check --compact`.\n\n\
+3. `context_pack(subsystem_id, mode=\"toc\")` — символы со строками; `context_pack(subsystem_id, compress=true)` — AST-сжатый код (`style=\"compact\"` по умолчанию).\n\
+4. `context_pack(subsystem_id, files=[\"<file>\"], compress=false)` — точный код нужных файлов.\n\
+5. `context_check` — проверка архитектурного дрейфа перед сдачей задачи.\n\n\
+Ответ с `truncated: true` — повторите вызов с `cursor` из футера или сузьте `files`.\n\n\
+Без доступа к MCP (субагенты, скрипты): `rtk context-init pack <subsystem_id> --compress --max-lines 200` (`--toc`, `--files <f> --no-compress`, `--cursor \"cur_...\"`) и `rtk context-init check --compact`.\n\n\
 ### 📦 Доступные подсистемы:\n",
         section_header, project_name, storage_note
     );
@@ -1216,6 +1219,20 @@ mod tests {
         );
         let count = rendered.matches("- `mod_alpha`").count();
         assert_eq!(count, 1);
+        for hint in [
+            "mode=\"toc\"",
+            "files=[",
+            "cursor",
+            "--max-lines",
+            "\"path\"",
+        ] {
+            assert!(rendered.contains(hint), "missing {hint}");
+        }
+        assert!(
+            rendered.len() <= 22_000,
+            "AGENTS.md is {} bytes",
+            rendered.len()
+        );
     }
 
     #[test]
