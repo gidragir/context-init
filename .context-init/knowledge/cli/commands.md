@@ -18,10 +18,10 @@
 | :--- | :--- |
 | `audit-sessions` | `rtk mise run audit-sessions` |
 | `audit` | `rtk mise run audit` |
-| `check` | `rtk mise run check` |
-| `probe-adoption` | `rtk mise run probe-adoption` |
-| `install` | `rtk mise run install` |
 | `dist` | `rtk mise run dist` |
+| `probe-adoption` | `rtk mise run probe-adoption` |
+| `check` | `rtk mise run check` |
+| `install` | `rtk mise run install` |
 
 ## Быстрый запуск
 ```bash

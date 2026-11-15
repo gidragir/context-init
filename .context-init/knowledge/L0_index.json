@@ -19,10 +19,10 @@
     "custom": {
       "audit-sessions": "rtk mise run audit-sessions",
       "audit": "rtk mise run audit",
-      "check": "rtk mise run check",
+      "dist": "rtk mise run dist",
       "probe-adoption": "rtk mise run probe-adoption",
-      "install": "rtk mise run install",
-      "dist": "rtk mise run dist"
+      "check": "rtk mise run check",
+      "install": "rtk mise run install"
     }
   },
   "subsystems": [
@@ -1635,6 +1635,6 @@
   ],
   "generator": {
     "version": "0.4.0",
-    "build": "df4fc0b-dirty"
+    "build": "6a2fc1b-dirty"
   }
 }
