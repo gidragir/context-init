@@ -628,12 +628,7 @@ impl GitBackend for SystemGitBackend {
             _ => None,
         };
         let Some((repo_prefix, root_tree_sha)) = parsed else {
-            return Ok(RepoGitSnapshot {
-                head_commit: self.head_commit(repo_root).unwrap_or_default(),
-                status_entries,
-                unborn_head: true,
-                ..RepoGitSnapshot::default()
-            });
+            return unparsed_tree_snapshot(repo_root, self.head_commit(repo_root), status_entries);
         };
         let head_commit = self.head_commit(repo_root)?;
         let ls_out = self.run_git(
@@ -812,6 +807,28 @@ fn reject_option_like(revs: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// Snapshot for an unparsable `rev-parse --show-prefix --verify HEAD^{tree}` reply: an unborn
+/// `HEAD` (no commit yet) when `head` failed, else an error, so callers fall back to per-card
+/// Git calls instead of silently treating a repository with commits as unborn.
+fn unparsed_tree_snapshot(
+    repo_root: &Path,
+    head: Result<String>,
+    status_entries: Vec<GitStatusEntry>,
+) -> Result<RepoGitSnapshot> {
+    if let Ok(head) = head {
+        bail!(
+            "Unexpected `git rev-parse --show-prefix --verify HEAD^{{tree}}` output in {:?} (HEAD {})",
+            repo_root,
+            head
+        );
+    }
+    Ok(RepoGitSnapshot {
+        status_entries,
+        unborn_head: true,
+        ..RepoGitSnapshot::default()
+    })
+}
+
 /// `git rev-parse --show-prefix` output as `""` or a normalized `"sub/dir/"`.
 fn normalize_prefix(raw: &str) -> String {
     let norm = normalize_path(raw);
@@ -973,11 +990,15 @@ pub fn check_subsystem_staleness_with_snapshot(
         recorded_commit_sha,
         recorded_blob_sha,
         &mut DiffNameCache::new(),
+        true,
     )
 }
 
 /// [`check_subsystem_staleness_with_snapshot`] sharing `git diff --name-only` results across
-/// calls through `diffs` (one lookup per distinct recorded commit).
+/// calls through `diffs` (one lookup per distinct recorded commit). With `want_diff_stat ==
+/// false` no `git diff --stat` runs: a stale report then carries only the local summary
+/// (changed files or blob change) in `diff_stat`.
+#[allow(clippy::too_many_arguments)] // the shared caches travel with the card's provenance
 pub fn check_subsystem_staleness_cached(
     backend: &dyn GitBackend,
     repo_root: &Path,
@@ -986,6 +1007,7 @@ pub fn check_subsystem_staleness_cached(
     recorded_commit_sha: &str,
     recorded_blob_sha: &str,
     diffs: &mut DiffNameCache,
+    want_diff_stat: bool,
 ) -> Result<StalenessReport> {
     if snapshot.unborn_head {
         // Same as the per-card path, where `head_commit` fails on a repository without commits.
@@ -1050,7 +1072,8 @@ pub fn check_subsystem_staleness_cached(
             .filter(|p| !p.is_empty() && p != ".")
             .collect();
 
-        let stat_from_git = if recorded_commit_ok
+        let stat_from_git = if want_diff_stat
+            && recorded_commit_ok
             && !recorded_commit.is_empty()
             && recorded_commit != current_commit
         {
@@ -1119,17 +1142,19 @@ pub fn check_frontmatter_staleness_with_snapshot(
         snapshot,
         frontmatter,
         &mut DiffNameCache::new(),
+        true,
     )
 }
 
 /// [`check_frontmatter_staleness_with_snapshot`] sharing `git diff --name-only` results
-/// across cards through `diffs`.
+/// across cards through `diffs`; `want_diff_stat` as in [`check_subsystem_staleness_cached`].
 pub fn check_frontmatter_staleness_cached(
     backend: &dyn GitBackend,
     repo_root: &Path,
     snapshot: &RepoGitSnapshot,
     frontmatter: &CardFrontmatter,
     diffs: &mut DiffNameCache,
+    want_diff_stat: bool,
 ) -> Result<StalenessReport> {
     let dir = normalize_path(&frontmatter.directory);
     let paths = if dir.is_empty() || dir == "." {
@@ -1145,6 +1170,7 @@ pub fn check_frontmatter_staleness_cached(
         &frontmatter.source.commit_sha,
         &frontmatter.source.blob_sha,
         diffs,
+        want_diff_stat,
     )
 }
 
@@ -1165,6 +1191,20 @@ fn path_matches_directory(file_path: &str, directory: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unparsed_tree_output_is_unborn_only_without_head() {
+        let root = Path::new("/repo");
+        let err = unparsed_tree_snapshot(root, Ok("a".repeat(40)), Vec::new());
+        assert!(
+            err.is_err(),
+            "a repository with commits must not look unborn"
+        );
+        let unborn = unparsed_tree_snapshot(root, Err(anyhow::anyhow!("no HEAD")), Vec::new())
+            .expect("unborn snapshot");
+        assert!(unborn.unborn_head);
+        assert!(unborn.head_commit.is_empty());
+    }
 
     fn run_git(dir: &Path, args: &[&str]) {
         let status = std::process::Command::new("git")

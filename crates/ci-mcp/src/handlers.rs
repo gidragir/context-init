@@ -20,8 +20,8 @@ use ci_core::analysis::workspace::{
 use ci_core::config::ROLE_NONE;
 use ci_core::config::{CliOverrides, Config, StorageMode, StoragePaths};
 use ci_core::git::{
-    check_card_staleness, check_card_staleness_with_snapshot, GitBackend, RepoGitSnapshot,
-    SystemGitBackend,
+    check_card_staleness, check_frontmatter_staleness_cached, DiffNameCache, GitBackend,
+    RepoGitSnapshot, SystemGitBackend,
 };
 use ci_core::openviking::OkfCard;
 use ci_core::search::{Bm25Retriever, Retriever, SearchHit};
@@ -163,38 +163,60 @@ impl ResolvedProject {
     }
 
     /// Checks if a subsystem card is stale relative to Git using a precomputed snapshot.
+    ///
+    /// Loops over many cards share `diffs` (one `git diff --name-only` per distinct recorded
+    /// commit) and `cards` (each card read once, keyed like [`generator::CardCache`] users).
+    /// `want_diff_stat` runs `git diff --stat` for a stale card; callers that only need the
+    /// flag pass `false`. A missing, unreadable or unparsable card, or a failed check, is
+    /// reported fresh.
     pub fn check_subsystem_staleness_with_snap(
         &self,
         subsystem: &SubsystemInfo,
         snapshot: &RepoGitSnapshot,
         backend: &dyn GitBackend,
+        diffs: &mut DiffNameCache,
+        cards: &mut generator::CardCache,
+        want_diff_stat: bool,
     ) -> (bool, Option<String>) {
         let Some(path) = self.card_file(subsystem) else {
             return (false, None);
         };
-
-        let Ok(content) = fs::read_to_string(&path) else {
-            return (false, None);
-        };
-
-        if let Ok(card) = OkfCard::parse(&content) {
-            if let Ok(report) =
-                check_card_staleness_with_snapshot(backend, &self.root, snapshot, &card)
-            {
-                if report.stale {
-                    return (true, Some(report.diff_stat));
-                }
-            }
+        let key = path.to_string_lossy().into_owned();
+        if !cards.contains_key(&key) {
+            let Ok(content) = fs::read_to_string(&path) else {
+                return (false, None);
+            };
+            cards.insert(key.clone(), content);
         }
-
-        (false, None)
+        let report = OkfCard::parse(&cards[&key]).ok().and_then(|card| {
+            check_frontmatter_staleness_cached(
+                backend,
+                &self.root,
+                snapshot,
+                &card.frontmatter,
+                diffs,
+                want_diff_stat,
+            )
+            .ok()
+        });
+        match report {
+            Some(r) if r.stale => (true, Some(r.diff_stat)),
+            _ => (false, None),
+        }
     }
 
     /// Checks if a subsystem card is stale relative to Git.
     pub fn check_subsystem_staleness(&self, subsystem: &SubsystemInfo) -> (bool, Option<String>) {
         let backend = SystemGitBackend::new();
         if let Ok(snapshot) = backend.repo_snapshot(&self.root) {
-            self.check_subsystem_staleness_with_snap(subsystem, &snapshot, &backend)
+            self.check_subsystem_staleness_with_snap(
+                subsystem,
+                &snapshot,
+                &backend,
+                &mut DiffNameCache::new(),
+                &mut generator::CardCache::new(),
+                true,
+            )
         } else {
             let Some(path) = self.card_file(subsystem) else {
                 return (false, None);
@@ -404,9 +426,12 @@ impl ContextHandler {
         let cache = project.metrics_cache();
         let mut any_stale = false;
         let mut summaries = Vec::with_capacity(index.subsystems.len());
+        let (mut diffs, mut cards) = (DiffNameCache::new(), generator::CardCache::new());
         for sub in &index.subsystems {
             let (is_stale, _) = if let Some(snap) = &snapshot {
-                project.check_subsystem_staleness_with_snap(sub, snap, &git)
+                project.check_subsystem_staleness_with_snap(
+                    sub, snap, &git, &mut diffs, &mut cards, false,
+                )
             } else {
                 project.check_subsystem_staleness(sub)
             };
@@ -645,9 +670,14 @@ impl ContextHandler {
 
         let git = SystemGitBackend::new();
         let snapshot = git.repo_snapshot(&project.root).ok();
+        let (mut diffs, mut cards) = (DiffNameCache::new(), generator::CardCache::new());
         let any_stale = matched_subs.iter().any(|s| {
             if let Some(snap) = &snapshot {
-                project.check_subsystem_staleness_with_snap(s, snap, &git).0
+                project
+                    .check_subsystem_staleness_with_snap(
+                        s, snap, &git, &mut diffs, &mut cards, false,
+                    )
+                    .0
             } else {
                 project.check_subsystem_staleness(s).0
             }

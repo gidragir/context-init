@@ -146,6 +146,7 @@ impl GitCtx {
                     snap,
                     &card.frontmatter,
                     &mut self.diffs,
+                    false,
                 )
                 .ok()
             })

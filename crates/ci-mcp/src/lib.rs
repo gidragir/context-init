@@ -51,8 +51,41 @@ mod tests {
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+    /// Serializes the tests that rewrite process-wide environment variables (`XDG_*`, `HOME`):
+    /// parallel tests would otherwise read each other's directories.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    thread_local! {
+        /// How many [`EnvGuard`]s the current test thread holds (nested guards are free).
+        static ENV_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Holds [`ENV_LOCK`] for the guard's lifetime; re-entrant on the same thread, so a test
+    /// may create several [`TempDirGuard`]s without a deadlock.
+    struct EnvGuard {
+        _lock: Option<std::sync::MutexGuard<'static, ()>>,
+    }
+
+    impl EnvGuard {
+        fn acquire() -> Self {
+            let lock = (ENV_DEPTH.with(|d| d.get()) == 0)
+                .then(|| ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()));
+            ENV_DEPTH.with(|d| d.set(d.get() + 1));
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            ENV_DEPTH.with(|d| d.set(d.get() - 1));
+        }
+    }
+
+    /// Temp project dir; also holds [`EnvGuard`] for the whole test, since it rewrites
+    /// `XDG_DATA_HOME`/`XDG_CACHE_HOME` and tests using it rewrite more.
     struct TempDirGuard {
         path: PathBuf,
+        _env: EnvGuard,
     }
 
     impl TempDirGuard {
@@ -63,12 +96,13 @@ mod tests {
                 .unwrap_or(0);
             let seq = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
             let pid = std::process::id();
+            let env = EnvGuard::acquire();
             let path = std::env::temp_dir().join(format!("ci_mcp_{prefix}_{pid}_{nanos}_{seq}"));
             fs::create_dir_all(&path).expect("create temp test dir");
             // Keep central storage (`$XDG_DATA_HOME/context-init`) out of the real home.
             std::env::set_var("XDG_DATA_HOME", path.join(".xdg-data"));
             std::env::set_var("XDG_CACHE_HOME", path.join(".xdg-cache"));
-            Self { path }
+            Self { path, _env: env }
         }
 
         fn path(&self) -> &Path {
@@ -2642,14 +2676,17 @@ mod tests {
             .map(|s| ci_core::analysis::subsystems::subsystem_tokens(&resolved.root, s))
             .sum();
         assert_eq!(listed_sum, from_disk);
-        // Tokens persist in the metrics cache outside the repository (called on `resolved`
-        // directly: parallel tests rewrite `XDG_CACHE_HOME`).
+        // Tokens persist in the metrics cache under `cache_dir` (called on `resolved`
+        // directly with its resolved storage paths).
         ContextHandler::get_subsystems(&resolved, None, &TelemetryScope::disabled()).unwrap();
         let cache = ci_core::analysis::cache::DiskMetricsCache::for_storage(
             &resolved.storage_paths,
             &resolved.root,
         );
-        assert!(!cache.path().starts_with(&resolved.root));
+        // The test points `XDG_CACHE_HOME` into its temp dir; the cache follows `cache_dir`,
+        // never the knowledge base.
+        assert!(cache.path().starts_with(&resolved.storage_paths.cache_dir));
+        assert!(!cache.path().starts_with(&resolved.knowledge_dir));
         let first = &index.subsystems[0].files[0].path;
         assert!(
             cache
@@ -2659,6 +2696,113 @@ mod tests {
             "{first} missing in {}",
             cache.path().display()
         );
+    }
+
+    /// Delegates to the system Git backend, counting the diff calls.
+    struct CountingGit {
+        inner: ci_core::git::SystemGitBackend,
+        name_only: AtomicU64,
+        stat: AtomicU64,
+    }
+
+    impl ci_core::git::GitBackend for CountingGit {
+        fn head_commit(&self, root: &Path) -> anyhow::Result<String> {
+            self.inner.head_commit(root)
+        }
+        fn remote_url(&self, root: &Path) -> anyhow::Result<Option<String>> {
+            self.inner.remote_url(root)
+        }
+        fn blob_sha(&self, root: &Path, rel: &Path) -> anyhow::Result<Option<String>> {
+            self.inner.blob_sha(root, rel)
+        }
+        fn status_porcelain_z(
+            &self,
+            root: &Path,
+        ) -> anyhow::Result<Vec<ci_core::git::GitStatusEntry>> {
+            self.inner.status_porcelain_z(root)
+        }
+        fn diff_name_only(&self, root: &Path, from: &str, to: &str) -> anyhow::Result<Vec<String>> {
+            self.name_only.fetch_add(1, Ordering::Relaxed);
+            self.inner.diff_name_only(root, from, to)
+        }
+        fn diff_stat(
+            &self,
+            root: &Path,
+            from: &str,
+            to: &str,
+            paths: &[String],
+        ) -> anyhow::Result<String> {
+            self.stat.fetch_add(1, Ordering::Relaxed);
+            self.inner.diff_stat(root, from, to, paths)
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_cards_with_one_recorded_commit_share_one_diff_lookup() {
+        use ci_core::git::{DiffNameCache, GitBackend};
+
+        let tmp = TempDirGuard::new("stale_shared_diff");
+        isolate_config_dirs(&tmp);
+        write_fixture(tmp.path());
+        git(tmp.path(), &["init", "-q"]);
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "base"]);
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+        server
+            .init(Parameters(init_params(tmp.path())))
+            .await
+            .expect("init");
+        git(tmp.path(), &["add", "-A"]);
+        git(tmp.path(), &["commit", "-q", "-m", "kb"]);
+        for m in ["api", "engine", "store"] {
+            fs::write(
+                tmp.path().join("src").join(m).join("mod.rs"),
+                format!("pub fn changed_{m}() -> u32 {{ 9 }}\n"),
+            )
+            .unwrap();
+        }
+        git(tmp.path(), &["commit", "-q", "-am", "change all"]);
+
+        let project = ResolvedProject::load(tmp.path().to_path_buf()).unwrap();
+        let index = project.load_l0_index().unwrap();
+        let subs: Vec<_> = index
+            .subsystems
+            .iter()
+            .filter(|s| s.id.starts_with("src_") && s.id != "src_core")
+            .collect();
+        assert_eq!(subs.len(), 3, "{:?}", index.subsystems);
+        let backend = CountingGit {
+            inner: ci_core::git::SystemGitBackend::new(),
+            name_only: AtomicU64::new(0),
+            stat: AtomicU64::new(0),
+        };
+        let snap = backend.inner.repo_snapshot(&project.root).unwrap();
+        let (mut diffs, mut cards) = (
+            DiffNameCache::new(),
+            ci_core::analysis::generator::CardCache::new(),
+        );
+        for sub in &subs {
+            let (stale, _) = project.check_subsystem_staleness_with_snap(
+                sub, &snap, &backend, &mut diffs, &mut cards, false,
+            );
+            assert!(stale, "{} should be stale", sub.id);
+        }
+        assert_eq!(backend.name_only.load(Ordering::Relaxed), 1);
+        assert_eq!(backend.stat.load(Ordering::Relaxed), 0);
+        assert_eq!(cards.len(), 3);
+
+        // The single-card path still reports `git diff --stat`.
+        let (stale, stat) = project.check_subsystem_staleness_with_snap(
+            subs[0],
+            &snap,
+            &backend,
+            &mut DiffNameCache::new(),
+            &mut ci_core::analysis::generator::CardCache::new(),
+            true,
+        );
+        assert!(stale);
+        assert_eq!(backend.stat.load(Ordering::Relaxed), 1);
+        assert!(stat.unwrap().contains("mod.rs"));
     }
 
     #[tokio::test]

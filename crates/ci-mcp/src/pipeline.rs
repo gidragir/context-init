@@ -9,10 +9,7 @@ use ci_core::analysis::generator::{self, sanitize_id, GenerateOptions};
 use ci_core::analysis::subsystems::build_deterministic;
 use ci_core::analysis::{detector, ProjectAnalysis};
 use ci_core::config::{Config, StorageMode, ROLE_NONE};
-use ci_core::git::{
-    check_frontmatter_staleness_cached, DiffNameCache, GitBackend, SystemGitBackend,
-};
-use ci_core::openviking::OkfCard;
+use ci_core::git::{DiffNameCache, GitBackend, SystemGitBackend};
 use ci_core::storage::{L0Index, SubsystemInfo};
 use ci_core::SummarySource;
 use ci_llm::enrich::{enrich_subsystems, EnrichOutcome};
@@ -164,29 +161,11 @@ pub fn run_check(project: &ResolvedProject) -> Result<FullDriftReport> {
             .subsystems
             .iter()
             .filter(|s| {
-                let Some(path) = project.card_file(s) else {
-                    return false;
-                };
-                let key = path.to_string_lossy().into_owned();
-                if !cards.contains_key(&key) {
-                    let Ok(text) = std::fs::read_to_string(&path) else {
-                        return false;
-                    };
-                    cards.insert(key.clone(), text);
-                }
-                OkfCard::parse(&cards[&key])
-                    .ok()
-                    .and_then(|card| {
-                        check_frontmatter_staleness_cached(
-                            &git,
-                            &project.root,
-                            snap,
-                            &card.frontmatter,
-                            &mut diffs,
-                        )
-                        .ok()
-                    })
-                    .is_some_and(|r| r.stale)
+                project
+                    .check_subsystem_staleness_with_snap(
+                        s, snap, &git, &mut diffs, &mut cards, false,
+                    )
+                    .0
             })
             .map(|s| s.id.clone())
             .collect()
