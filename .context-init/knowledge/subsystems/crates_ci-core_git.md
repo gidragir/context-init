@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/git.rs
 source:
   kind: git
-  blob_sha: 253c3f932390492ab395526dfd81fc1bb656dbe6
-  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
+  blob_sha: ebce04761f9c7700202d891b70a830b20030ff27
+  commit_sha: b040800534c30a22a394125140a07068cb5d9d25
 generated_by:
   component: context-init
   role: update

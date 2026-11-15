@@ -2,8 +2,8 @@
 directory: src/cli
 source:
   kind: git
-  blob_sha: dcec2d8487f7f646e18d36516aeda39f425b2c61
-  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
+  blob_sha: 9baf64f4304035809a5b537a8589dc15ac2d41e0
+  commit_sha: b040800534c30a22a394125140a07068cb5d9d25
 generated_by:
   component: context-init
   role: update

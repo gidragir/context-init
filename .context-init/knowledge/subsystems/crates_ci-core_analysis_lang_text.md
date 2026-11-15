@@ -2,8 +2,8 @@
 directory: crates/ci-core/src/analysis/lang/text.rs
 source:
   kind: git
-  blob_sha: 74256ff369d2d34b9f447033dcb584dfeafc4cca
-  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
+  blob_sha: ba958a3f0770e8b8d292e778843df41419c2599e
+  commit_sha: b040800534c30a22a394125140a07068cb5d9d25
 generated_by:
   component: context-init
   role: update
