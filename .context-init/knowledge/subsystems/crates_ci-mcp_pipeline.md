@@ -3,7 +3,7 @@ directory: crates/ci-mcp/src/pipeline.rs
 source:
   kind: git
   blob_sha: 98515535ddadb3c2b350abc474187a3862f84d0c
-  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
   role: init

@@ -3,7 +3,7 @@ directory: crates/ci-llm/src/decorators.rs
 source:
   kind: git
   blob_sha: a12861766d4f9eeb4625627ce0b8ff62f7baa303
-  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
   role: init

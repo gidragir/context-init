@@ -3,10 +3,10 @@ directory: reports
 source:
   kind: git
   blob_sha: 84c1154030660d494b74f2d5b1c3ecfaffa484fa
-  commit_sha: 7a0150d418cd748d8858807e89a06e8a7225091e
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 15

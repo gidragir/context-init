@@ -3,10 +3,10 @@ directory: crates/ci-core/src/storage.rs
 source:
   kind: git
   blob_sha: da663ed36043d8f6081e7d993ba1bf6b177f88dc
-  commit_sha: 7a0150d418cd748d8858807e89a06e8a7225091e
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1

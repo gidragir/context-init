@@ -3,7 +3,7 @@ directory: scripts
 source:
   kind: git
   blob_sha: 2676993145e9f10831c150e5e35ccae06cd42acd
-  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
   role: init

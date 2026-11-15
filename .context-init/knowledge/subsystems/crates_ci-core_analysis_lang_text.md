@@ -3,7 +3,7 @@ directory: crates/ci-core/src/analysis/lang/text.rs
 source:
   kind: git
   blob_sha: ba958a3f0770e8b8d292e778843df41419c2599e
-  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
   role: init

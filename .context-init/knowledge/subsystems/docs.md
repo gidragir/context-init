@@ -3,10 +3,10 @@ directory: docs/superpowers
 source:
   kind: git
   blob_sha: 8528d28da3f1787a5452a97c6d3bf3c69e4a66ea
-  commit_sha: 7a0150d418cd748d8858807e89a06e8a7225091e
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 15

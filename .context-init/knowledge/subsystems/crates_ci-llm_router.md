@@ -3,7 +3,7 @@ directory: crates/ci-llm/src/router.rs
 source:
   kind: git
   blob_sha: 819f1b1d77abedf8a88e2d1d2433f89f80284c95
-  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
   role: init

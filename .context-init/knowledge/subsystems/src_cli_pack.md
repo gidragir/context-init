@@ -3,7 +3,7 @@ directory: src/cli/pack.rs
 source:
   kind: git
   blob_sha: b15ee7af6f96b5a3866b3584b4199faebc5de2a2
-  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
   role: init

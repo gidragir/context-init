@@ -3,7 +3,7 @@ directory: crates/ci-core/src/analysis/task.rs
 source:
   kind: git
   blob_sha: fdb882030d4c2b20f999f64f8670ea2f7e09576f
-  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
+  commit_sha: 8edfd693b819f9b4b54f664fed4f61310c0300c2
 generated_by:
   component: context-init
   role: init
