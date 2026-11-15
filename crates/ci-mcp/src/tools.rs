@@ -99,7 +99,7 @@ pub struct McpPackParams {
     /// Compress AST by stripping function bodies (default: true).
     #[serde(default)]
     pub compress: Option<bool>,
-    /// Output format: 'xml' or 'markdown' (default: 'xml').
+    /// Output format: 'compact', 'xml' or 'markdown' (default: 'compact').
     #[serde(default)]
     pub style: Option<String>,
     /// Pagination cursor for continuing output.

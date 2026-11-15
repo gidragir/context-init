@@ -286,7 +286,7 @@ mod tests {
             Some(Commands::Pack(a)) => {
                 assert_eq!(a.subsystem_id, "core");
                 assert!(!a.no_compress);
-                assert_eq!(a.style, "xml");
+                assert_eq!(a.style, "compact");
                 assert!(a.output.is_none());
             }
             other => panic!("expected pack, got {other:?}"),

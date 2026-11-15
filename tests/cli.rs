@@ -241,13 +241,26 @@ fn cli_pack_compress_outputs_xml() {
     let index_path = sb.project().join(".context-init/knowledge/L0_index.json");
     let index = ci_core::storage::L0Index::load_from_file(&index_path).unwrap();
     let id = index.subsystems[0].id.clone();
-    let out = sb.run(&["pack", &id, ".", "--compress"]);
+    let out = sb.run(&["pack", &id, ".", "--compress", "--style", "xml"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert!(
         stdout(&out).trim_start().starts_with('<'),
         "{}",
         stdout(&out)
     );
+}
+
+#[test]
+fn cli_pack_compress_outputs_compact_by_default() {
+    let sb = Sandbox::new("pack_compact");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let index_path = sb.project().join(".context-init/knowledge/L0_index.json");
+    let index = ci_core::storage::L0Index::load_from_file(&index_path).unwrap();
+    let id = index.subsystems[0].id.clone();
+    let out = sb.run(&["pack", &id, ".", "--compress"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(stdout(&out).starts_with("=== "), "{}", stdout(&out));
 }
 
 #[test]

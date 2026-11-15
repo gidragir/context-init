@@ -9,20 +9,97 @@ use crate::storage::{safe_join, L0Index, SubsystemInfo};
 /// Output format of a context pack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PackStyle {
+    /// Plain `=== path (NL) ===` headers, no XML/Markdown framing.
     #[default]
-    Xml,
+    Compact,
     Markdown,
+    Xml,
 }
 
 impl PackStyle {
-    /// Parses `"markdown"` (case-insensitive) as Markdown; anything else is XML.
-    pub fn parse(style: &str) -> Self {
-        if style.eq_ignore_ascii_case("markdown") {
-            Self::Markdown
-        } else {
-            Self::Xml
+    /// Strict parser: `compact`, `markdown` or `xml` (case-insensitive).
+    pub fn try_parse(style: &str) -> Result<Self> {
+        match style.trim().to_ascii_lowercase().as_str() {
+            "compact" => Ok(Self::Compact),
+            "markdown" => Ok(Self::Markdown),
+            "xml" => Ok(Self::Xml),
+            other => bail!("Unknown pack style '{other}': expected compact, markdown or xml"),
         }
     }
+
+    /// Lenient parser: unknown values fall back to the default (Compact).
+    pub fn parse(style: &str) -> Self {
+        Self::try_parse(style).unwrap_or_default()
+    }
+}
+
+/// How much of each file goes into the pack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PackMode {
+    Full,
+    #[default]
+    Compressed,
+    Toc,
+}
+
+/// Fine-grained compression switches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompressOptions {
+    pub strip_imports: bool,
+    pub public_only: bool,
+    pub exclude_tests: bool,
+    pub strip_comments: bool,
+    pub inline_elide: bool,
+}
+
+impl CompressOptions {
+    /// Legacy behavior: everything off, identical to `compress_source`.
+    pub fn legacy() -> Self {
+        Self {
+            strip_imports: false,
+            public_only: false,
+            exclude_tests: false,
+            strip_comments: false,
+            inline_elide: false,
+        }
+    }
+
+    /// Aggressive settings for the compact style.
+    pub fn compact() -> Self {
+        Self {
+            strip_imports: true,
+            public_only: false,
+            exclude_tests: true,
+            strip_comments: true,
+            inline_elide: true,
+        }
+    }
+}
+
+impl Default for CompressOptions {
+    fn default() -> Self {
+        Self::legacy()
+    }
+}
+
+/// Parameters of a pack operation.
+#[derive(Debug, Clone, Copy)]
+pub struct PackRequest<'a> {
+    pub root: &'a Path,
+    pub subs: &'a [&'a SubsystemInfo],
+    pub files: &'a [String],
+    pub mode: PackMode,
+    pub style: PackStyle,
+    pub options: CompressOptions,
+}
+
+/// Like `compress_source`, with explicit options (options take effect from Task 4).
+pub fn compress_source_with(content: &str, ext: &str, _opts: &CompressOptions) -> String {
+    compress_source(content, ext)
+}
+
+fn xml_escape(s: &str) -> String {
+    quick_xml::escape::escape(s).into_owned()
 }
 
 /// A packed subsystem selection.
@@ -146,7 +223,25 @@ pub fn pack_files(
 ) -> String {
     let mut buffer = String::new();
 
-    if style == PackStyle::Markdown {
+    if style == PackStyle::Compact {
+        for file_rel in files {
+            let full_p = root.join(file_rel);
+            if let Ok(content) = std::fs::read_to_string(&full_p) {
+                let ext = full_p.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let processed = if compress {
+                    compress_source(&content, ext)
+                } else {
+                    content
+                };
+                buffer.push_str(&format!(
+                    "=== {} ({}L) ===\n{}\n\n",
+                    file_rel,
+                    processed.lines().count(),
+                    processed
+                ));
+            }
+        }
+    } else if style == PackStyle::Markdown {
         buffer.push_str("# 📦 AI Context Pack: ");
         let names: Vec<&str> = subs.iter().map(|s| s.name.as_str()).collect();
         buffer.push_str(&names.join(", "));
@@ -173,7 +268,9 @@ pub fn pack_files(
         for sub in subs {
             buffer.push_str(&format!(
                 "  <subsystem id=\"{}\" name=\"{}\">\n    <summary>{}</summary>\n  </subsystem>\n",
-                sub.id, sub.name, sub.summary
+                xml_escape(&sub.id),
+                xml_escape(&sub.name),
+                xml_escape(&sub.summary)
             ));
         }
         buffer.push_str("  <files>\n");
@@ -189,7 +286,8 @@ pub fn pack_files(
                 };
                 buffer.push_str(&format!(
                     "    <file path=\"{}\">\n<![CDATA[\n{}\n]]>\n    </file>\n",
-                    file_rel, processed
+                    xml_escape(file_rel),
+                    processed.replace("]]>", "]]]]><![CDATA[>")
                 ));
             }
         }
@@ -825,5 +923,80 @@ mod pack_subsystem_tests {
             }
         }
         let _ = fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+
+    fn make_sub(name: &str) -> SubsystemInfo {
+        SubsystemInfo {
+            id: "core".to_string(),
+            name: name.to_string(),
+            summary: "Core logic".to_string(),
+            l1_path: "subsystems/core.md".to_string(),
+            tags: vec![],
+            entrypoints: vec![],
+            key_files: vec![],
+            files: vec![],
+            key_symbols: vec![],
+            test_command: None,
+            tokens: 10,
+            parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
+        }
+    }
+
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("ci_packer_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn test_pack_style_try_parse_rejects_unknown() {
+        assert_eq!(PackStyle::try_parse("compact").unwrap(), PackStyle::Compact);
+        assert!(PackStyle::try_parse("YAML").is_err());
+    }
+
+    #[test]
+    fn test_pack_compact_format_has_no_xml_or_markdown_banners() {
+        let dir = tmp("compact");
+        std::fs::write(dir.join("lib.rs"), "pub fn add() {}").unwrap();
+        let sub = make_sub("Core");
+        let files = vec!["lib.rs".to_string()];
+        let out = pack_files(&dir, &[&sub], &files, false, PackStyle::Compact);
+        assert!(out.contains("=== lib.rs (1L) ==="), "{out}");
+        assert!(!out.contains("<?xml"));
+        assert!(!out.contains("<![CDATA["));
+        assert!(!out.contains("# 📦 AI Context Pack"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_pack_xml_escapes_cdata_terminator_and_attributes() {
+        let dir = tmp("xmlesc");
+        let name = "a&\"b<c.rs";
+        std::fs::write(dir.join(name), "let s = \"]]>\";").unwrap();
+        let sub = make_sub("Co&re<\"");
+        let files = vec![name.to_string()];
+        let out = pack_files(&dir, &[&sub], &files, false, PackStyle::Xml);
+        let mut reader = quick_xml::Reader::from_str(&out);
+        let mut text = String::new();
+        loop {
+            match reader.read_event().unwrap_or_else(|e| panic!("{e}: {out}")) {
+                quick_xml::events::Event::Eof => break,
+                quick_xml::events::Event::CData(c) => {
+                    text.push_str(&String::from_utf8_lossy(&c.into_inner()))
+                }
+                _ => {}
+            }
+        }
+        assert!(text.contains("\"]]>\""), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

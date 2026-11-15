@@ -33,8 +33,8 @@ pub struct PackArgs {
     /// Use the external `repomix` tool instead of the built-in packer
     #[arg(long)]
     pub repomix: bool,
-    /// Output format: xml or markdown
-    #[arg(long, default_value = "xml")]
+    /// Output format: compact, xml or markdown
+    #[arg(long, default_value = "compact")]
     pub style: String,
 }
 
@@ -42,13 +42,14 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
     let project = global.load_project(&args.path, None)?;
     let index = project.load_l0_index()?;
     let compress = !args.no_compress;
+    let style = PackStyle::try_parse(&args.style)?;
     let packed = pack_subsystem(
         &project.root,
         &project.knowledge_dir,
         &index,
         &args.subsystem_id,
         compress,
-        PackStyle::parse(&args.style),
+        style,
     )?;
 
     let tel = telemetry_scope(&project);

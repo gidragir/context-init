@@ -461,6 +461,10 @@ impl ContextInitServer {
     )]
     pub async fn pack(&self, params: Parameters<McpPackParams>) -> Result<String, rmcp::ErrorData> {
         let p = params.0;
+        if let Some(style) = p.style.as_deref() {
+            ci_core::analysis::pack::PackStyle::try_parse(style)
+                .map_err(|e| rmcp::ErrorData::invalid_params(format!("{e:#}"), None))?;
+        }
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
@@ -471,7 +475,7 @@ impl ContextInitServer {
                 &resolved,
                 &p.subsystem_id,
                 p.compress.unwrap_or(true),
-                p.style.as_deref().unwrap_or("xml"),
+                p.style.as_deref().unwrap_or("compact"),
                 p.cursor.as_deref(),
                 &tel,
             )
