@@ -420,6 +420,18 @@ mod tests {
     const TS: &str = "import { x } from './x';\nexport interface User {\n  id: string;\n}\n\nexport function load(u: User): string {\n  return `${u.id}}`;\n}\n";
 
     #[test]
+    fn brace_compact_collapses_multiline_ts_imports_without_dangling_lines() {
+        let a = BraceLangAdapter;
+        let src = "import {\n  a,\n  b,\n} from './x';\nimport type { C } from './c';\n\nexport function run(): number {\n  return a + b;\n}\n";
+        let c = a.compress_with(src, "ts", &CompressOptions::compact());
+        assert!(c.starts_with("// [2 imports omitted]\n"), "{c}");
+        assert!(!c.contains("} from"), "{c}");
+        assert!(!c.contains("omitted] ⋮"), "{c}");
+        assert!(c.contains("export function run(): number { ⋮ }"), "{c}");
+        assert!(!c.contains("a + b"), "{c}");
+    }
+
+    #[test]
     fn brace_extract_symbols_and_compress_respect_go_and_ts_extensions() {
         let a = BraceLangAdapter;
         let go_syms = a.extract_symbols(GO);

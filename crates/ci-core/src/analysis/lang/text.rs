@@ -529,16 +529,31 @@ fn collapse_imports(lines: Vec<String>, rules: &LineRules) -> Vec<String> {
     let mut out: Vec<String> = Vec::with_capacity(lines.len());
     let mut count = 0usize;
     let mut marker: Option<usize> = None;
-    let mut in_group = false;
+    // Open multi-line import: Go `import (` (one entry per line) or TS/JS `import {`
+    // (one statement; its lines, incl. a legacy `⋮----` marker, end at the line with `}`).
+    enum Group {
+        Paren,
+        Brace,
+    }
+    let mut group: Option<Group> = None;
     for l in lines {
         let t = l.trim();
-        if in_group {
-            if t == ")" {
-                in_group = false;
-            } else if !t.is_empty() {
-                count += 1;
+        match group {
+            Some(Group::Paren) => {
+                if t == ")" {
+                    group = None;
+                } else if !t.is_empty() {
+                    count += 1;
+                }
+                continue;
             }
-            continue;
+            Some(Group::Brace) => {
+                if t.starts_with('}') {
+                    group = None;
+                }
+                continue;
+            }
+            None => {}
         }
         if indent_of(&l) == 0 && (rules.is_import)(t) {
             if marker.is_none() {
@@ -546,9 +561,12 @@ fn collapse_imports(lines: Vec<String>, rules: &LineRules) -> Vec<String> {
                 out.push(String::new());
             }
             if t.ends_with('(') {
-                in_group = true;
+                group = Some(Group::Paren);
             } else {
                 count += 1;
+                if t.matches('{').count() > t.matches('}').count() {
+                    group = Some(Group::Brace);
+                }
             }
             continue;
         }
