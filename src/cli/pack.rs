@@ -300,7 +300,16 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
         );
     }
 
-    if args.repomix && is_binary_available("repomix") {
+    let budget = CliBudget {
+        max_lines: args.max_lines,
+        max_tokens: args.max_tokens,
+        cursor: args.cursor.as_deref(),
+    };
+    // repomix knows nothing of the output budget (G4): a budgeted run stays built-in.
+    if args.repomix && budget.is_active() {
+        eprintln!("--repomix ignored: --max-lines/--max-tokens/--cursor use the built-in packer");
+    }
+    if args.repomix && !budget.is_active() && is_binary_available("repomix") {
         let mut cmd = Command::new("repomix");
         cmd.arg("--include")
             .arg(packed.files.join(","))
@@ -319,11 +328,6 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
         eprintln!("repomix failed; falling back to the built-in packer");
     }
 
-    let budget = CliBudget {
-        max_lines: args.max_lines,
-        max_tokens: args.max_tokens,
-        cursor: args.cursor.as_deref(),
-    };
     let content = if budget.is_active() {
         let levels = ladder(style, mode, options, args);
         let mode_name = format!("{mode:?}");

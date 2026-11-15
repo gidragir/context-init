@@ -1506,3 +1506,56 @@ fn cli_check_reports_legacy_agents_knowledge_hint() {
     );
     assert!(text.contains(".agents/knowledge"), "output: {text}");
 }
+
+#[cfg(unix)]
+#[test]
+fn cli_pack_repomix_is_ignored_under_output_budget() {
+    let sb = Sandbox::new("pack_repomix_budget");
+    write_budget_fixture(&sb);
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let bin = sb.dir.join("repomix-bin");
+    fs::create_dir_all(&bin).unwrap();
+    let marker = sb.dir.join("repomix.called");
+    let script = bin.join("repomix");
+    fs::write(
+        &script,
+        format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = sb.run_with_path(
+        &[
+            "pack",
+            "all",
+            ".",
+            "--repomix",
+            "--no-compress",
+            "--max-lines",
+            "25",
+        ],
+        &path,
+    );
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(!marker.exists(), "repomix ran despite the budget");
+    assert!(
+        stderr(&out).contains("--repomix ignored"),
+        "{}",
+        stderr(&out)
+    );
+    let text = stdout(&out);
+    assert!(text.lines().count() <= 25, "{text}");
+    assert!(text.contains("--cursor \"cur_"), "{text}");
+
+    // Without a budget the fake repomix is used.
+    let out = sb.run_with_path(&["pack", "all", ".", "--repomix"], &path);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(marker.exists(), "repomix should run without a budget");
+}
