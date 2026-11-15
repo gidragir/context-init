@@ -239,7 +239,7 @@ impl ProjectType {
             Self::DevOps => "Infrastructure / DevOps (Docker/K8s/Ansible)",
             Self::Java => "Java (Maven/Gradle)",
             Self::Kotlin => "Kotlin (Gradle)",
-            Self::OneC => "1C:Enterprise (BSL/MDO)",
+            Self::OneC => "BSL platform (BSL/MDO)",
             Self::Generic => "Generic / Multi-language",
         }
     }

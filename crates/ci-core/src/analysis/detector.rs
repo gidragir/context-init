@@ -356,7 +356,7 @@ fn detect_type_and_name(root: &Path) -> (ProjectType, Option<String>, Vec<String
         return (ptype, name, ws_members);
     }
 
-    // 4. 1C:Enterprise (BSL/MDO)
+    // 4. BSL platform (BSL/MDO)
     if let Some((ptype, name, ws_members)) = parse_one_c(root) {
         return (ptype, name, ws_members);
     }
@@ -2572,7 +2572,7 @@ fn generate_default_rules(pt: &ProjectType, with_rtk: bool) -> Vec<String> {
             "Обрабатывать исключения явно, избегать пустых catch-блоков.".to_string(),
         ],
         ProjectType::OneC => vec![
-            "Соблюдать стандарты разработки 1С:Предприятие (BSL/MDO).".to_string(),
+            "Соблюдать стандарты разработки платформы BSL (BSL/MDO).".to_string(),
             "Проверять код статическим анализатором BSL LS / vrunner.".to_string(),
         ],
         ProjectType::Generic => vec![
