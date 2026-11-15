@@ -3,10 +3,10 @@ directory: crates/ci-core/src/analysis/lang/kotlin.rs
 source:
   kind: git
   blob_sha: 5df5d6a476863164daa4fd144b4371da730c1ec2
-  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
+  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 1

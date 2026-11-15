@@ -3,10 +3,10 @@ directory: src/cli/setup
 source:
   kind: git
   blob_sha: ed0de18632b72aa2c87aa3034e73835e90282886
-  commit_sha: a37e2f209483ac97bb4729dec70449be893293c4
+  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 5

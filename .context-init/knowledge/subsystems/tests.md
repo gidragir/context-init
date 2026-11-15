@@ -3,10 +3,10 @@ directory: tests
 source:
   kind: git
   blob_sha: d13bb717e98f315a85e7973f69c4a7b5ee2fbe59
-  commit_sha: b040800534c30a22a394125140a07068cb5d9d25
+  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
 generated_by:
   component: context-init
-  role: update
+  role: init
   model: none
 freshness:
   total_entries: 2

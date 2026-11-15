@@ -1,7 +1,7 @@
 # ADR 0001: Начальная архитектура и топология context-init
 
 - **Статус:** Принято
-- **Дата:** 2026-11-07
+- **Дата:** 2026-11-15
 - **Стек:** Rust (Cargo)
 
 ## Контекст
@@ -10,12 +10,16 @@
 ## Архитектурные границы подсистем
 - **Ci Core** (`crates_ci-core`): Подсистема `crates/ci-core` с ключевыми точками входа: crates/ci-core/Cargo.toml, crates/ci-core/src/lib.rs
 - **Ci Core Analysis** (`crates_ci-core_analysis`): Подсистема `crates/ci-core/src/analysis` с ключевыми точками входа: crates/ci-core/src/analysis/mod.rs
+- **Ci Core Analysis Cache** (`crates_ci-core_analysis_cache`): Модуль-файл `crates/ci-core/src/analysis/cache.rs`
 - **Ci Core Analysis Detector** (`crates_ci-core_analysis_detector`): Модуль и компоненты директории `crates/ci-core/src/analysis/detector` (2 файлов)
 - **Ci Core Analysis Detector Gradle** (`crates_ci-core_analysis_detector_gradle`): Модуль-файл `crates/ci-core/src/analysis/detector/gradle.rs`
 - **Ci Core Analysis Detector Tests** (`crates_ci-core_analysis_detector_tests`): Тесты для `crates_ci-core_analysis_detector`
 - **Ci Core Analysis Detector Tests Classifier** (`crates_ci-core_analysis_detector_tests_classifier`): Модуль-файл `crates/ci-core/src/analysis/detector/tests_classifier.rs`
 - **Ci Core Analysis Generator** (`crates_ci-core_analysis_generator`): Модуль-файл `crates/ci-core/src/analysis/generator.rs`
 - **Ci Core Analysis Lang** (`crates_ci-core_analysis_lang`): Подсистема `crates/ci-core/src/analysis/lang` с ключевыми точками входа: crates/ci-core/src/analysis/lang/mod.rs
+- **Ci Core Analysis Lang Kotlin** (`crates_ci-core_analysis_lang_kotlin`): Модуль-файл `crates/ci-core/src/analysis/lang/kotlin.rs`
+- **Ci Core Analysis Lang Mdo** (`crates_ci-core_analysis_lang_mdo`): Модуль-файл `crates/ci-core/src/analysis/lang/mdo.rs`
+- **Ci Core Analysis Lang Text** (`crates_ci-core_analysis_lang_text`): Модуль-файл `crates/ci-core/src/analysis/lang/text.rs`
 - **Ci Core Analysis Pack** (`crates_ci-core_analysis_pack`): Модуль-файл `crates/ci-core/src/analysis/pack.rs`
 - **Ci Core Analysis Scan** (`crates_ci-core_analysis_scan`): Модуль-файл `crates/ci-core/src/analysis/scan.rs`
 - **Ci Core Analysis Task** (`crates_ci-core_analysis_task`): Модуль-файл `crates/ci-core/src/analysis/task.rs`
@@ -37,11 +41,12 @@
 - **Ci Mcp Pipeline** (`crates_ci-mcp_pipeline`): Модуль-файл `crates/ci-mcp/src/pipeline.rs`
 - **Ci Mcp Server** (`crates_ci-mcp_server`): Модуль-файл `crates/ci-mcp/src/server.rs`
 - **Ci Mcp Tools** (`crates_ci-mcp_tools`): Модуль-файл `crates/ci-mcp/src/tools.rs`
-- **Docs** (`docs`): Модуль и компоненты директории `docs` (13 файлов)
+- **Docs** (`docs`): Модуль и компоненты директории `docs` (15 файлов)
 - **References** (`references`): Модуль и компоненты директории `references` (1 файлов)
 - **Reports** (`reports`): Модуль и компоненты директории `reports` (15 файлов)
 - **Scripts** (`scripts`): Модуль и компоненты директории `scripts` (9 файлов)
 - **Cli** (`src_cli`): Подсистема `src/cli` с ключевыми точками входа: src/cli/mod.rs
+- **Cli Pack** (`src_cli_pack`): Модуль-файл `src/cli/pack.rs`
 - **Cli Setup** (`src_cli_setup`): Подсистема `src/cli/setup` с ключевыми точками входа: src/cli/setup/mod.rs
 - **Tests** (`tests`): Тесты проекта
 

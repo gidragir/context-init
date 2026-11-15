@@ -3,7 +3,7 @@ directory: crates/ci-core/src/openviking.rs
 source:
   kind: git
   blob_sha: 0cc4de7ba10b4779cc82728037a00fae9d7e1577
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
 generated_by:
   component: context-init
   role: init

@@ -3,7 +3,7 @@ directory: crates/ci-llm/src/schema.rs
 source:
   kind: git
   blob_sha: b95d2c22432aa435641bfb7304baeb4fc36bbdb0
-  commit_sha: 05b17436dd0087469fb8bef6c61f16e554831faa
+  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
 generated_by:
   component: context-init
   role: init
