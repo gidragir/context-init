@@ -17,11 +17,11 @@
 | Скрипт | Выполняемая команда |
 | :--- | :--- |
 | `audit-sessions` | `rtk mise run audit-sessions` |
-| `install` | `rtk mise run install` |
-| `audit` | `rtk mise run audit` |
 | `probe-adoption` | `rtk mise run probe-adoption` |
-| `dist` | `rtk mise run dist` |
+| `audit` | `rtk mise run audit` |
+| `install` | `rtk mise run install` |
 | `check` | `rtk mise run check` |
+| `dist` | `rtk mise run dist` |
 
 ## Быстрый запуск
 ```bash

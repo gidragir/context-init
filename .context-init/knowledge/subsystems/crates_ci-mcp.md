@@ -3,10 +3,10 @@ directory: crates/ci-mcp
 source:
   kind: git
   blob_sha: d60742eed738b9b35796027aa828fec30ac6391b
-  commit_sha: ebecc37e77cdf411f5310fea0fda7166b9e27a50
+  commit_sha: 7a0150d418cd748d8858807e89a06e8a7225091e
 generated_by:
   component: context-init
-  role: init
+  role: update
   model: none
 freshness:
   total_entries: 2

@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.1] - 2026-11-15
+
+### Fixed
+- Simplified the ignored-filename guard in scope walking to satisfy `clippy::needless_bool` on current stable toolchains.
+- Removed vendor-specific naming from the BSL project type labels so the `neutrality` CI invariant passes.
+
+## [0.5.0] - 2026-11-15
+
+### Added
+- **Pack filtering and budgets**: file and symbol filtering, symbol spans, compress options, TOC mode, compact style and an output budget with query-hash pagination cursors for `pack` (CLI and MCP); `--repomix` is ignored when a budget is active.
+- **MCP usage protocol**: server instructions advertise the context-init usage protocol.
+- **Section-name extraction** for pagination from various header formats.
+
+### Changed
+- **Faster sync**: batched repo snapshot via `ls-tree` with blob SHA parity, shared git snapshot and card cache in `update`/`check`, single scope walk, one read per file per run, point refresh of stale cards and token reuse through a disk cache.
+- Full refresh for layout-defined `src` and monorepo parents; snapshot paths resolve for projects nested in repo subdirectories.
+
+### Fixed
+- Multiline brace imports collapse without dangling lines; zero `line_start` in symbol spans is tolerated; unparsable diff lookups are rejected and shared across staleness checks.
+
 ## [0.4.0] - 2026-11-08
 
 ### Added

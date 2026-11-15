@@ -18,11 +18,11 @@
     "run": "rtk cargo run",
     "custom": {
       "audit-sessions": "rtk mise run audit-sessions",
-      "install": "rtk mise run install",
-      "audit": "rtk mise run audit",
       "probe-adoption": "rtk mise run probe-adoption",
-      "dist": "rtk mise run dist",
-      "check": "rtk mise run check"
+      "audit": "rtk mise run audit",
+      "install": "rtk mise run install",
+      "check": "rtk mise run check",
+      "dist": "rtk mise run dist"
     }
   },
   "subsystems": [
@@ -1656,7 +1656,7 @@
     "Публичные структуры и функции должны сопровождаться docstring (`///`)."
   ],
   "generator": {
-    "version": "0.5.0",
-    "build": "ebecc37-dirty"
+    "version": "0.5.1",
+    "build": "7a0150d-dirty"
   }
 }

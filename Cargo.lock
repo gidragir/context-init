@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "ci-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "dirs-next",
@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "ci-llm"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "ci-core",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "ci-mcp"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "ci-core",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "context-init"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "ci-core",
