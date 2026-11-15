@@ -703,7 +703,7 @@ fn select_symbols(
         }
         picked.push((span.line_start, span.line_end));
         let end = span.line_end.min(lines.len());
-        let start = (span.line_start - 1).min(end);
+        let start = span.line_start.saturating_sub(1).min(end);
         blocks.push(format!(
             "[L{}-L{}] {}\n{}",
             span.line_start,

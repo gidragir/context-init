@@ -845,7 +845,7 @@ pub(crate) fn span_bodies(
         .filter(|s| kinds.contains(&s.kind))
         .map(|s| {
             let end = s.line_end.min(lines.len());
-            let start = (s.line_start - 1).min(end);
+            let start = s.line_start.saturating_sub(1).min(end);
             (symbol_name(s), lines[start..end].join("\n"))
         })
         .collect()
@@ -939,6 +939,20 @@ pub(crate) fn symbol_name(span: &SymbolSpan) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn span_bodies_tolerate_zero_line_start() {
+        let spans = [SymbolSpan {
+            kind: "fn",
+            signature: "fn a()".to_string(),
+            is_public: true,
+            line_start: 0,
+            line_end: 1,
+        }];
+        let bodies = span_bodies("fn a() {}\nfn b() {}\n", &spans, &["fn"]);
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(bodies[0].1, "fn a() {}");
+    }
 
     #[test]
     fn mask_handles_kotlin_raw_strings_and_templates() {
