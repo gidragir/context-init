@@ -1,5 +1,7 @@
-use super::LanguageAdapter;
+use super::text::{apply_options, mask_code, signature_text, Flavor, LineRules};
+use super::{LanguageAdapter, SymbolSpan};
 use crate::analysis::detector::extract_multiline_symbols;
+use crate::analysis::pack::CompressOptions;
 
 /// Python: top-level `def`/`class` signatures; compression normalizes whitespace.
 pub struct PythonAdapter;
@@ -123,5 +125,89 @@ impl LanguageAdapter for PythonAdapter {
             }
         }
         out.into_iter().map(|(n, t, _)| (n, t)).collect()
+    }
+
+    fn compress_with(&self, source: &str, _ext: &str, opts: &CompressOptions) -> String {
+        let base = self.compress_source(source);
+        if *opts == CompressOptions::legacy() {
+            return base;
+        }
+        apply_options(&base, opts, &LineRules::python())
+    }
+
+    fn extract_symbol_spans(&self, source: &str, _ext: &str) -> Vec<SymbolSpan> {
+        let masked = mask_code(source, Flavor::python());
+        let lines: Vec<&str> = source.lines().collect();
+        let n = lines.len().min(masked.len());
+        let indent = |s: &str| s.len() - s.trim_start().len();
+        let mut spans = Vec::new();
+        let mut open: Vec<(usize, &'static str)> = Vec::new();
+        for i in 0..n {
+            while open.last().is_some_and(|(end, _)| *end < i) {
+                open.pop();
+            }
+            let t = masked[i].trim_start();
+            let (kind, rest) = if let Some(r) = t.strip_prefix("async def ") {
+                ("def", r)
+            } else if let Some(r) = t.strip_prefix("def ") {
+                ("def", r)
+            } else if let Some(r) = t.strip_prefix("class ") {
+                ("class", r)
+            } else {
+                continue;
+            };
+            if open.last().is_some_and(|(_, k)| *k == "def") {
+                continue; // local function
+            }
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            let ind = indent(&masked[i]);
+            let mut depth = 0i32;
+            let mut sig_line = i;
+            for (j, m) in masked.iter().enumerate().take(n.min(i + 30)).skip(i) {
+                for c in m.chars() {
+                    match c {
+                        '(' | '[' => depth += 1,
+                        ')' | ']' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                if depth <= 0 && m.trim_end().ends_with(':') {
+                    sig_line = j;
+                    break;
+                }
+            }
+            let mut end = sig_line;
+            for (j, m) in masked.iter().enumerate().take(n).skip(sig_line + 1) {
+                if m.trim().is_empty() {
+                    continue;
+                }
+                if indent(m) > ind {
+                    end = j;
+                } else {
+                    break;
+                }
+            }
+            let mut signature = signature_text(&lines, i, sig_line, usize::MAX);
+            if masked[sig_line].trim_end().ends_with(':') {
+                signature = signature.trim_end_matches(':').trim_end().to_string();
+            }
+            let mut start = i;
+            while start > 0 && lines[start - 1].trim_start().starts_with('@') {
+                start -= 1;
+            }
+            let dunder = name.starts_with("__") && name.ends_with("__");
+            spans.push(SymbolSpan {
+                kind,
+                signature,
+                is_public: dunder || !name.starts_with('_'),
+                line_start: start + 1,
+                line_end: end + 1,
+            });
+            open.push((end, kind));
+        }
+        spans
     }
 }

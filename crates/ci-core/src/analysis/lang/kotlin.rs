@@ -1,5 +1,9 @@
-use super::{LanguageAdapter, ELIDED_BODY};
+use super::text::{
+    apply_options, brace_spans, mask_code, span_bodies, Flavor, LineRules, SpanRules,
+};
+use super::{LanguageAdapter, SymbolSpan, ELIDED_BODY};
 use crate::analysis::detector::{clean_multiline_signature, sanitize_symbol};
+use crate::analysis::pack::CompressOptions;
 
 /// Kotlin language adapter: accurate symbol extraction and AST-level body compression.
 pub struct KotlinAdapter;
@@ -17,12 +21,15 @@ impl LanguageAdapter for KotlinAdapter {
 
     fn extract_symbols(&self, source: &str) -> Vec<String> {
         let lines: Vec<&str> = source.lines().collect();
+        let masked = mask_code(source, Flavor::kotlin());
         let mut idx = 0;
         let mut symbols = Vec::new();
 
         while idx < lines.len() {
             let line = lines[idx];
-            if is_symbol_start(line) {
+            // Lines entirely inside raw strings / comments are blank once masked.
+            let in_code = masked.get(idx).is_some_and(|m| !m.trim().is_empty());
+            if in_code && is_symbol_start(line) {
                 let is_fun = is_fun_start(line);
                 let mut accumulated = String::new();
                 let mut parens: i32 = 0;
@@ -77,14 +84,13 @@ impl LanguageAdapter for KotlinAdapter {
     }
 
     fn compress_source(&self, source: &str) -> String {
+        let masked = mask_code(source, Flavor::kotlin());
         let mut out = String::with_capacity(source.len() / 3);
         let mut depth: usize = 0;
         let mut eliding = false;
         let mut elide_target_depth = 0;
-        let mut in_block_comment = false;
-        let mut in_raw_str = false;
 
-        for line in source.lines() {
+        for (idx, line) in source.lines().enumerate() {
             let trimmed = line.trim();
 
             if trimmed.is_empty() {
@@ -94,77 +100,17 @@ impl LanguageAdapter for KotlinAdapter {
                 continue;
             }
 
-            let is_container_decl = is_container_declaration(trimmed);
-            let has_fun_decl = has_fun_declaration(trimmed);
+            // Strings, templates and comments are blanked, so braces inside them never count.
+            let code = masked.get(idx).map_or("", |m| m.trim());
+            let is_container_decl = is_container_declaration(code);
+            let has_fun_decl = has_fun_declaration(code);
 
-            let mut prev_char = '\0';
-            let mut in_line_comment = false;
-            let mut in_str: Option<char> = None;
             let mut line_should_elide = false;
+            let mut closed_on_line = false;
             let mut body_start_indent = "";
 
-            let chars: Vec<char> = trimmed.chars().collect();
-            let mut i = 0;
-            while i < chars.len() {
-                let c = chars[i];
-
-                if in_line_comment {
-                    break;
-                }
-
-                if in_block_comment {
-                    if prev_char == '*' && c == '/' {
-                        in_block_comment = false;
-                    }
-                    prev_char = c;
-                    i += 1;
-                    continue;
-                }
-
-                if in_raw_str {
-                    if prev_char == '"' && c == '"' && i + 1 < chars.len() && chars[i + 1] == '"' {
-                        in_raw_str = false;
-                        i += 2;
-                        prev_char = '"';
-                        continue;
-                    }
-                    prev_char = c;
-                    i += 1;
-                    continue;
-                }
-
-                if let Some(q) = in_str {
-                    if c == q && prev_char != '\\' {
-                        in_str = None;
-                    }
-                    prev_char = c;
-                    i += 1;
-                    continue;
-                }
-
-                if c == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
-                    in_raw_str = true;
-                    i += 3;
-                    prev_char = '"';
-                    continue;
-                }
-
-                if prev_char == '/' && c == '/' {
-                    in_line_comment = true;
-                    prev_char = c;
-                    i += 1;
-                    continue;
-                }
-                if prev_char == '/' && c == '*' {
-                    in_block_comment = true;
-                    prev_char = c;
-                    i += 1;
-                    continue;
-                }
-
-                if c == '"' || c == '\'' || c == '`' {
-                    in_str = Some(c);
-                } else if c == '{' {
+            for c in code.chars() {
+                if c == '{' {
                     depth += 1;
                     if !eliding {
                         let should_elide_here = if depth >= 2 {
@@ -177,6 +123,7 @@ impl LanguageAdapter for KotlinAdapter {
                             eliding = true;
                             elide_target_depth = depth - 1;
                             line_should_elide = true;
+                            closed_on_line = false;
                             let indent_len = line.len() - line.trim_start().len();
                             body_start_indent = &line[..indent_len];
                         }
@@ -185,21 +132,19 @@ impl LanguageAdapter for KotlinAdapter {
                     depth = depth.saturating_sub(1);
                     if eliding && depth == elide_target_depth {
                         eliding = false;
+                        closed_on_line = line_should_elide;
                     }
                 }
-
-                prev_char = c;
-                i += 1;
             }
 
-            if line_should_elide {
+            if line_should_elide && !closed_on_line {
                 out.push_str(line);
                 out.push('\n');
                 out.push_str(body_start_indent);
                 out.push_str("    ");
                 out.push_str(ELIDED_BODY);
                 out.push('\n');
-            } else if !eliding {
+            } else if line_should_elide || !eliding {
                 out.push_str(line);
                 out.push('\n');
             }
@@ -207,9 +152,117 @@ impl LanguageAdapter for KotlinAdapter {
         out
     }
 
-    fn method_bodies(&self, _source: &str) -> Vec<(String, String)> {
-        Vec::new()
+    fn method_bodies(&self, source: &str) -> Vec<(String, String)> {
+        span_bodies(source, &self.extract_symbol_spans(source, "kt"), &["fun"])
     }
+
+    fn compress_with(&self, source: &str, _ext: &str, opts: &CompressOptions) -> String {
+        let base = self.compress_source(source);
+        if *opts == CompressOptions::legacy() {
+            return base;
+        }
+        apply_options(&base, opts, &LineRules::c_like())
+    }
+
+    fn extract_symbol_spans(&self, source: &str, _ext: &str) -> Vec<SymbolSpan> {
+        let masked = mask_code(source, Flavor::kotlin());
+        brace_spans(
+            source,
+            &masked,
+            &SpanRules {
+                detect: &kotlin_decl,
+                expr_bodies: true,
+                bodyless: true,
+                attr_prefixes: &["@"],
+            },
+        )
+    }
+}
+
+/// Strips leading `@Annotation` / `@Annotation(args)` prefixes from a masked line.
+fn strip_annotations(mut t: &str) -> &str {
+    while let Some(rest) = t.strip_prefix('@') {
+        let name_len = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == ':'))
+            .unwrap_or(rest.len());
+        let mut tail = &rest[name_len..];
+        if tail.starts_with('(') {
+            let mut depth = 0i32;
+            let mut cut = tail.len();
+            for (i, c) in tail.char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            cut = i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            tail = &tail[cut..];
+        }
+        t = tail.trim_start();
+    }
+    t
+}
+
+const KOTLIN_MODIFIERS: &[&str] = &[
+    "public",
+    "protected",
+    "internal",
+    "abstract",
+    "final",
+    "open",
+    "sealed",
+    "data",
+    "value",
+    "enum",
+    "annotation",
+    "inline",
+    "suspend",
+    "override",
+    "tailrec",
+    "operator",
+    "infix",
+    "external",
+    "expect",
+    "actual",
+    "companion",
+    "inner",
+];
+
+/// Kotlin declaration kind and visibility of a masked, trimmed line.
+fn kotlin_decl(t: &str, parent: Option<&'static str>) -> Option<(&'static str, bool)> {
+    if parent == Some("fun") || t.starts_with("package ") || t.starts_with("import ") {
+        return None;
+    }
+    let t = strip_annotations(t);
+    let words: Vec<&str> = t.split_whitespace().collect();
+    let mut public = true;
+    let mut i = 0;
+    while i < words.len() {
+        let w = words[i];
+        if w == "private" {
+            public = false;
+        } else if w == "fun" && words.get(i + 1) == Some(&"interface") {
+            return Some(("interface", public));
+        } else if !KOTLIN_MODIFIERS.contains(&w) {
+            break;
+        }
+        i += 1;
+    }
+    let kind = match *words.get(i)? {
+        "class" => "class",
+        "interface" => "interface",
+        "object" => "object",
+        "typealias" => "typealias",
+        "fun" if i + 1 < words.len() => "fun",
+        _ => return None,
+    };
+    Some((kind, public))
 }
 
 fn is_symbol_start(line: &str) -> bool {
@@ -507,5 +560,108 @@ private fun secretFunction() {}
             .any(|s| s.contains("public class ServiceWithPrivateField")));
         assert!(!symbols.iter().any(|s| s.contains("InternalHelper")));
         assert!(!symbols.iter().any(|s| s.contains("secretFunction")));
+    }
+
+    const KT: &str = r##"package demo
+
+import a.B
+import a.C
+
+val RAW = """raw { string"""
+val T = "${nested()}"
+
+fun calc(x: Int) = x * 2
+
+private fun helper() {}
+
+class Repo {
+    fun load() {
+        val s = """
+          { unbalanced
+        """
+        println("${s} }")
+    }
+}
+"##;
+
+    #[test]
+    fn test_kotlin_raw_strings_expression_bodies_and_non_code_toc_fallback() {
+        use crate::analysis::pack::{pack_files_with, CompressOptions, PackMode, PackRequest};
+        let a = KotlinAdapter;
+        let spans = a.extract_symbol_spans(KT, "kt");
+        let find = |p: &str| {
+            spans
+                .iter()
+                .find(|s| s.signature.starts_with(p))
+                .unwrap_or_else(|| panic!("{p}: {spans:?}"))
+        };
+        let calc = find("fun calc(x: Int)");
+        assert_eq!(
+            (calc.line_start, calc.line_end, calc.is_public),
+            (9, 9, true)
+        );
+        let helper = find("private fun helper()");
+        assert_eq!((helper.line_start, helper.line_end), (11, 11));
+        assert!(!helper.is_public);
+        let repo = find("class Repo");
+        assert_eq!((repo.line_start, repo.line_end), (13, 20), "{spans:?}");
+        let load = find("fun load()");
+        assert_eq!((load.line_start, load.line_end), (14, 19), "{spans:?}");
+
+        let c = a.compress_with(KT, "kt", &CompressOptions::compact());
+        assert!(!c.contains("import a.B"), "{c}");
+        assert!(c.contains("imports omitted]"), "{c}");
+        assert!(c.contains("fun load() { ⋮ }"), "{c}");
+        assert!(c.contains("fun calc(x: Int) = x * 2"), "{c}");
+        assert!(!c.contains("unbalanced"), "{c}");
+        assert!(c.trim_end().ends_with('}'), "{c}");
+
+        let bodies = a.method_bodies(KT);
+        assert!(
+            bodies
+                .iter()
+                .any(|(n, b)| n == "load" && b.contains("unbalanced")),
+            "{bodies:?}"
+        );
+
+        let root = std::env::temp_dir().join(format!(
+            "kt_toc_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("Repo.kt"), KT).unwrap();
+        std::fs::write(
+            root.join("README.md"),
+            "# Title\n\ntext\n\n## Usage\n```\n# not heading\n```\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\n\n[dependencies]\nserde = \"1\"\n",
+        )
+        .unwrap();
+        let files: Vec<String> = ["Repo.kt", "README.md", "Cargo.toml"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut req = PackRequest::new(&root, "demo");
+        req.mode = PackMode::Toc;
+        let toc = pack_files_with(&root, &[], &files, &req);
+        assert!(toc.starts_with("[TOC] demo"), "{toc}");
+        assert!(toc.contains("Repo.kt (20L)"), "{toc}");
+        assert!(toc.contains("[L9-L9] fun calc(x: Int)"), "{toc}");
+        assert!(toc.contains("[L14-L19] fun load()"), "{toc}");
+        assert!(!toc.contains("println"), "{toc}");
+        assert!(toc.contains("README.md (8L)"), "{toc}");
+        assert!(toc.contains("[L1] # Title"), "{toc}");
+        assert!(toc.contains("[L5] ## Usage"), "{toc}");
+        assert!(!toc.contains("not heading"), "{toc}");
+        assert!(toc.contains("[L1] [package]"), "{toc}");
+        assert!(toc.contains("[L4] [dependencies]"), "{toc}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

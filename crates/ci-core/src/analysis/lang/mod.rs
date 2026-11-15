@@ -6,6 +6,7 @@ mod kotlin;
 pub mod mdo;
 mod python;
 mod rust;
+mod text;
 
 use std::path::Path;
 
@@ -15,8 +16,25 @@ pub use kotlin::KotlinAdapter;
 pub use python::PythonAdapter;
 pub use rust::RustAdapter;
 
+use crate::analysis::pack::CompressOptions;
+
 /// Marker that replaces an elided body in compressed sources.
 pub const ELIDED_BODY: &str = "⋮----";
+
+/// Marker of a body elided inline (`fn f() { ⋮ }`) when `CompressOptions::inline_elide` is on.
+pub const INLINE_ELIDED: &str = "⋮";
+
+/// A declaration with its exact 1-based inclusive line range in the source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolSpan {
+    /// Declaration keyword class: `fn`, `fun`, `class`, `impl`, `def`, `method`, ...
+    pub kind: &'static str,
+    /// Single-line signature without the body.
+    pub signature: String,
+    pub is_public: bool,
+    pub line_start: usize,
+    pub line_end: usize,
+}
 
 /// Per-language knowledge: which files it owns, their public symbols and a compressed view.
 pub trait LanguageAdapter: Send + Sync {
@@ -29,6 +47,28 @@ pub trait LanguageAdapter: Send + Sync {
     fn compress_source(&self, source: &str) -> String;
     /// `(name, full text)` of every method / function in `source`, in file order.
     fn method_bodies(&self, source: &str) -> Vec<(String, String)>;
+
+    /// [`compress_source`](Self::compress_source) with explicit options; legacy options
+    /// return exactly `compress_source`. The default applies the options line-wise.
+    fn compress_with(&self, source: &str, ext: &str, opts: &CompressOptions) -> String {
+        let base = self.compress_source(source);
+        if *opts == CompressOptions::legacy() {
+            return base;
+        }
+        let _ = ext;
+        text::apply_options(&base, opts, &text::LineRules::c_like())
+    }
+
+    /// Declarations of `source` with exact line ranges (empty when unsupported).
+    fn extract_symbol_spans(&self, source: &str, ext: &str) -> Vec<SymbolSpan> {
+        let _ = (source, ext);
+        Vec::new()
+    }
+}
+
+/// Short name of a span's declaration (`handle`, `Repo`, `Service` for `impl X for Service`).
+pub fn symbol_name(span: &SymbolSpan) -> String {
+    text::symbol_name(span)
 }
 
 static RUST: RustAdapter = RustAdapter;

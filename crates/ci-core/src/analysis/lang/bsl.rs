@@ -1,4 +1,6 @@
-use super::{LanguageAdapter, ELIDED_BODY};
+use super::text::{apply_options, LineRules};
+use super::{LanguageAdapter, SymbolSpan, ELIDED_BODY};
+use crate::analysis::pack::CompressOptions;
 
 /// BSL / OneScript modules (`.bsl`, `.os`): Cyrillic and English keywords, `&Directive`
 /// annotations, CRLF line endings.
@@ -95,6 +97,41 @@ fn has_export(signature: &str) -> bool {
         .any(|e| tail.split_whitespace().any(|w| w == *e))
 }
 
+/// `(start, signature end, last line)` of every method; an unterminated method ends right
+/// before the next one starts.
+fn method_ranges(lines: &[&str]) -> Vec<(usize, usize, usize)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if starts_with_keyword(lines[i], &METHOD_STARTS) {
+            let end = signature_end(lines, i);
+            let mut j = end + 1;
+            while j < lines.len()
+                && !starts_with_keyword(lines[j], &METHOD_ENDS)
+                && !starts_with_keyword(lines[j], &METHOD_STARTS)
+            {
+                j += 1;
+            }
+            let last = if j < lines.len() && starts_with_keyword(lines[j], &METHOD_ENDS) {
+                j
+            } else {
+                j.saturating_sub(1)
+            };
+            let last = last.max(i);
+            out.push((i, end, last));
+            i = last + 1;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// A method signature line without `Экспорт` / `Export`.
+fn is_private_method(t: &str) -> bool {
+    starts_with_keyword(t, &METHOD_STARTS) && !has_export(t)
+}
+
 impl LanguageAdapter for BslAdapter {
     fn language_id(&self) -> &'static str {
         "bsl"
@@ -124,12 +161,10 @@ impl LanguageAdapter for BslAdapter {
 
     fn method_bodies(&self, source: &str) -> Vec<(String, String)> {
         let lines: Vec<&str> = source.lines().collect();
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i < lines.len() {
-            if starts_with_keyword(lines[i], &METHOD_STARTS) {
-                let end = signature_end(&lines, i);
-                let signature = joined_signature(&lines, i, end);
+        method_ranges(&lines)
+            .into_iter()
+            .map(|(start, sig_end, last)| {
+                let signature = joined_signature(&lines, start, sig_end);
                 let name = signature
                     .split_whitespace()
                     .find(|w| {
@@ -141,25 +176,43 @@ impl LanguageAdapter for BslAdapter {
                     .next()
                     .unwrap_or("")
                     .to_string();
-                let mut j = end + 1;
-                while j < lines.len()
-                    && !starts_with_keyword(lines[j], &METHOD_ENDS)
-                    && !starts_with_keyword(lines[j], &METHOD_STARTS)
-                {
-                    j += 1;
-                }
-                let last = if j < lines.len() && starts_with_keyword(lines[j], &METHOD_ENDS) {
-                    j
-                } else {
-                    j.saturating_sub(1)
-                };
-                out.push((name, lines[i..=last.max(i)].join("\n")));
-                i = last + 1;
-                continue;
-            }
-            i += 1;
+                (name, lines[start..=last].join("\n"))
+            })
+            .collect()
+    }
+
+    fn compress_with(&self, source: &str, _ext: &str, opts: &CompressOptions) -> String {
+        let base = self.compress_source(source);
+        if *opts == CompressOptions::legacy() {
+            return base;
         }
-        out
+        apply_options(&base, opts, &LineRules::bsl(is_private_method))
+    }
+
+    fn extract_symbol_spans(&self, source: &str, _ext: &str) -> Vec<SymbolSpan> {
+        let lines: Vec<&str> = source.lines().collect();
+        method_ranges(&lines)
+            .into_iter()
+            .map(|(start, sig_end, last)| {
+                let signature = joined_signature(&lines, start, sig_end);
+                let is_proc = starts_with_keyword(
+                    lines[start],
+                    &[
+                        "процедура",
+                        "procedure",
+                        "асинх процедура",
+                        "async procedure",
+                    ],
+                );
+                SymbolSpan {
+                    kind: if is_proc { "procedure" } else { "function" },
+                    is_public: has_export(&signature),
+                    signature,
+                    line_start: start + 1,
+                    line_end: last + 1,
+                }
+            })
+            .collect()
     }
 
     fn compress_source(&self, source: &str) -> String {

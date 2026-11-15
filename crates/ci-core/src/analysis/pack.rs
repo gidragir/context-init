@@ -92,7 +92,8 @@ pub struct PackRequest<'a> {
     pub subs: &'a [&'a SubsystemInfo],
     /// Glob / short-name filters over subsystem files (empty = no filtering).
     pub files: &'a [String],
-    /// Symbol filters (accepted and validated; applied by later stages).
+    /// Symbol filters (`name`, `Type.name`, `Type::name`): only the exact source of matching
+    /// declarations is packed (in `Toc` mode only matching TOC lines are listed).
     pub symbols: &'a [String],
     pub mode: PackMode,
     pub style: PackStyle,
@@ -127,9 +128,13 @@ impl PackMode {
     }
 }
 
-/// Like `compress_source`, with explicit options (options take effect from Task 4).
-pub fn compress_source_with(content: &str, ext: &str, _opts: &CompressOptions) -> String {
-    compress_source(content, ext)
+/// Like `compress_source`, with explicit options; `CompressOptions::legacy()` is identical
+/// to `compress_source`.
+pub fn compress_source_with(content: &str, ext: &str, opts: &CompressOptions) -> String {
+    match crate::analysis::lang::adapter_for_ext(ext) {
+        Some(adapter) => adapter.compress_with(content, ext, opts),
+        None => compress_code(content),
+    }
 }
 
 fn xml_escape(s: &str) -> String {
@@ -359,9 +364,28 @@ pub fn pack_subsystem_with(
         );
     }
 
-    let content = render_pack(root, &matched, &files, req, &cards);
+    let rendered = render_pack(root, &matched, &files, req, &cards);
+    if !req.symbols.is_empty() && rendered.symbol_hits == 0 {
+        const MAX_LISTED: usize = 50;
+        let more = rendered.available.len().saturating_sub(MAX_LISTED);
+        let mut shown: Vec<String> = rendered
+            .available
+            .iter()
+            .take(MAX_LISTED)
+            .cloned()
+            .collect();
+        if more > 0 {
+            shown.push(format!("... and {more} more"));
+        }
+        bail!(
+            "No symbols matched {:?} in subsystem '{}'. Available symbols: {}",
+            req.symbols,
+            subsystem_id,
+            shown.join(", ")
+        );
+    }
     Ok(PackedSubsystems {
-        content,
+        content: rendered.content,
         files,
         subsystems: matched.into_iter().cloned().collect(),
     })
@@ -427,7 +451,7 @@ pub fn pack_files_with(
     files: &[String],
     req: &PackRequest<'_>,
 ) -> String {
-    render_pack(root, subs, files, req, &[])
+    render_pack(root, subs, files, req, &[]).content
 }
 
 /// `trusted` paths (L1 cards resolved via `safe_join(knowledge_dir, ..)`) skip root checks.
@@ -437,10 +461,11 @@ fn render_pack(
     files: &[String],
     req: &PackRequest<'_>,
     trusted: &[String],
-) -> String {
+) -> Rendered {
     let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let compress = req.mode != PackMode::Full;
-    let read = |file_rel: &str| -> Option<(String, String)> {
+    // Path safety and secret filtering apply to every mode (full, compressed, TOC, symbols).
+    let read_raw = |file_rel: &str| -> Option<(String, String)> {
         if !trusted.iter().any(|t| t == file_rel)
             && !is_safe_source(root, &canonical_root, file_rel)
         {
@@ -453,26 +478,68 @@ fn render_pack(
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_string();
-        let processed = if compress {
+        Some((ext, content))
+    };
+    let mut rendered = Rendered::default();
+
+    if req.mode == PackMode::Toc {
+        let id = if subs.is_empty() {
+            req.subsystem_id.to_string()
+        } else {
+            subs.iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut body = String::new();
+        let mut packed = 0usize;
+        for file_rel in files {
+            let Some((ext, content)) = read_raw(file_rel) else {
+                continue;
+            };
+            let entries = toc_entries(&content, &ext, req, &mut rendered);
+            if !req.symbols.is_empty() && entries.is_empty() {
+                continue;
+            }
+            body.push_str(&format!("{} ({}L)\n", file_rel, content.lines().count()));
+            for e in entries {
+                body.push_str(&e);
+                body.push('\n');
+            }
+            packed += 1;
+        }
+        rendered.content = format!("[TOC] {id} ({packed} files)\n{body}");
+        return rendered;
+    }
+
+    let mut entries: Vec<(&String, String, String)> = Vec::new();
+    for file_rel in files {
+        let Some((ext, content)) = read_raw(file_rel) else {
+            continue;
+        };
+        let processed = if !req.symbols.is_empty() {
+            match select_symbols(&content, &ext, req.symbols, &mut rendered) {
+                Some(text) => text,
+                None => continue,
+            }
+        } else if compress {
             compress_source_with(&content, &ext, &req.options)
         } else {
             content
         };
-        Some((ext, processed))
-    };
+        entries.push((file_rel, ext, processed));
+    }
     let style = req.style;
     let mut buffer = String::new();
 
     if style == PackStyle::Compact {
-        for file_rel in files {
-            if let Some((_, processed)) = read(file_rel) {
-                buffer.push_str(&format!(
-                    "=== {} ({}L) ===\n{}\n\n",
-                    file_rel,
-                    processed.lines().count(),
-                    processed
-                ));
-            }
+        for (file_rel, _, processed) in &entries {
+            buffer.push_str(&format!(
+                "=== {} ({}L) ===\n{}\n\n",
+                file_rel,
+                processed.lines().count(),
+                processed
+            ));
         }
     } else if style == PackStyle::Markdown {
         buffer.push_str("# 📦 AI Context Pack: ");
@@ -480,13 +547,11 @@ fn render_pack(
         buffer.push_str(&names.join(", "));
         buffer.push_str("\n\n> Сгенерировано context-init (встроенный AST-пакер)\n\n");
 
-        for file_rel in files {
-            if let Some((ext, processed)) = read(file_rel) {
-                buffer.push_str(&format!(
-                    "## File: `{}`\n```{}\n{}\n```\n\n",
-                    file_rel, ext, processed
-                ));
-            }
+        for (file_rel, ext, processed) in &entries {
+            buffer.push_str(&format!(
+                "## File: `{}`\n```{}\n{}\n```\n\n",
+                file_rel, ext, processed
+            ));
         }
     } else {
         buffer.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -501,19 +566,266 @@ fn render_pack(
         }
         buffer.push_str("  <files>\n");
 
-        for file_rel in files {
-            if let Some((_, processed)) = read(file_rel) {
-                buffer.push_str(&format!(
-                    "    <file path=\"{}\">\n<![CDATA[\n{}\n]]>\n    </file>\n",
-                    xml_escape(file_rel),
-                    processed.replace("]]>", "]]]]><![CDATA[>")
-                ));
-            }
+        for (file_rel, _, processed) in &entries {
+            buffer.push_str(&format!(
+                "    <file path=\"{}\">\n<![CDATA[\n{}\n]]>\n    </file>\n",
+                xml_escape(file_rel),
+                processed.replace("]]>", "]]]]><![CDATA[>")
+            ));
         }
         buffer.push_str("  </files>\n</context_pack>\n");
     }
 
-    buffer
+    rendered.content = buffer;
+    rendered
+}
+
+/// Result of [`render_pack`]: text plus symbol-selection bookkeeping.
+#[derive(Default)]
+struct Rendered {
+    content: String,
+    /// Spans selected by `PackRequest::symbols`.
+    symbol_hits: usize,
+    /// Names of every symbol seen (for "nothing matched" errors).
+    available: Vec<String>,
+}
+
+const TOC_MAX_CHARS: usize = 160;
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(max).collect();
+        t.push('…');
+        t
+    }
+}
+
+/// True when `query` (`name`, `Container.name` or `Container::name`) selects `spans[idx]`.
+fn symbol_matches(
+    query: &str,
+    idx: usize,
+    spans: &[crate::analysis::lang::SymbolSpan],
+    names: &[String],
+    ignore_case: bool,
+) -> bool {
+    let q = query.trim();
+    let (container, name) = match q
+        .rfind("::")
+        .map(|p| (p, 2))
+        .or_else(|| q.rfind('.').map(|p| (p, 1)))
+    {
+        Some((p, w)) => (Some(&q[..p]), &q[p + w..]),
+        None => (None, q),
+    };
+    let eq = |a: &str, b: &str| {
+        if ignore_case {
+            a.to_lowercase() == b.to_lowercase()
+        } else {
+            a == b
+        }
+    };
+    if name.is_empty() || !eq(&names[idx], name) {
+        return false;
+    }
+    let Some(container) = container else {
+        return true;
+    };
+    let last = container.rsplit(['.', ':']).next().unwrap_or(container);
+    let me = &spans[idx];
+    spans.iter().enumerate().any(|(j, s)| {
+        j != idx
+            && s.line_start <= me.line_start
+            && me.line_end <= s.line_end
+            && eq(&names[j], last)
+    })
+}
+
+/// Spans of `content` with their names, selected by `req.symbols` when it is non-empty.
+fn selected_spans(
+    content: &str,
+    ext: &str,
+    symbols: &[String],
+    rendered: &mut Rendered,
+) -> Vec<(crate::analysis::lang::SymbolSpan, String, usize)> {
+    use crate::analysis::lang::{adapter_for_ext, symbol_name};
+    let Some(adapter) = adapter_for_ext(ext) else {
+        return Vec::new();
+    };
+    let spans = adapter.extract_symbol_spans(content, ext);
+    let names: Vec<String> = spans.iter().map(symbol_name).collect();
+    for n in &names {
+        if !n.is_empty() && !rendered.available.contains(n) {
+            rendered.available.push(n.clone());
+        }
+    }
+    let ignore_case = matches!(ext.to_ascii_lowercase().as_str(), "bsl" | "os");
+    let mut out = Vec::new();
+    for idx in 0..spans.len() {
+        let depth = (0..idx)
+            .filter(|&j| {
+                spans[j].line_start <= spans[idx].line_start
+                    && spans[idx].line_end <= spans[j].line_end
+            })
+            .count();
+        if !symbols.is_empty()
+            && !symbols
+                .iter()
+                .any(|q| symbol_matches(q, idx, &spans, &names, ignore_case))
+        {
+            continue;
+        }
+        out.push((spans[idx].clone(), names[idx].clone(), depth));
+    }
+    if !symbols.is_empty() {
+        rendered.symbol_hits += out.len();
+    }
+    out
+}
+
+/// Exact source text of the spans selected by `symbols`, or `None` when nothing matched.
+fn select_symbols(
+    content: &str,
+    ext: &str,
+    symbols: &[String],
+    rendered: &mut Rendered,
+) -> Option<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut picked: Vec<(usize, usize)> = Vec::new();
+    let mut blocks = Vec::new();
+    for (span, name, _) in selected_spans(content, ext, symbols, rendered) {
+        if picked
+            .iter()
+            .any(|&(s, e)| s <= span.line_start && span.line_end <= e)
+        {
+            continue; // already inside a selected container
+        }
+        picked.push((span.line_start, span.line_end));
+        let end = span.line_end.min(lines.len());
+        let start = (span.line_start - 1).min(end);
+        blocks.push(format!(
+            "[L{}-L{}] {}\n{}",
+            span.line_start,
+            span.line_end,
+            name,
+            lines[start..end].join("\n")
+        ));
+    }
+    if blocks.is_empty() {
+        None
+    } else {
+        Some(blocks.join("\n\n"))
+    }
+}
+
+/// TOC lines of one file: symbol spans for code, headings / keys for known text formats.
+fn toc_entries(
+    content: &str,
+    ext: &str,
+    req: &PackRequest<'_>,
+    rendered: &mut Rendered,
+) -> Vec<String> {
+    if crate::analysis::lang::adapter_for_ext(ext).is_some() {
+        return selected_spans(content, ext, req.symbols, rendered)
+            .into_iter()
+            .filter(|(s, _, _)| !req.options.public_only || s.is_public)
+            .map(|(s, _, depth)| {
+                format!(
+                    "{}[L{}-L{}] {}",
+                    "  ".repeat(depth + 1),
+                    s.line_start,
+                    s.line_end,
+                    truncate_chars(&s.signature, TOC_MAX_CHARS)
+                )
+            })
+            .collect();
+    }
+    if !req.symbols.is_empty() {
+        return Vec::new();
+    }
+    non_code_toc(content, ext)
+        .into_iter()
+        .map(|(line, text)| format!("  [L{line}] {}", truncate_chars(&text, TOC_MAX_CHARS)))
+        .collect()
+}
+
+/// `(1-based line, label)` outline of non-code files: Markdown headings, TOML tables,
+/// top-level YAML / JSON keys, SQL `CREATE`/`ALTER` statements, shell functions.
+fn non_code_toc(content: &str, ext: &str) -> Vec<(usize, String)> {
+    let lines = content.lines().enumerate().map(|(i, l)| (i + 1, l));
+    match ext.to_ascii_lowercase().as_str() {
+        "md" | "markdown" | "mdx" => {
+            let mut fence = false;
+            let mut out = Vec::new();
+            for (n, l) in lines {
+                let t = l.trim_start();
+                if t.starts_with("```") || t.starts_with("~~~") {
+                    fence = !fence;
+                    continue;
+                }
+                let hashes = t.chars().take_while(|c| *c == '#').count();
+                if !fence && (1..=6).contains(&hashes) && t[hashes..].starts_with(' ') {
+                    out.push((n, t.trim_end().to_string()));
+                }
+            }
+            out
+        }
+        "toml" => lines
+            .filter(|(_, l)| {
+                let t = l.trim();
+                t.starts_with('[') && t.ends_with(']')
+            })
+            .map(|(n, l)| (n, l.trim().to_string()))
+            .collect(),
+        "yaml" | "yml" => lines
+            .filter(|(_, l)| {
+                !l.starts_with([' ', '\t', '#', '-']) && l.contains(':') && !l.trim().is_empty()
+            })
+            .map(|(n, l)| (n, format!("{}:", l.split(':').next().unwrap_or("").trim())))
+            .collect(),
+        "json" => {
+            let keys: Vec<(usize, usize, String)> = lines
+                .filter_map(|(n, l)| {
+                    let t = l.trim_start();
+                    let rest = t.strip_prefix('"')?;
+                    let end = rest.find('"')?;
+                    rest[end + 1..]
+                        .trim_start()
+                        .starts_with(':')
+                        .then(|| (n, l.len() - t.len(), format!("\"{}\"", &rest[..end])))
+                })
+                .collect();
+            let min = keys.iter().map(|k| k.1).min().unwrap_or(0);
+            keys.into_iter()
+                .filter(|k| k.1 == min)
+                .map(|(n, _, k)| (n, k))
+                .collect()
+        }
+        "sql" => lines
+            .filter(|(_, l)| {
+                let u = l.trim_start().to_ascii_uppercase();
+                u.starts_with("CREATE ") || u.starts_with("ALTER ")
+            })
+            .map(|(n, l)| (n, l.trim().to_string()))
+            .collect(),
+        "sh" | "bash" | "zsh" => lines
+            .filter(|(_, l)| {
+                let t = l.trim();
+                t.starts_with("function ")
+                    || (t.ends_with('{')
+                        && t.split_once("()").is_some_and(|(name, _)| {
+                            let name = name.trim();
+                            !name.is_empty()
+                                && name.chars().all(|c| {
+                                    c.is_alphanumeric() || c == '_' || c == '-' || c == ':'
+                                })
+                        }))
+            })
+            .map(|(n, l)| (n, l.trim().trim_end_matches('{').trim().to_string()))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Compresses source text through the language adapter of `ext` (D7: Rust via AST, BSL by
@@ -526,20 +838,184 @@ pub fn compress_source(content: &str, ext: &str) -> String {
 }
 
 pub fn compress_rust_ast(content: &str) -> Option<String> {
-    let parsed = syn::parse_file(content).ok()?;
+    compress_rust_ast_with(content, &CompressOptions::legacy())
+}
+
+/// [`compress_rust_ast`] with options: `use` items collapse into `// [N use omitted]`,
+/// `#[cfg(test)]` / `#[test]` items are dropped (`exclude_tests`), non-`pub` items are
+/// dropped (`public_only`), doc comments are removed (`strip_comments`) and bodies become
+/// `{ ⋮ }` (`inline_elide`).
+pub fn compress_rust_ast_with(content: &str, opts: &CompressOptions) -> Option<String> {
+    let mut parsed = syn::parse_file(content).ok()?;
+    if opts.strip_comments {
+        strip_doc_attrs(&mut parsed.attrs);
+    }
+    let mut uses = 0usize;
+    prune_rust_items(&mut parsed.items, opts, &mut uses);
     let mut file_attrs = Vec::new();
     for attr in &parsed.attrs {
         file_attrs.push(normalize_rust_tokens(&quote::quote!(#attr).to_string()));
     }
-    let body = format_rust_items(&parsed.items);
-    if file_attrs.is_empty() {
-        Some(body)
-    } else {
-        Some(format!("{}\n\n{}", file_attrs.join("\n"), body))
+    let body = format_rust_items_opts(&parsed.items, opts.inline_elide);
+    let mut parts = Vec::new();
+    if !file_attrs.is_empty() {
+        parts.push(file_attrs.join("\n"));
+    }
+    if uses > 0 {
+        parts.push(format!("// [{uses} use omitted]"));
+    }
+    parts.push(body);
+    Some(parts.join("\n\n"))
+}
+
+fn strip_doc_attrs(attrs: &mut Vec<syn::Attribute>) {
+    attrs.retain(|a| !a.path().is_ident("doc"));
+}
+
+fn is_test_attrs(attrs: &[syn::Attribute]) -> bool {
+    crate::analysis::detector::has_cfg_test(attrs)
+        || attrs.iter().any(|a| a.path().is_ident("test"))
+}
+
+fn rust_item_attrs(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {
+    use syn::Item;
+    Some(match item {
+        Item::Const(x) => &mut x.attrs,
+        Item::Enum(x) => &mut x.attrs,
+        Item::ExternCrate(x) => &mut x.attrs,
+        Item::Fn(x) => &mut x.attrs,
+        Item::ForeignMod(x) => &mut x.attrs,
+        Item::Impl(x) => &mut x.attrs,
+        Item::Macro(x) => &mut x.attrs,
+        Item::Mod(x) => &mut x.attrs,
+        Item::Static(x) => &mut x.attrs,
+        Item::Struct(x) => &mut x.attrs,
+        Item::Trait(x) => &mut x.attrs,
+        Item::TraitAlias(x) => &mut x.attrs,
+        Item::Type(x) => &mut x.attrs,
+        Item::Union(x) => &mut x.attrs,
+        Item::Use(x) => &mut x.attrs,
+        _ => return None,
+    })
+}
+
+fn rust_item_is_public(item: &syn::Item) -> bool {
+    use crate::analysis::detector::is_syn_pub;
+    use syn::Item;
+    match item {
+        Item::Const(x) => is_syn_pub(&x.vis),
+        Item::Enum(x) => is_syn_pub(&x.vis),
+        Item::ExternCrate(x) => is_syn_pub(&x.vis),
+        Item::Fn(x) => is_syn_pub(&x.vis),
+        Item::Mod(x) => is_syn_pub(&x.vis),
+        Item::Static(x) => is_syn_pub(&x.vis),
+        Item::Struct(x) => is_syn_pub(&x.vis),
+        Item::Trait(x) => is_syn_pub(&x.vis),
+        Item::TraitAlias(x) => is_syn_pub(&x.vis),
+        Item::Type(x) => is_syn_pub(&x.vis),
+        Item::Union(x) => is_syn_pub(&x.vis),
+        Item::Use(x) => is_syn_pub(&x.vis),
+        Item::Macro(x) => x.attrs.iter().any(|a| a.path().is_ident("macro_export")),
+        _ => true,
     }
 }
 
+/// Applies `strip_imports`, `exclude_tests`, `public_only` and `strip_comments` to an item
+/// list in place (recursing into inline modules, impls and traits).
+fn prune_rust_items(items: &mut Vec<syn::Item>, opts: &CompressOptions, uses: &mut usize) {
+    use crate::analysis::detector::is_syn_pub;
+    use syn::{ImplItem, Item, TraitItem};
+    items.retain_mut(|item| {
+        if opts.strip_imports && matches!(item, Item::Use(_)) {
+            *uses += 1;
+            return false;
+        }
+        if opts.exclude_tests && rust_item_attrs(item).is_some_and(|a| is_test_attrs(a)) {
+            return false;
+        }
+        if opts.public_only && !rust_item_is_public(item) {
+            return false;
+        }
+        if opts.strip_comments {
+            if let Some(attrs) = rust_item_attrs(item) {
+                strip_doc_attrs(attrs);
+            }
+        }
+        match item {
+            Item::Mod(m) => {
+                if let Some((_, inner)) = &mut m.content {
+                    prune_rust_items(inner, opts, uses);
+                }
+            }
+            Item::Impl(imp) => {
+                let inherent = imp.trait_.is_none();
+                imp.items.retain_mut(|it| {
+                    let (attrs, public) = match it {
+                        ImplItem::Fn(f) => (&mut f.attrs, is_syn_pub(&f.vis)),
+                        ImplItem::Const(c) => (&mut c.attrs, is_syn_pub(&c.vis)),
+                        ImplItem::Type(t) => (&mut t.attrs, is_syn_pub(&t.vis)),
+                        _ => return true,
+                    };
+                    if opts.exclude_tests && is_test_attrs(attrs) {
+                        return false;
+                    }
+                    if opts.public_only && inherent && !public {
+                        return false;
+                    }
+                    if opts.strip_comments {
+                        strip_doc_attrs(attrs);
+                    }
+                    true
+                });
+                if opts.public_only && inherent && imp.items.is_empty() {
+                    return false;
+                }
+            }
+            Item::Trait(t) if opts.strip_comments => {
+                for it in &mut t.items {
+                    match it {
+                        TraitItem::Fn(f) => strip_doc_attrs(&mut f.attrs),
+                        TraitItem::Const(c) => strip_doc_attrs(&mut c.attrs),
+                        TraitItem::Type(ty) => strip_doc_attrs(&mut ty.attrs),
+                        _ => {}
+                    }
+                }
+            }
+            Item::Struct(s) if opts.strip_comments => {
+                for f in s.fields.iter_mut() {
+                    strip_doc_attrs(&mut f.attrs);
+                }
+            }
+            Item::Enum(e) if opts.strip_comments => {
+                for v in e.variants.iter_mut() {
+                    strip_doc_attrs(&mut v.attrs);
+                    for f in v.fields.iter_mut() {
+                        strip_doc_attrs(&mut f.attrs);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    });
+}
+
 pub fn format_rust_items(items: &[syn::Item]) -> String {
+    format_rust_items_opts(items, false)
+}
+
+/// Elided body of a function signature: multi-line `⋮----` block or inline `{ ⋮ }`.
+fn elided_fn(indent: &str, sig: &str, inline: bool) -> String {
+    use crate::analysis::lang::{ELIDED_BODY, INLINE_ELIDED};
+    if inline {
+        format!("{indent}{sig} {{ {INLINE_ELIDED} }}")
+    } else {
+        format!("{indent}{sig} {{\n{indent}    {ELIDED_BODY}\n{indent}}}")
+    }
+}
+
+fn format_rust_items_opts(items: &[syn::Item], inline: bool) -> String {
+    let member_sep = if inline { "\n" } else { "\n\n" };
     let mut formatted_items = Vec::new();
     for item in items {
         match item {
@@ -553,14 +1029,11 @@ pub fn format_rust_items(items: &[syn::Item]) -> String {
                     .iter()
                     .map(|a| normalize_rust_tokens(&quote::quote!(#a).to_string()))
                     .collect();
+                let body = elided_fn("", &clean_sig, inline);
                 if attr_strs.is_empty() {
-                    formatted_items.push(format!("{} {{\n    ⋮----\n}}", clean_sig));
+                    formatted_items.push(body);
                 } else {
-                    formatted_items.push(format!(
-                        "{}\n{} {{\n    ⋮----\n}}",
-                        attr_strs.join("\n"),
-                        clean_sig
-                    ));
+                    formatted_items.push(format!("{}\n{}", attr_strs.join("\n"), body));
                 }
             }
             syn::Item::Impl(imp) => {
@@ -604,14 +1077,11 @@ pub fn format_rust_items(items: &[syn::Item]) -> String {
                         let sig = &m.sig;
                         let sig_str = quote::quote!(#vis #defaultness #sig).to_string();
                         let clean_sig = normalize_rust_tokens(&sig_str);
+                        let body = elided_fn("    ", &clean_sig, inline);
                         if m_attrs.is_empty() {
-                            item_strs.push(format!("    {} {{\n        ⋮----\n    }}", clean_sig));
+                            item_strs.push(body);
                         } else {
-                            item_strs.push(format!(
-                                "{}\n    {} {{\n        ⋮----\n    }}",
-                                m_attrs.join("\n"),
-                                clean_sig
-                            ));
+                            item_strs.push(format!("{}\n{}", m_attrs.join("\n"), body));
                         }
                     } else {
                         let other_str = quote::quote!(#it).to_string();
@@ -624,7 +1094,7 @@ pub fn format_rust_items(items: &[syn::Item]) -> String {
                     formatted_items.push(format!(
                         "{} {{\n{}\n}}",
                         clean_header,
-                        item_strs.join("\n\n")
+                        item_strs.join(member_sep)
                     ));
                 }
             }
@@ -663,7 +1133,7 @@ pub fn format_rust_items(items: &[syn::Item]) -> String {
                         let sig_str = quote::quote!(#sig).to_string();
                         let clean_sig = normalize_rust_tokens(&sig_str);
                         let body = if tf.default.is_some() {
-                            format!("    {} {{\n        ⋮----\n    }}", clean_sig)
+                            elided_fn("    ", &clean_sig, inline)
                         } else {
                             format!("    {};", clean_sig)
                         };
@@ -683,7 +1153,7 @@ pub fn format_rust_items(items: &[syn::Item]) -> String {
                     formatted_items.push(format!(
                         "{} {{\n{}\n}}",
                         clean_header,
-                        trait_items.join("\n\n")
+                        trait_items.join(member_sep)
                     ));
                 }
             }
@@ -703,7 +1173,7 @@ pub fn format_rust_items(items: &[syn::Item]) -> String {
                     format!("{}\n{}", attr_strs.join("\n"), clean_header_core)
                 };
                 if let Some((_, inner_items)) = &m.content {
-                    let inner = format_rust_items(inner_items);
+                    let inner = format_rust_items_opts(inner_items, inline);
                     let indented: Vec<String> = inner
                         .lines()
                         .map(|l| {
@@ -1360,5 +1830,130 @@ mod style_tests {
         }
         assert!(text.contains("\"]]>\""), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod compress_with_tests {
+    use super::*;
+    use crate::analysis::detector::count_tokens;
+
+    fn tdir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "ci_cw_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn rust_fixture() -> String {
+        let mut code = String::from(
+            "//! Crate docs.\nuse std::collections::HashMap;\nuse std::fmt;\nuse std::io;\nuse std::path::Path;\nuse std::sync::Arc;\nuse anyhow::Result;\n\n/// A service.\npub struct Service {\n    /// Name.\n    pub name: String,\n}\n\nimpl Service {\n    /// Runs it.\n    pub fn run(&self) -> usize {\n        self.name.len()\n    }\n\n    fn private_helper(&self) -> bool {\n        true\n    }\n}\n\nfn private_free() {}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n",
+        );
+        for i in 0..8 {
+            code.push_str(&format!(
+                "\n    #[test]\n    fn t{i}() {{\n        let s = Service {{ name: \"x{i}\".into() }};\n        assert_eq!(s.run(), 2);\n    }}\n"
+            ));
+        }
+        code.push_str("}\n");
+        code
+    }
+
+    #[test]
+    fn test_rust_compress_with_compact_strips_tests_imports_and_inlines_elide() {
+        let code = rust_fixture();
+        assert_eq!(
+            compress_source_with(&code, "rs", &CompressOptions::legacy()),
+            compress_source(&code, "rs")
+        );
+        let c = compress_source_with(&code, "rs", &CompressOptions::compact());
+        assert!(c.contains("// [6 use omitted]"), "{c}");
+        assert!(!c.contains("use std"), "{c}");
+        assert!(!c.contains("#[cfg(test)]"), "{c}");
+        assert!(!c.contains("fn t0"), "{c}");
+        assert!(!c.contains("doc ="), "{c}");
+        assert!(c.contains("pub fn run(&self) -> usize { ⋮ }"), "{c}");
+        assert!(c.contains("fn private_helper(&self) -> bool { ⋮ }"), "{c}");
+
+        let mut po = CompressOptions::compact();
+        po.public_only = true;
+        let p = compress_source_with(&code, "rs", &po);
+        assert!(
+            !p.contains("private_helper") && !p.contains("private_free"),
+            "{p}"
+        );
+        assert!(p.contains("pub fn run"), "{p}");
+
+        // Compact style + compact options vs XML + legacy compression: >= 40% fewer tokens.
+        let root = tdir("save");
+        std::fs::write(root.join("lib.rs"), &code).unwrap();
+        let files = vec!["lib.rs".to_string()];
+        let xml = pack_files(&root, &[], &files, true, PackStyle::Xml);
+        let mut req = PackRequest::new(&root, "core");
+        req.options = CompressOptions::compact();
+        let compact = pack_files_with(&root, &[], &files, &req);
+        let (before, after) = (count_tokens(&xml), count_tokens(&compact));
+        let saved = (before - after) as f64 * 100.0 / before as f64;
+        assert!(
+            saved >= 40.0,
+            "saved {saved:.1}% ({before} -> {after})\n{compact}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_pack_symbols_extracts_exact_method_bodies() {
+        let root = tdir("sym");
+        let rs = "pub struct Service;\n\nimpl Service {\n    #[inline]\n    pub fn handle(&self, query: &str) -> bool {\n        // keep   this    comment\n        query.is_empty()\n    }\n\n    pub fn other(&self) {\n        println!(\"other body\");\n    }\n}\n";
+        let kt = "class Repo {\n    fun load() {\n        val s = \"{\"\n        println(\"load body\")\n    }\n\n    fun save() {\n        println(\"save body\")\n    }\n}\n";
+        std::fs::write(root.join("lib.rs"), rs).unwrap();
+        std::fs::write(root.join("Repo.kt"), kt).unwrap();
+        let files = vec!["lib.rs".to_string(), "Repo.kt".to_string()];
+        let symbols = vec!["handle".to_string(), "Repo.load".to_string()];
+        let mut req = PackRequest::new(&root, "core");
+        req.symbols = &symbols;
+        let out = pack_files_with(&root, &[], &files, &req);
+        assert!(
+            out.contains("    pub fn handle(&self, query: &str) -> bool {\n        // keep   this    comment\n        query.is_empty()\n    }"),
+            "{out}"
+        );
+        assert!(out.contains("println(\"load body\")"), "{out}");
+        assert!(!out.contains("other body"), "{out}");
+        assert!(!out.contains("save body"), "{out}");
+
+        let sub = SubsystemInfo {
+            id: "core".to_string(),
+            name: "core".to_string(),
+            summary: "s".to_string(),
+            l1_path: "subsystems/core.md".to_string(),
+            tags: vec![],
+            entrypoints: vec![],
+            key_files: files.clone(),
+            files: vec![],
+            key_symbols: vec![],
+            test_command: None,
+            tokens: 0,
+            parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
+        };
+        let index = L0Index {
+            subsystems: vec![sub],
+            ..L0Index::default()
+        };
+        let ok = pack_subsystem_with(&root, &root.join("kb"), &index, &req).unwrap();
+        assert!(ok.content.contains("query.is_empty()"), "{}", ok.content);
+        let missing = vec!["nope".to_string()];
+        req.symbols = &missing;
+        let err = pack_subsystem_with(&root, &root.join("kb"), &index, &req).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("handle") && msg.contains("load"), "{msg}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

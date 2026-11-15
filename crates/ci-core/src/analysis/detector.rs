@@ -2036,7 +2036,7 @@ fn item_attrs(item: &syn::Item) -> Option<&[syn::Attribute]> {
 }
 
 /// `#[cfg(test)]`, or `#[cfg(all(test, ..))]` where `test` is a direct operand.
-fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
+pub(crate) fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| {
         if !a.path().is_ident("cfg") {
             return false;
@@ -2059,7 +2059,7 @@ fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-fn is_syn_pub(vis: &syn::Visibility) -> bool {
+pub(crate) fn is_syn_pub(vis: &syn::Visibility) -> bool {
     matches!(
         vis,
         syn::Visibility::Public(_) | syn::Visibility::Restricted(_)
