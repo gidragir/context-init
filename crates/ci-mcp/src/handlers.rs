@@ -586,7 +586,6 @@ impl ContextHandler {
             0
         };
         if subsystem_id.eq_ignore_ascii_case("all")
-            && req.files.is_empty()
             && count_tokens(&packed_content) > PACK_ALL_MAX_PAGES.saturating_mul(budget)
         {
             let ids: Vec<&str> = index.subsystems.iter().map(|s| s.id.as_str()).collect();
