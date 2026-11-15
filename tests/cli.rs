@@ -264,6 +264,26 @@ fn cli_pack_compress_outputs_compact_by_default() {
 }
 
 #[test]
+fn cli_pack_files_filter_and_validation() {
+    let sb = Sandbox::new("pack_files");
+    sb.write_fixture();
+    assert!(sb.run(&["init", ".", "--compact"]).status.success());
+    let none = sb.run(&["pack", "all", ".", "--files", "no_such_file.zzz"]);
+    assert!(!none.status.success());
+    assert!(
+        stderr(&none).contains("No files matched"),
+        "{}",
+        stderr(&none)
+    );
+    let abs = sb.run(&["pack", "all", ".", "--filter", "/etc/passwd"]);
+    assert!(!abs.status.success(), "{}", stdout(&abs));
+    let mode = sb.run(&["pack", "all", ".", "--mode", "bogus"]);
+    assert!(!mode.status.success());
+    let ok = sb.run(&["pack", "all", ".", "--files", "*.rs", "--mode", "full"]);
+    assert!(ok.status.success(), "{}{}", stdout(&ok), stderr(&ok));
+}
+
+#[test]
 fn cli_check_exit_code_tracks_drift() {
     let sb = Sandbox::new("drift");
     sb.write_fixture();

@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use anyhow::{bail, Result};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::storage::{safe_join, L0Index, SubsystemInfo};
 
@@ -86,11 +87,44 @@ impl Default for CompressOptions {
 #[derive(Debug, Clone, Copy)]
 pub struct PackRequest<'a> {
     pub root: &'a Path,
+    /// Subsystem id / name / `all` (used by `pack_subsystem_with`).
+    pub subsystem_id: &'a str,
     pub subs: &'a [&'a SubsystemInfo],
+    /// Glob / short-name filters over subsystem files (empty = no filtering).
     pub files: &'a [String],
+    /// Symbol filters (accepted and validated; applied by later stages).
+    pub symbols: &'a [String],
     pub mode: PackMode,
     pub style: PackStyle,
     pub options: CompressOptions,
+}
+
+impl<'a> PackRequest<'a> {
+    /// Request with defaults: no filters, compressed mode, compact style.
+    pub fn new(root: &'a Path, subsystem_id: &'a str) -> Self {
+        Self {
+            root,
+            subsystem_id,
+            subs: &[],
+            files: &[],
+            symbols: &[],
+            mode: PackMode::default(),
+            style: PackStyle::default(),
+            options: CompressOptions::legacy(),
+        }
+    }
+}
+
+impl PackMode {
+    /// Strict parser: `full`, `compressed` or `toc` (case-insensitive).
+    pub fn try_parse(mode: &str) -> Result<Self> {
+        match mode.trim().to_ascii_lowercase().as_str() {
+            "full" => Ok(Self::Full),
+            "compressed" => Ok(Self::Compressed),
+            "toc" => Ok(Self::Toc),
+            other => bail!("Unknown pack mode '{other}': expected full, compressed or toc"),
+        }
+    }
 }
 
 /// Like `compress_source`, with explicit options (options take effect from Task 4).
@@ -124,6 +158,101 @@ pub fn pack_subsystem(
     compress: bool,
     style: PackStyle,
 ) -> Result<PackedSubsystems> {
+    let mut req = PackRequest::new(root, subsystem_id);
+    req.mode = if compress {
+        PackMode::Compressed
+    } else {
+        PackMode::Full
+    };
+    req.style = style;
+    pack_subsystem_with(root, knowledge_dir, index, &req)
+}
+
+/// Validates `files` filters and compiles them into a matcher. Each pattern matches the
+/// full relative path, any path suffix (`**/{pat}`) and the path relative to the subsystem dir.
+pub fn validate_file_patterns(patterns: &[String]) -> Result<GlobSet> {
+    let mut builder = GlobSetBuilder::new();
+    for pat in patterns {
+        let p = pat.trim();
+        if p.is_empty() {
+            bail!("Empty file pattern");
+        }
+        if p.contains('\0') {
+            bail!("File pattern contains a NUL byte");
+        }
+        if p.starts_with('/') || p.starts_with('\\') {
+            bail!("File pattern '{p}' must be relative (no leading slash)");
+        }
+        let b = p.as_bytes();
+        if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+            bail!("File pattern '{p}' must not contain a drive prefix");
+        }
+        if p.contains('\\') {
+            bail!("File pattern '{p}' must use '/' separators");
+        }
+        if p.split('/').any(|c| c == "..") {
+            bail!("File pattern '{p}' must not contain '..'");
+        }
+        for variant in [p.to_string(), format!("**/{p}")] {
+            let glob = GlobBuilder::new(&variant)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| anyhow::anyhow!("Invalid file pattern '{p}': {e}"))?;
+            builder.add(glob);
+        }
+    }
+    builder
+        .build()
+        .map_err(|e| anyhow::anyhow!("Invalid file patterns: {e}"))
+}
+
+/// Longest common directory prefix of a subsystem's files (`""` when none).
+fn sub_dir(paths: &[&str]) -> String {
+    let mut dir: Option<Vec<&str>> = None;
+    for p in paths {
+        let parts: Vec<&str> = p.split('/').collect();
+        let parent = &parts[..parts.len().saturating_sub(1)];
+        dir = Some(match dir {
+            None => parent.to_vec(),
+            Some(cur) => cur
+                .iter()
+                .zip(parent.iter())
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| *a)
+                .collect(),
+        });
+    }
+    dir.map(|d| d.join("/")).unwrap_or_default()
+}
+
+/// True when `path` is a regular file strictly inside `root` (no secrets, no `..`, no symlinks).
+fn is_safe_source(root: &Path, canonical_root: &Path, path: &str) -> bool {
+    if path.contains('\0') || is_secret_path(path) {
+        return false;
+    }
+    let Some(full) = safe_join(root, path) else {
+        return false;
+    };
+    match std::fs::symlink_metadata(&full) {
+        Ok(m) if !m.file_type().is_symlink() => {}
+        _ => return false,
+    }
+    std::fs::canonicalize(&full).is_ok_and(|c| c.starts_with(canonical_root))
+}
+
+/// Request-driven variant of [`pack_subsystem`] with `files` filtering and path protection.
+pub fn pack_subsystem_with(
+    root: &Path,
+    knowledge_dir: &Path,
+    index: &L0Index,
+    req: &PackRequest<'_>,
+) -> Result<PackedSubsystems> {
+    let subsystem_id = req.subsystem_id;
+    let matcher = if req.files.is_empty() {
+        None
+    } else {
+        Some(validate_file_patterns(req.files)?)
+    };
     let wanted = subsystem_id.trim();
     let clean = wanted
         .trim_start_matches("subsystems/")
@@ -150,9 +279,15 @@ pub fn pack_subsystem(
         );
     }
 
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let mut files: Vec<String> = Vec::new();
+    let mut cards: Vec<String> = Vec::new();
+    let mut listed: Vec<String> = Vec::new();
     for sub in &matched {
         if sub.files.is_empty() && sub.key_files.is_empty() {
+            if matcher.is_some() {
+                continue;
+            }
             let Some(card) = safe_join(knowledge_dir, &sub.l1_path) else {
                 continue;
             };
@@ -164,32 +299,67 @@ pub fn pack_subsystem(
                     .to_string_lossy()
                     .replace('\\', "/");
                 if !files.contains(&path) {
+                    cards.push(path.clone());
                     files.push(path);
                 }
             }
             continue;
         }
-        let candidates = sub
+        let candidates: Vec<&String> = sub
             .files
             .iter()
             .map(|f| &f.path)
-            .chain(sub.key_files.iter());
+            .chain(sub.key_files.iter())
+            .collect();
+        let dir = sub_dir(&candidates.iter().map(|p| p.as_str()).collect::<Vec<_>>());
         for path in candidates {
-            // The index is committed and may come from a clone: never pack secrets or databases.
-            let inside = !is_secret_path(path) && safe_join(root, path).is_some_and(|p| p.exists());
-            if inside && !files.contains(path) {
+            // The index is committed and may come from a clone: never pack secrets,
+            // databases, symlinks or anything outside the project root.
+            if !is_safe_source(root, &canonical_root, path) {
+                continue;
+            }
+            if !listed.contains(path) {
+                listed.push(path.clone());
+            }
+            if let Some(m) = &matcher {
+                let rel = if dir.is_empty() {
+                    path.as_str()
+                } else {
+                    path.strip_prefix(&dir)
+                        .map(|r| r.trim_start_matches('/'))
+                        .unwrap_or(path)
+                };
+                if !m.is_match(path.as_str()) && !m.is_match(rel) {
+                    continue;
+                }
+            }
+            if !files.contains(path) {
                 files.push(path.clone());
             }
         }
     }
     if files.is_empty() {
+        if matcher.is_some() {
+            const MAX_LISTED: usize = 50;
+            let more = listed.len().saturating_sub(MAX_LISTED);
+            let mut shown = listed.iter().take(MAX_LISTED).cloned().collect::<Vec<_>>();
+            if more > 0 {
+                shown.push(format!("... and {more} more"));
+            }
+            bail!(
+                "No files matched {:?} in subsystem '{}'. Available files: {}",
+                req.files,
+                subsystem_id,
+                shown.join(", ")
+            );
+        }
         bail!(
             "No existing source files found on disk for subsystem '{}'",
             subsystem_id
         );
     }
 
-    let content = pack_files(root, &matched, &files, compress, style);
+    let content = render_pack(root, &matched, &files, req, &cards);
     Ok(PackedSubsystems {
         content,
         files,
@@ -207,9 +377,27 @@ fn is_secret_path(path: &str) -> bool {
     name == ".env"
         || name.starts_with(".env.")
         || name == "mise.local.toml"
-        || [".key", ".token", ".pem", ".db", ".sqlite", ".sqlite3"]
-            .iter()
-            .any(|ext| name.ends_with(ext))
+        || name == ".npmrc"
+        || name == ".netrc"
+        || name == "credentials.json"
+        || name == "google-services.json"
+        || name.starts_with("secrets.")
+        || name.starts_with("id_rsa")
+        || name.starts_with("id_ed25519")
+        || [
+            ".key",
+            ".token",
+            ".pem",
+            ".db",
+            ".sqlite",
+            ".sqlite3",
+            ".p12",
+            ".pfx",
+            ".jks",
+            ".keystore",
+        ]
+        .iter()
+        .any(|ext| name.ends_with(ext))
 }
 
 /// Packs `files` (relative to `root`) of `subs` into one AI-ready context string,
@@ -221,18 +409,63 @@ pub fn pack_files(
     compress: bool,
     style: PackStyle,
 ) -> String {
+    let mut req = PackRequest::new(root, "");
+    req.mode = if compress {
+        PackMode::Compressed
+    } else {
+        PackMode::Full
+    };
+    req.style = style;
+    pack_files_with(root, subs, files, &req)
+}
+
+/// Request-driven variant of [`pack_files`]: mode, style and compression options come from
+/// `req`; secrets, symlinks and paths escaping `root` are skipped.
+pub fn pack_files_with(
+    root: &Path,
+    subs: &[&SubsystemInfo],
+    files: &[String],
+    req: &PackRequest<'_>,
+) -> String {
+    render_pack(root, subs, files, req, &[])
+}
+
+/// `trusted` paths (L1 cards resolved via `safe_join(knowledge_dir, ..)`) skip root checks.
+fn render_pack(
+    root: &Path,
+    subs: &[&SubsystemInfo],
+    files: &[String],
+    req: &PackRequest<'_>,
+    trusted: &[String],
+) -> String {
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let compress = req.mode != PackMode::Full;
+    let read = |file_rel: &str| -> Option<(String, String)> {
+        if !trusted.iter().any(|t| t == file_rel)
+            && !is_safe_source(root, &canonical_root, file_rel)
+        {
+            return None;
+        }
+        let full_p = root.join(file_rel);
+        let content = std::fs::read_to_string(&full_p).ok()?;
+        let ext = full_p
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+        let processed = if compress {
+            compress_source_with(&content, &ext, &req.options)
+        } else {
+            content
+        };
+        Some((ext, processed))
+    };
+    let style = req.style;
     let mut buffer = String::new();
 
     if style == PackStyle::Compact {
         for file_rel in files {
-            let full_p = root.join(file_rel);
-            if let Ok(content) = std::fs::read_to_string(&full_p) {
-                let ext = full_p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                let processed = if compress {
-                    compress_source(&content, ext)
-                } else {
-                    content
-                };
+            if let Some((_, processed)) = read(file_rel) {
                 buffer.push_str(&format!(
                     "=== {} ({}L) ===\n{}\n\n",
                     file_rel,
@@ -248,14 +481,7 @@ pub fn pack_files(
         buffer.push_str("\n\n> Сгенерировано context-init (встроенный AST-пакер)\n\n");
 
         for file_rel in files {
-            let full_p = root.join(file_rel);
-            if let Ok(content) = std::fs::read_to_string(&full_p) {
-                let ext = full_p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                let processed = if compress {
-                    compress_source(&content, ext)
-                } else {
-                    content
-                };
+            if let Some((ext, processed)) = read(file_rel) {
                 buffer.push_str(&format!(
                     "## File: `{}`\n```{}\n{}\n```\n\n",
                     file_rel, ext, processed
@@ -276,14 +502,7 @@ pub fn pack_files(
         buffer.push_str("  <files>\n");
 
         for file_rel in files {
-            let full_p = root.join(file_rel);
-            if let Ok(content) = std::fs::read_to_string(&full_p) {
-                let ext = full_p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                let processed = if compress {
-                    compress_source(&content, ext)
-                } else {
-                    content
-                };
+            if let Some((_, processed)) = read(file_rel) {
                 buffer.push_str(&format!(
                     "    <file path=\"{}\">\n<![CDATA[\n{}\n]]>\n    </file>\n",
                     xml_escape(file_rel),
@@ -803,6 +1022,149 @@ mod pack_subsystem_tests {
     use super::*;
     use crate::storage::SubsystemFile;
     use std::fs;
+
+    fn tsub(id: &str, files: &[&str]) -> SubsystemInfo {
+        SubsystemInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            summary: "s".to_string(),
+            l1_path: format!("subsystems/{id}.md"),
+            tags: vec![],
+            entrypoints: vec![],
+            key_files: vec![],
+            files: files
+                .iter()
+                .map(|p| SubsystemFile {
+                    path: (*p).to_string(),
+                    is_entrypoint: false,
+                    lines: 1,
+                })
+                .collect(),
+            key_symbols: vec![],
+            test_command: None,
+            tokens: 0,
+            parent: None,
+            summary_source: crate::storage::SummarySource::Heuristic,
+            summary_model: None,
+            needs_review: false,
+        }
+    }
+
+    fn tdir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "ci_pack_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn test_pack_filters_by_glob_and_short_filename() {
+        let root = tdir("glob");
+        fs::create_dir_all(root.join("src/nested")).unwrap();
+        for p in ["src/a.rs", "src/nested/target.rs", "src/b.rs"] {
+            fs::write(root.join(p), format!("pub fn f_{}() {{}}", p.len())).unwrap();
+        }
+        let index = L0Index {
+            subsystems: vec![tsub("s", &["src/a.rs", "src/nested/target.rs", "src/b.rs"])],
+            ..L0Index::default()
+        };
+        let pats = vec!["target.rs".to_string()];
+        let mut req = PackRequest::new(&root, "s");
+        req.files = &pats;
+        let out = pack_subsystem_with(&root, &root.join("kb"), &index, &req).unwrap();
+        assert_eq!(out.files, vec!["src/nested/target.rs".to_string()]);
+
+        let globs = vec!["src/*.rs".to_string()];
+        req.files = &globs;
+        let out = pack_subsystem_with(&root, &root.join("kb"), &index, &req).unwrap();
+        assert!(out.files.contains(&"src/a.rs".to_string()));
+        assert!(out.files.contains(&"src/b.rs".to_string()));
+
+        let missing = vec!["missing.rs".to_string()];
+        req.files = &missing;
+        let err = pack_subsystem_with(&root, &root.join("kb"), &index, &req).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("src/a.rs") && msg.contains("src/nested/target.rs"),
+            "{msg}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_pack_rejects_symlinks_backslashes_and_allows_secret_named_code() {
+        let root = tdir("sym");
+        fs::create_dir_all(root.join("src")).unwrap();
+        for p in [
+            "src/CredentialsProvider.kt",
+            "src/secret_rotation.rs",
+            "credentials.json",
+            "secrets.yaml",
+            ".npmrc",
+        ] {
+            fs::write(root.join(p), "class X").unwrap();
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/etc/hosts", root.join("src/link.rs")).unwrap();
+        let all = [
+            "src/CredentialsProvider.kt",
+            "src/secret_rotation.rs",
+            "credentials.json",
+            "secrets.yaml",
+            ".npmrc",
+            "src/link.rs",
+        ];
+        let index = L0Index {
+            subsystems: vec![tsub("s", &all)],
+            ..L0Index::default()
+        };
+        let out = pack_subsystem_with(
+            &root,
+            &root.join("kb"),
+            &index,
+            &PackRequest::new(&root, "s"),
+        )
+        .unwrap();
+        assert!(out
+            .files
+            .contains(&"src/CredentialsProvider.kt".to_string()));
+        assert!(out.files.contains(&"src/secret_rotation.rs".to_string()));
+        for bad in ["credentials.json", "secrets.yaml", ".npmrc", "src/link.rs"] {
+            assert!(!out.files.contains(&bad.to_string()), "{bad}");
+        }
+        assert!(!out.content.contains("localhost"), "{}", out.content);
+
+        let direct: Vec<String> = all.iter().map(|s| s.to_string()).collect();
+        let sub = tsub("s", &all);
+        let text = pack_files_with(&root, &[&sub], &direct, &PackRequest::new(&root, "s"));
+        assert!(!text.contains("link.rs"), "{text}");
+        assert!(!text.contains("secrets.yaml"), "{text}");
+
+        for pat in [
+            "..\\foo.env",
+            "/etc/passwd",
+            "C:\\foo.rs",
+            "[invalid",
+            "",
+            "a/../b.rs",
+            "a\0b",
+        ] {
+            let pats = vec![pat.to_string()];
+            let mut req = PackRequest::new(&root, "s");
+            req.files = &pats;
+            assert!(
+                pack_subsystem_with(&root, &root.join("kb"), &index, &req).is_err(),
+                "{pat:?}"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn secrets_and_databases_are_never_packed() {

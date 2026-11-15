@@ -102,6 +102,15 @@ pub struct McpPackParams {
     /// Output format: 'compact', 'xml' or 'markdown' (default: 'compact').
     #[serde(default)]
     pub style: Option<String>,
+    /// Only pack files matching these globs / short file names (e.g. "target.rs").
+    #[serde(default)]
+    pub files: Option<Vec<String>>,
+    /// Only pack symbols with these names (accepted for targeted packs).
+    #[serde(default)]
+    pub symbols: Option<Vec<String>>,
+    /// Pack mode: 'full', 'compressed' or 'toc' (overrides `compress`).
+    #[serde(default)]
+    pub mode: Option<String>,
     /// Pagination cursor for continuing output.
     #[serde(default)]
     pub cursor: Option<String>,

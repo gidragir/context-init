@@ -461,10 +461,16 @@ impl ContextInitServer {
     )]
     pub async fn pack(&self, params: Parameters<McpPackParams>) -> Result<String, rmcp::ErrorData> {
         let p = params.0;
+        let invalid = |e: anyhow::Error| rmcp::ErrorData::invalid_params(format!("{e:#}"), None);
         if let Some(style) = p.style.as_deref() {
-            ci_core::analysis::pack::PackStyle::try_parse(style)
-                .map_err(|e| rmcp::ErrorData::invalid_params(format!("{e:#}"), None))?;
+            ci_core::analysis::pack::PackStyle::try_parse(style).map_err(invalid)?;
         }
+        if let Some(mode) = p.mode.as_deref() {
+            ci_core::analysis::pack::PackMode::try_parse(mode).map_err(invalid)?;
+        }
+        let files = p.files.clone().unwrap_or_default();
+        let symbols = p.symbols.clone().unwrap_or_default();
+        ci_core::analysis::pack::validate_file_patterns(&files).map_err(invalid)?;
         let resolved = self
             .resolve_context(p.path.as_deref(), p.project.as_deref())
             .await;
@@ -473,10 +479,15 @@ impl ContextInitServer {
         self.instrumented("context_pack", recorder, || async {
             ContextHandler::pack(
                 &resolved,
-                &p.subsystem_id,
-                p.compress.unwrap_or(true),
-                p.style.as_deref().unwrap_or("compact"),
-                p.cursor.as_deref(),
+                &crate::handlers::PackHandlerParams {
+                    subsystem_id: &p.subsystem_id,
+                    compress: p.compress.unwrap_or(true),
+                    style: p.style.as_deref().unwrap_or("compact"),
+                    mode: p.mode.as_deref(),
+                    files: &files,
+                    symbols: &symbols,
+                    cursor: p.cursor.as_deref(),
+                },
                 &tel,
             )
         })

@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use ci_core::analysis::detector;
 use ci_core::analysis::generator::{self, SummaryUpdate};
-use ci_core::analysis::pack::{pack_subsystem, PackStyle, PackedSubsystems};
+use ci_core::analysis::pack::{
+    pack_subsystem_with, PackMode, PackRequest, PackStyle, PackedSubsystems,
+};
 use ci_core::analysis::resolve_knowledge_dir;
 use ci_core::analysis::scan::{render_scan_markdown, scan_project_with, ScanOptions};
 use ci_core::analysis::task::{build_task_digest, TaskDigestRequest};
@@ -301,6 +303,18 @@ pub struct SubmitReply {
 /// Core handler implementations for MCP tools.
 pub struct ContextHandler;
 
+/// Parameters of [`ContextHandler::pack`].
+#[derive(Debug, Clone, Copy)]
+pub struct PackHandlerParams<'a> {
+    pub subsystem_id: &'a str,
+    pub compress: bool,
+    pub style: &'a str,
+    pub mode: Option<&'a str>,
+    pub files: &'a [String],
+    pub symbols: &'a [String],
+    pub cursor: Option<&'a str>,
+}
+
 impl ContextHandler {
     /// Handler for `context_check`.
     pub fn check_drift(project: &ResolvedProject, cursor: Option<&str>) -> Result<String> {
@@ -540,25 +554,29 @@ impl ContextHandler {
     /// Handler for `context_pack`.
     pub fn pack(
         project: &ResolvedProject,
-        subsystem_id: &str,
-        compress: bool,
-        style: &str,
-        cursor: Option<&str>,
+        req: &PackHandlerParams<'_>,
         tel: &TelemetryScope,
     ) -> Result<String> {
+        let subsystem_id = req.subsystem_id;
+        let cursor = req.cursor;
+        let style = PackStyle::try_parse(req.style)?;
+        let mode = match req.mode {
+            Some(m) => PackMode::try_parse(m)?,
+            None if req.compress => PackMode::Compressed,
+            None => PackMode::Full,
+        };
         let index = project.load_l0_index()?;
+        let mut pack_req = PackRequest::new(&project.root, subsystem_id);
+        pack_req.files = req.files;
+        pack_req.symbols = req.symbols;
+        pack_req.mode = mode;
+        pack_req.style = style;
+        // Filtering happens inside `pack_subsystem_with`, i.e. before the PACK_ALL_MAX_PAGES check.
         let PackedSubsystems {
             content: packed_content,
             subsystems: matched_subs,
             ..
-        } = pack_subsystem(
-            &project.root,
-            &project.knowledge_dir,
-            &index,
-            subsystem_id,
-            compress,
-            PackStyle::parse(style),
-        )?;
+        } = pack_subsystem_with(&project.root, &project.knowledge_dir, &index, &pack_req)?;
 
         let budget = project.config.max_response_tokens;
         let source_tokens = if tel.is_active() {
@@ -568,6 +586,7 @@ impl ContextHandler {
             0
         };
         if subsystem_id.eq_ignore_ascii_case("all")
+            && req.files.is_empty()
             && count_tokens(&packed_content) > PACK_ALL_MAX_PAGES.saturating_mul(budget)
         {
             let ids: Vec<&str> = index.subsystems.iter().map(|s| s.id.as_str()).collect();

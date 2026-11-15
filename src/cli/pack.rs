@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 use ci_core::analysis::detector::count_tokens;
-use ci_core::analysis::pack::{pack_subsystem, PackStyle};
+use ci_core::analysis::pack::{pack_subsystem_with, PackMode, PackRequest, PackStyle};
 use ci_core::analysis::subsystems::subsystem_tokens;
 use ci_core::config::is_binary_available;
 
@@ -36,6 +36,15 @@ pub struct PackArgs {
     /// Output format: compact, xml or markdown
     #[arg(long, default_value = "compact")]
     pub style: String,
+    /// Only pack files matching these globs / short file names (repeatable or comma-separated)
+    #[arg(long = "files", alias = "filter", value_delimiter = ',')]
+    pub files: Vec<String>,
+    /// Only pack these symbols (repeatable or comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub symbols: Vec<String>,
+    /// Pack mode: full, compressed or toc (overrides --compress/--no-compress)
+    #[arg(long)]
+    pub mode: Option<String>,
 }
 
 /// Maps a built-in pack style to the style name understood by `repomix`.
@@ -52,14 +61,17 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
     let index = project.load_l0_index()?;
     let compress = !args.no_compress;
     let style = PackStyle::try_parse(&args.style)?;
-    let packed = pack_subsystem(
-        &project.root,
-        &project.knowledge_dir,
-        &index,
-        &args.subsystem_id,
-        compress,
-        style,
-    )?;
+    let mode = match &args.mode {
+        Some(m) => PackMode::try_parse(m)?,
+        None if compress => PackMode::Compressed,
+        None => PackMode::Full,
+    };
+    let mut req = PackRequest::new(&project.root, &args.subsystem_id);
+    req.files = &args.files;
+    req.symbols = &args.symbols;
+    req.mode = mode;
+    req.style = style;
+    let packed = pack_subsystem_with(&project.root, &project.knowledge_dir, &index, &req)?;
 
     let tel = telemetry_scope(&project);
     if tel.is_active() {

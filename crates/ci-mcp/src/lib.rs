@@ -1600,6 +1600,7 @@ mod tests {
                 compress: Some(false),
                 style: Some("xml".to_string()),
                 cursor: None,
+                ..Default::default()
             }))
             .await
             .expect("pack tool call");
@@ -1607,6 +1608,56 @@ mod tests {
         assert!(out.contains("per subsystem"), "{out}");
         assert!(out.contains("core"), "{out}");
         assert!(!out.contains("pub struct Item"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn pack_all_with_files_filter_applies_before_page_limit() {
+        let tmp = TempDirGuard::new("pack_all_files_filter");
+        let kd = seed_in_repo_knowledge(tmp.path());
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        let big: String = (0..200)
+            .map(|i| format!("pub struct Item{i} {{ pub field_{i}: u64 }}\n"))
+            .collect();
+        fs::write(tmp.path().join("src/lib.rs"), big).unwrap();
+        fs::write(tmp.path().join("src/target.rs"), "pub fn wanted() {}\n").unwrap();
+        let mut index = L0Index::load_from_file(&kd.join("L0_index.json")).unwrap();
+        index.subsystems[0].files.push(SubsystemFile {
+            path: "src/target.rs".to_string(),
+            is_entrypoint: false,
+            lines: 1,
+        });
+        index.save_to_file(&kd.join("L0_index.json")).unwrap();
+        fs::write(
+            tmp.path().join(".context-init.toml"),
+            "max_response_tokens = 64\n",
+        )
+        .unwrap();
+        let server = ContextInitServer::new(Some(tmp.path().to_path_buf()));
+
+        let out = server
+            .pack(Parameters(McpPackParams {
+                subsystem_id: "all".to_string(),
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                compress: Some(false),
+                files: Some(vec!["target.rs".to_string()]),
+                ..Default::default()
+            }))
+            .await
+            .expect("pack tool call");
+        assert!(out.contains("pub fn wanted"), "{out}");
+        assert!(!out.contains("Refusing pack all"), "{out}");
+        assert!(!out.contains("pub struct Item"), "{out}");
+
+        let err = server
+            .pack(Parameters(McpPackParams {
+                subsystem_id: "all".to_string(),
+                path: Some(tmp.path().to_string_lossy().to_string()),
+                files: Some(vec!["/etc/passwd".to_string()]),
+                ..Default::default()
+            }))
+            .await
+            .expect_err("absolute pattern is invalid_params");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     }
 
     #[tokio::test]
@@ -2102,6 +2153,7 @@ mod tests {
                 compress: Some(true),
                 style: Some("xml".to_string()),
                 cursor: None,
+                ..Default::default()
             }))
             .await
             .expect("pack page 1 succeeds");
@@ -2133,6 +2185,7 @@ mod tests {
                 compress: Some(true),
                 style: Some("xml".to_string()),
                 cursor: Some(next_cur.to_string()),
+                ..Default::default()
             }))
             .await
             .expect("pack page 2 succeeds");
