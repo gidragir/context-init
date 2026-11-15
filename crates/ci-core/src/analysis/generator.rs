@@ -1,7 +1,10 @@
 use crate::analysis::subsystems::GENERATED_SUMMARY_PREFIXES;
 use crate::analysis::ProjectAnalysis;
 use crate::config::StorageMode;
-use crate::git::{GitBackend, SystemGitBackend};
+use crate::git::{
+    check_frontmatter_staleness_cached, DiffNameCache, GitBackend, RepoGitSnapshot,
+    SystemGitBackend,
+};
 use crate::openviking::{CardFreshness, CardFrontmatter, CardGeneratedBy, CardSource, OkfCard};
 use crate::storage::{
     now_rfc3339, safe_join, DriftReport, GeneratorStamp, L0Index, SubsystemInfo, SummarySource,
@@ -9,6 +12,7 @@ use crate::storage::{
 };
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -80,6 +84,75 @@ fn git_source_shas(root: &Path, directory: &str) -> Option<(String, String)> {
     Some((blob, commit))
 }
 
+/// L1 card texts read during one run, keyed by the card path: each card is read from disk
+/// at most once (missing cards are not cached).
+pub type CardCache = BTreeMap<String, String>;
+
+/// Text of the card at `path`, read through `cache`.
+fn cached_card<'a>(cache: &'a mut CardCache, path: &Path) -> Option<&'a str> {
+    let key = path.to_string_lossy().into_owned();
+    if !cache.contains_key(&key) {
+        let text = fs::read_to_string(path).ok()?;
+        cache.insert(key.clone(), text);
+    }
+    cache.get(&key).map(String::as_str)
+}
+
+/// Git state shared by every card of one run: one batched [`RepoGitSnapshot`] (`None` outside
+/// Git or when it could not be built, falling back to per-card Git calls) and the
+/// `git diff --name-only` results per recorded commit.
+struct GitCtx {
+    backend: SystemGitBackend,
+    snapshot: Option<RepoGitSnapshot>,
+    diffs: DiffNameCache,
+}
+
+impl GitCtx {
+    fn new(root: &Path) -> Self {
+        let backend = SystemGitBackend::new();
+        let snapshot = backend.repo_snapshot(root).ok();
+        Self {
+            backend,
+            snapshot,
+            diffs: DiffNameCache::new(),
+        }
+    }
+
+    /// Same as [`git_source_shas`], served from the snapshot when there is one.
+    fn source_shas(&self, root: &Path, directory: &str) -> Option<(String, String)> {
+        match &self.snapshot {
+            Some(snap) if snap.is_batched() => {
+                if snap.unborn_head {
+                    return None;
+                }
+                let blob = snap.blob_sha_for(root, Path::new(directory)).ok()??;
+                Some((blob, snap.head_commit.clone()))
+            }
+            _ => git_source_shas(root, directory),
+        }
+    }
+
+    /// Same as [`is_git_stale`], reusing the snapshot and the diff cache.
+    fn is_git_stale(&mut self, disk: &str, root: &Path) -> bool {
+        let Some(snap) = &self.snapshot else {
+            return is_git_stale(disk, root);
+        };
+        OkfCard::parse(disk)
+            .ok()
+            .and_then(|card| {
+                check_frontmatter_staleness_cached(
+                    &self.backend,
+                    root,
+                    snap,
+                    &card.frontmatter,
+                    &mut self.diffs,
+                )
+                .ok()
+            })
+            .is_some_and(|report| report.stale)
+    }
+}
+
 fn file_list_sha(sub: &SubsystemInfo) -> String {
     let mut paths: Vec<&str> = sub.files.iter().map(|f| f.path.as_str()).collect();
     paths.extend(sub.key_files.iter().map(String::as_str));
@@ -134,8 +207,13 @@ pub fn render_subsystem_card_okf(
 
 /// Card for `sub` with `generated_by` reflecting where its summary came from: `agent`/`llm`
 /// for those sources, `role` otherwise; the model is `summary_model` or `none`.
-fn render_card_for(sub: &SubsystemInfo, analysis: &ProjectAnalysis, role: &str) -> String {
-    let shas = git_source_shas(&analysis.root_dir, &subsystem_directory(sub));
+fn render_card_for(
+    sub: &SubsystemInfo,
+    analysis: &ProjectAnalysis,
+    role: &str,
+    git: &GitCtx,
+) -> String {
+    let shas = git.source_shas(&analysis.root_dir, &subsystem_directory(sub));
     let role = match sub.summary_source {
         SummarySource::Agent => "agent",
         SummarySource::Llm => "llm",
@@ -152,22 +230,30 @@ fn card_content(
     sub: &SubsystemInfo,
     analysis: &ProjectAnalysis,
     role: &str,
+    git: &mut GitCtx,
+    cards: &mut CardCache,
 ) -> String {
-    let fresh = render_card_for(sub, analysis, role);
-    match fs::read_to_string(card) {
+    let fresh = render_card_for(sub, analysis, role, git);
+    match cached_card(cards, card) {
         // An equal card is kept only while Git agrees it is current: sources committed
         // since `commit_sha` need a restamp even when the blob matches.
-        Ok(disk) if same_card(&disk, &fresh) && !is_git_stale(&disk, &analysis.root_dir) => disk,
+        Some(disk) if same_card(disk, &fresh) && !git.is_git_stale(disk, &analysis.root_dir) => {
+            disk.to_string()
+        }
         _ => fresh,
     }
 }
 
 /// Whether the card at `card` is untouched generator output for `sub` (a missing card counts
 /// as untouched).
-fn card_is_pristine(card: &Path, sub: &SubsystemInfo, analysis: &ProjectAnalysis) -> bool {
-    fs::read_to_string(card).map_or(true, |disk| {
-        is_pristine_card(&disk, &render_subsystem_card(sub, analysis))
-    })
+fn card_is_pristine(
+    card: &Path,
+    sub: &SubsystemInfo,
+    analysis: &ProjectAnalysis,
+    cards: &mut CardCache,
+) -> bool {
+    cached_card(cards, card)
+        .is_none_or(|disk| is_pristine_card(disk, &render_subsystem_card(sub, analysis)))
 }
 
 /// Sorted file paths of a subsystem, for detecting a changed file set.
@@ -385,10 +471,11 @@ pub fn generate(
         &base_dir.join("L0_index.md"),
         &render_l0_markdown(&l0_index, &today),
     )?;
+    let git = GitCtx::new(&analysis.root_dir);
     for sub in &l0_index.subsystems {
         write_if_changed(
             &base_dir.join(&sub.l1_path),
-            &render_card_for(sub, analysis, "init"),
+            &render_card_for(sub, analysis, "init", &git),
         )?;
     }
     write_if_changed(
@@ -414,6 +501,16 @@ pub fn generate(
 
 /// Compares the knowledge base in `knowledge_dir` against the analyzed source tree.
 pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftReport> {
+    audit_with_cache(analysis, knowledge_dir, &mut CardCache::new())
+}
+
+/// [`audit`] reading L1 cards through `cards`, so a caller checking Git staleness next
+/// (`run_check`) does not read them again.
+pub fn audit_with_cache(
+    analysis: &ProjectAnalysis,
+    knowledge_dir: &Path,
+    cards: &mut CardCache,
+) -> Result<DriftReport> {
     let base_dir = knowledge_dir.to_path_buf();
     let l0_path = base_dir.join("L0_index.json");
     if !l0_path.exists() {
@@ -436,8 +533,8 @@ pub fn audit(analysis: &ProjectAnalysis, knowledge_dir: &Path) -> Result<DriftRe
     let mut format_issues = Vec::new();
 
     for sub in &index.subsystems {
-        if let Ok(text) = fs::read_to_string(base_dir.join(&sub.l1_path)) {
-            if OkfCard::parse(&text).is_err() {
+        if let Some(text) = cached_card(cards, &base_dir.join(&sub.l1_path)) {
+            if OkfCard::parse(text).is_err() {
                 format_issues.push(format!("{}: missing OKF frontmatter", sub.id));
             }
         }
@@ -583,6 +680,9 @@ pub fn update_with_options(
     }
 
     let mut index = L0Index::load_from_file(&l0_path)?;
+    // One Git snapshot and one read per card for the whole run.
+    let mut git = GitCtx::new(&analysis.root_dir);
+    let mut cards = CardCache::new();
     // What the previous run would have rendered: a card still equal to it is untouched
     // generator output and may be refreshed; anything else was edited by hand or by an agent.
     let old_analysis = ProjectAnalysis {
@@ -611,7 +711,7 @@ pub fn update_with_options(
         }) {
             matched_existing_ids.insert(existing.id.clone());
             if let Some(card) = safe_join(&base_dir, &existing.l1_path) {
-                if card_is_pristine(&card, existing, &old_analysis) {
+                if card_is_pristine(&card, existing, &old_analysis, &mut cards) {
                     pristine_ids.push(existing.id.clone());
                 }
             }
@@ -679,7 +779,7 @@ pub fn update_with_options(
         };
         let owned = new_ids.contains(&sub.id) || pristine_ids.contains(&sub.id);
         if owned {
-            let content = card_content(&card, sub, analysis, "update");
+            let content = card_content(&card, sub, analysis, "update", &mut git, &mut cards);
             rendered.push((card, content));
         }
     }
@@ -779,6 +879,7 @@ pub fn apply_summaries(
     let before = index.clone();
     let mut applied: Vec<String> = Vec::new();
     let mut pristine: Vec<String> = Vec::new();
+    let mut cards = CardCache::new();
     for upd in updates {
         let sub = index
             .subsystems
@@ -789,7 +890,7 @@ pub fn apply_summaries(
         if !applied.contains(&sub.id) {
             applied.push(sub.id.clone());
             if safe_join(knowledge_dir, &sub.l1_path)
-                .is_some_and(|card| card_is_pristine(&card, sub, &card_analysis))
+                .is_some_and(|card| card_is_pristine(&card, sub, &card_analysis, &mut cards))
             {
                 pristine.push(sub.id.clone());
             }
@@ -812,6 +913,7 @@ pub fn apply_summaries(
     index.generator = Some(GeneratorStamp::current());
 
     let mut files: Vec<(std::path::PathBuf, String)> = Vec::new();
+    let git = GitCtx::new(&analysis.root_dir);
     for sub in &index.subsystems {
         if !pristine.contains(&sub.id) {
             continue;
@@ -820,10 +922,9 @@ pub fn apply_summaries(
             // A fresh render so `generated_by` follows the new provenance even when the text
             // is unchanged, but bound to the sources the card on disk recorded: the body comes
             // from index fields that may lag HEAD, and restamping would hide that drift.
-            let mut content = render_card_for(sub, &card_analysis, "update");
-            let disk_source = fs::read_to_string(&card)
-                .ok()
-                .and_then(|d| OkfCard::parse(&d).ok())
+            let mut content = render_card_for(sub, &card_analysis, "update", &git);
+            let disk_source = cached_card(&mut cards, &card)
+                .and_then(|d| OkfCard::parse(d).ok())
                 .map(|c| c.frontmatter.source);
             if let (Some(source), Ok(mut fresh)) = (disk_source, OkfCard::parse(&content)) {
                 fresh.frontmatter.source = source;
@@ -1828,6 +1929,46 @@ mod tests {
         git(&root, &["add", "-A"]);
         git(&root, &["commit", "-q", "-m", "init"]);
         root
+    }
+
+    #[test]
+    fn snapshot_git_ctx_matches_legacy_source_shas_and_staleness() {
+        let root = git_repo("snapctx");
+        let kd = root.join(".context-init/knowledge");
+        let (analysis, subs) = deterministic(&root);
+        generate(&analysis, &subs, &kd, &GenerateOptions::default()).unwrap();
+        // Dirty one source so staleness differs between subsystems.
+        let first = subs[0]
+            .files
+            .first()
+            .map(|f| f.path.clone())
+            .expect("subsystem with files");
+        let mut text = fs::read_to_string(root.join(&first)).unwrap();
+        text.push_str("\n// dirty\n");
+        fs::write(root.join(&first), text).unwrap();
+
+        let mut ctx = GitCtx::new(&root);
+        assert!(ctx.snapshot.is_some());
+        for sub in &subs {
+            let dir = subsystem_directory(sub);
+            assert_eq!(
+                ctx.source_shas(&root, &dir),
+                git_source_shas(&root, &dir),
+                "{dir}"
+            );
+            let disk = fs::read_to_string(kd.join(&sub.l1_path)).unwrap();
+            assert_eq!(
+                ctx.is_git_stale(&disk, &root),
+                is_git_stale(&disk, &root),
+                "{}",
+                sub.id
+            );
+        }
+
+        let mut cache = CardCache::new();
+        audit_with_cache(&analysis, &kd, &mut cache).unwrap();
+        assert_eq!(cache.len(), subs.len());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
