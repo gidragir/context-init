@@ -38,6 +38,15 @@ pub struct PackArgs {
     pub style: String,
 }
 
+/// Maps a built-in pack style to the style name understood by `repomix`.
+fn repomix_style(style: PackStyle) -> &'static str {
+    match style {
+        PackStyle::Compact => "plain",
+        PackStyle::Markdown => "markdown",
+        PackStyle::Xml => "xml",
+    }
+}
+
 pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
     let project = global.load_project(&args.path, None)?;
     let index = project.load_l0_index()?;
@@ -75,7 +84,7 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
         cmd.arg("--include")
             .arg(packed.files.join(","))
             .arg("--style")
-            .arg(&args.style)
+            .arg(repomix_style(style))
             .arg("--no-security-check")
             .arg("-o")
             .arg(args.output.as_deref().unwrap_or("-".as_ref()))
@@ -108,4 +117,16 @@ pub fn run(global: &GlobalArgs, args: &PackArgs) -> Result<ExitCode> {
         None => std::io::stdout().write_all(packed.content.as_bytes())?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repomix_style_maps_all_styles() {
+        assert_eq!(repomix_style(PackStyle::Compact), "plain");
+        assert_eq!(repomix_style(PackStyle::Markdown), "markdown");
+        assert_eq!(repomix_style(PackStyle::Xml), "xml");
+    }
 }
